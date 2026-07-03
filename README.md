@@ -1,8 +1,8 @@
 <div align="center">
 
-# M365 Copilot CLI
+# m365-copilot2api
 
-**通过命令行与 OpenAI 兼容 API 访问 Microsoft 365 Copilot**
+**将 Microsoft 365 Copilot 转换为 OpenAI / Anthropic 兼容 API**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Research%20Only-critical.svg)](#免责声明)
@@ -10,7 +10,7 @@
 
 *脱离浏览器，直通 Substrate WebSocket。*
 
-[快速开始](#快速开始) · [使用指南](#使用指南) · [API 服务器](#api-服务器) · [配置说明](#配置说明)
+[快速开始](#快速开始) · [使用指南](#使用指南) · [API 端点](#api-端点) · [配置说明](#配置说明)
 
 </div>
 

@@ -1,4 +1,4 @@
-# M365 Copilot 逆向工程项目
+# m365-copilot2api
 
 ## 架构
 - **单 WebSocket** (无需 negotiate): `wss://substrate.office.com/m365Copilot/Chathub/{oid}@{tenant}?access_token=...`

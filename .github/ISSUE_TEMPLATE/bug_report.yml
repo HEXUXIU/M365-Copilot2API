@@ -1,0 +1,71 @@
+name: Bug Report
+description: 报告一个错误或异常行为
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你花时间提交 Bug！请尽可能详细地填写以下信息。
+
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请清晰描述遇到的问题
+      placeholder: 发生了什么？
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 如何复现这个问题？
+      placeholder: |
+        1. 执行 '...'
+        2. 输入 '...'
+        3. 报错
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你期望发生什么？
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境信息
+      description: |
+        - OS: [e.g. Windows 11, macOS 14, Ubuntu 22.04]
+        - Python: [e.g. 3.12.1]
+        - 模型: [e.g. gpt5.2, auto]
+        - 安装方式: [pip install -e .]
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误日志
+      description: 贴出完整的错误输出（如果有）
+      render: shell
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已经搜索过现有 Issues，确认不是重复问题
+          required: true

@@ -1,16 +1,51 @@
 <div align="center">
 
+```
+╔══════════════════════════════════════════════════════════╗
+║  __  __ _____ _   _ _____   ____  ____  _____  ____    ║
+║ |  \/  |_   _| \ | |__  /  / ___||  _ \|  ___||  _ \   ║
+║ | |\/| | | | |  \| | / /  | |    | |_) | |_   | |_) |  ║
+║ | |  | | | | | |\  / /_  | |___ |  __/|  _|  |  __/   ║
+║ |_|  |_| |_| \_|/____|  \____||_|   |_|     |_|      ║
+╚══════════════════════════════════════════════════════════╝
+```
+
 # m365-copilot2api
 
 **将 Microsoft 365 Copilot 转换为 OpenAI / Anthropic 兼容 API**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Research%20Only-critical.svg)](#免责声明)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-informational.svg)]()
+[![Stars](https://img.shields.io/github/stars/HEXUXIU/M365-Copilot2API?style=social)](https://github.com/HEXUXIU/M365-Copilot2API/stargazers)
+[![Forks](https://img.shields.io/github/forks/HEXUXIU/M365-Copilot2API?style=social)](https://github.com/HEXUXIU/M365-Copilot2API/forks)
+[![Issues](https://img.shields.io/github/issues/HEXUXIU/M365-Copilot2API)](https://github.com/HEXUXIU/M365-Copilot2API/issues)
+[![Last Commit](https://img.shields.io/github/last-commit/HEXUXIU/M365-Copilot2API)](https://github.com/HEXUXIU/M365-Copilot2API/commits)
+[![Code Size](https://img.shields.io/github/languages/code-size/HEXUXIU/M365-Copilot2API)]()
+[![Top Language](https://img.shields.io/github/languages/top/HEXUXIU/M365-Copilot2API)]()
+[![Release](https://img.shields.io/github/v/release/HEXUXIU/M365-Copilot2API?include_prereleases)]()
+[![Downloads](https://img.shields.io/github/downloads/HEXUXIU/M365-Copilot2API/total)]()
+[![CI](https://github.com/HEXUXIU/M365-Copilot2API/workflows/CI/badge.svg)](https://github.com/HEXUXIU/M365-Copilot2API/actions)
+[![Code style](https://img.shields.io/badge/code%20style-pep8-000000.svg)](https://peps.python.org/pep-0008/)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/HEXUXIU/M365-Copilot2API/pulls)
+
+<br>
 
 *脱离浏览器，直通 Substrate WebSocket。*
 
-[快速开始](#快速开始) · [使用指南](#使用指南) · [API 端点](#api-端点) · [配置说明](#配置说明)
+[🚀 快速开始](#快速开始) · [📖 使用指南](#使用指南) · [🔌 API 端点](#api-端点) · [⚙️ 配置说明](#配置说明) · [⚠️ 免责声明](#免责声明)
+
+<br>
+
+<table>
+<tr>
+<td align="center"><b>Streaming</b><br>实时输出</td>
+<td align="center"><b>Multi-turn</b><br>多轮对话</td>
+<td-align="center"><b>Encrypted</b><br>凭证加密</td>
+<td align="center"><b>Multi-model</b><br>模型切换</td>
+<td align="center"><b>OpenAI ✓</b><br>Anthropic ✓</td>
+</tr>
+</table>
 
 </div>
 
@@ -317,10 +352,45 @@ m365-copilot/
 
 ---
 
+## 贡献者
+
 <div align="center">
 
-**[⬆ 回到顶部](#m365-copilot-cli)**
+<a href="https://github.com/HEXUXIU/M365-Copilot2API/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=HEXUXIU/M365-Copilot2API" />
+</a>
 
-*Built for curiosity. Use with responsibility.*
+</div>
+
+---
+
+## 活动
+
+<div align="center">
+
+[![Activity](https://img.shields.io/github/commit-activity/m/HEXUXIU/M365-Copilot2API)]()
+[![Contributors](https://img.shields.io/github/contributors/HEXUXIU/M365-Copilot2API)]()
+[![Last Commit](https://img.shields.io/github/last-commit/HEXUXIU/M365-Copilot2API)]()
+
+</div>
+
+---
+
+<div align="center">
+
+**[⬆ 回到顶部](#m365-copilot2api)**
+
+<br>
+
+```
+    ╔═══════════════════════════════════════════╗
+    ║  Built for curiosity. Use with care.     ║
+    ║  为好奇心而建，请谨慎使用。                 ║
+    ╚═══════════════════════════════════════════╝
+```
+
+<br>
+
+⭐ 如果这个项目对你有帮助，欢迎点 Star ⭐
 
 </div>

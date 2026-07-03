@@ -39,22 +39,24 @@ M365 Copilot 的浏览器界面通过一个未公开的 SignalR WebSocket 与后
 
 ```bash
 git clone https://github.com/HEXUXIU/M365-Copilot2API.git
-cd m365-copilot2api
+cd M365-Copilot2API
 pip install -e .
 ```
 
 ### 配置
 
-运行向导完成认证：
+**只需一步：** 在浏览器中登录后，Console 运行一行 JS 获取所有信息。
 
 ```bash
 m365-copilot-setup
 ```
 
 向导会让你：
-1. 在浏览器 Console 执行两行 JS 获取 Tenant ID 和 User OID
-2. 浏览器跳转登录，复制授权码
-3. 自动生成加密密钥，Token 加密后存储在本机
+1. 在浏览器 Console 粘贴运行一行 JS（自动提取 Tenant ID / OID / Refresh Token）
+2. 复制控制台输出的完整 JSON 并粘贴到终端
+3. 自动加密存储 Token 并验证
+
+> **提示**: 如果已登录 `m365.cloud.microsoft`，无需再次登录浏览器。
 
 ### 使用
 
@@ -159,7 +161,7 @@ $ m365-copilot "北京天气怎么样"   # 自动调用 get_weather
 | 模型切换 | ⚠️ 传参标识 | 所有模型标识实际走 GPT-5 |
 | 图像生成 | ❌ 未实现 | payload 存在但无响应解析 |
 | Token 计数 | ⚠️ 粗估 | 空格分词，非真实 BPE 计数 |
-| REST 对话管
+| REST 对话管理 | ⚠️ 需 Cookie | 需浏览器 Cookie，Web UI 有区域限制 |
 
 ---
 
@@ -184,11 +186,11 @@ M365_USER_OID=xxx-xxx-xxx-xxx
 M365_CLIENT_ID=4765445b-32c6-49b0-83e6-1d93765276ca  # 可选
 ```
 
-手动获取 Tenant ID 和 User OID:
+手动获取 Tenant ID 和 User OID（如果 setup 失败）：
 
 ```javascript
 // 浏览器登录 m365.cloud.microsoft 后，F12 Console 运行:
-let k=Object.keys(localStorage).find(k=>k.startsWith('msal.')&&k.includes('|'));let p=k.split('|')[1].split('.');console.log('OID:',p[0]);console.log('TENANT:',p[1]);
+(() => { const k = Object.keys(localStorage).find(k => k.startsWith('msal.') && k.includes('|')); if (!k) return 'NOT_FOUND'; const p = k.split('|')[1].split('.'); return JSON.stringify({oid: p[0], tenant: p[1]}); })()
 ```
 
 ---

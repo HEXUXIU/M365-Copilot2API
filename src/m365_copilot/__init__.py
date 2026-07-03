@@ -21,6 +21,6 @@ _load_dotenv()
 from .auth import TokenManager, TokenRefreshError
 from .client import M365Client
 from .models import MODELS, lookup_model
-from .payload import build_url, build_payload
+from .payload import build_url, build_payload, build_conversation_payload
 
 __version__ = "0.6.0"

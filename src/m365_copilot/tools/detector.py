@@ -36,27 +36,51 @@ def _extract_json_objects(text: str):
 
 class ToolCallDetector:
     @staticmethod
+    def _normalize_args(args):
+        if args is None:
+            return {}
+        if isinstance(args, str):
+            try:
+                return json.loads(args)
+            except json.JSONDecodeError:
+                return {"raw": args}
+        return args
+
+    @staticmethod
+    def _extract_name_and_args(data: dict):
+        if not isinstance(data, dict):
+            return None, None
+        name = data.get("name") or data.get("tool")
+        if not name and "function" in data and isinstance(data["function"], dict):
+            name = data["function"].get("name")
+            if name:
+                return name, data["function"].get("arguments")
+        if name:
+            return name, data.get("arguments")
+        return None, None
+
+    @staticmethod
     def detect(text: str) -> Optional[Tuple[str, Dict]]:
         blocks = re.findall(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
         for block in blocks:
             try:
                 data = json.loads(block.strip())
                 if isinstance(data, dict):
-                    name = data.get("name") or data.get("tool")
+                    name, args = ToolCallDetector._extract_name_and_args(data)
                     if name:
-                        return name, data.get("arguments", {})
+                        return name, ToolCallDetector._normalize_args(args)
             except json.JSONDecodeError:
                 continue
 
         for obj_str in _extract_json_objects(text):
-            if '"name"' not in obj_str and '"tool"' not in obj_str:
+            if '"name"' not in obj_str and '"tool"' not in obj_str and '"function"' not in obj_str:
                 continue
             try:
                 data = json.loads(obj_str)
                 if isinstance(data, dict):
-                    name = data.get("name") or data.get("tool")
+                    name, args = ToolCallDetector._extract_name_and_args(data)
                     if name:
-                        return name, data.get("arguments", {})
+                        return name, ToolCallDetector._normalize_args(args)
             except json.JSONDecodeError:
                 continue
         return None

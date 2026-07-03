@@ -103,7 +103,7 @@ class TokenManager:
         return False
 
     def _try_auth_code(self):
-        verifier = base64.urlsafe_b64encode(uuid.uuid4().bytes * 6).rstrip(b'=').decode()
+        verifier = base64.urlsafe_b64encode(os.urandom(64)).rstrip(b'=').decode()
         challenge = base64.urlsafe_b64encode(
             hashlib.sha256(verifier.encode()).digest()
         ).rstrip(b'=').decode()
@@ -150,8 +150,9 @@ class TokenManager:
 
     def _save_tokens(self, result):
         if 'refresh_token' in result:
+            from .scripts.crypto import encrypt
             with open(self.rt_file, 'w') as f:
-                f.write(result['refresh_token'])
+                f.write(encrypt(result['refresh_token']))
         cache = {
             'access_token': result['access_token'],
             'expires_at': time.time() + result.get('expires_in', 3600),

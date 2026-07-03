@@ -1,6 +1,28 @@
-import json, uuid
+import json, uuid, datetime, locale
 
 from .models import USER_OID, TENANT_ID
+
+def _get_local_tz():
+    now = datetime.datetime.now(datetime.timezone.utc).astimezone()
+    offset = int(now.utcoffset().total_seconds() // 3600)
+    tz_name = now.tzname() or "UTC"
+    tz_map = {
+        "中国标准时间": "Asia/Shanghai",
+        "中国夏令时": "Asia/Shanghai",
+        "Pacific Standard Time": "America/Los_Angeles",
+        "Pacific Daylight Time": "America/Los_Angeles",
+        "Eastern Standard Time": "America/New_York",
+        "Eastern Daylight Time": "America/New_York",
+        "UTC": "UTC",
+    }
+    return offset, tz_map.get(tz_name, tz_name)
+
+def _get_locale():
+    loc = locale.getdefaultlocale()[0] or "en_US"
+    return loc.lower().replace("_", "-")
+
+LOCAL_TZ_OFFSET, LOCAL_TZ_NAME = _get_local_tz()
+LOCAL_LOCALE = _get_locale()
 
 VARIANTS = (
     "EnableMcpServerWidgets,feature.EnableLuForChatCIQ,feature.enableChatCIQPlugin,"
@@ -115,8 +137,8 @@ def build_payload(hex_sid, uuid_sid, text, tone="Magic", gpt_override=None,
                 "author": "user", "inputMethod": "Keyboard", "text": text,
                 "entityAnnotationTypes": ["People", "File", "Event", "Email", "TeamsMessage"],
                 "requestId": f"{hex_sid}_0",
-                "locationInfo": {"timeZoneOffset": 8, "timeZone": "Asia/Shanghai"},
-                "locale": "zh-cn", "messageType": "Chat", "experienceType": "Default",
+                "locationInfo": {"timeZoneOffset": LOCAL_TZ_OFFSET, "timeZone": LOCAL_TZ_NAME},
+                "locale": LOCAL_LOCALE, "messageType": "Chat", "experienceType": "Default",
                 "adaptiveCards": [], "clientPreferences": {},
                 "connectedFederatedConnections": ["dummyId"],
             },
@@ -146,7 +168,7 @@ def build_payload_with_tools(hex_sid, uuid_sid, text, tone="Magic", gpt_override
             "hostContext": {"hostType": "BCBv2Windows", "hostVersion": "1.0.0"},
             "message": {
                 "author": "user", "inputMethod": "Keyboard", "text": text,
-                "messageType": "Chat", "locale": "zh-cn",
+                "messageType": "Chat", "locale": LOCAL_LOCALE,
             },
             "clientInfo": {
                 "clientPlatform": "mcmcopilot-desktop", "clientAppName": "Copilot",
@@ -184,7 +206,7 @@ def build_conversation_payload(hex_sid, uuid_sid, messages, tone="Magic", gpt_ov
     m365_history = []
     last_text = messages[-1].get("content", "") if messages else ""
 
-    for m in messages:
+    for m in messages[:-1]:
         role = m.get("role", "")
         content = m.get("content", "")
         if isinstance(content, list):
@@ -216,7 +238,7 @@ def build_conversation_payload(hex_sid, uuid_sid, messages, tone="Magic", gpt_ov
                 "author": "user", "inputMethod": "Keyboard", "text": last_text,
                 "entityAnnotationTypes": [],
                 "requestId": f"{hex_sid}_0",
-                "locale": "zh-cn", "messageType": "Chat", "experienceType": "Default",
+                "locale": LOCAL_LOCALE, "messageType": "Chat", "experienceType": "Default",
                 "adaptiveCards": [], "clientPreferences": {},
             },
             "optionsSets": options,
@@ -233,5 +255,5 @@ def build_conversation_payload(hex_sid, uuid_sid, messages, tone="Magic", gpt_ov
     if gpt_override:
         p["arguments"][0]["gptIdOverride"] = {"id": gpt_override, "source": "MOS3"}
     if m365_history:
-        p["arguments"][0]["messageHistory"] = m365_history[:-1]
+        p["arguments"][0]["messageHistory"] = m365_history
     return json.dumps(p)

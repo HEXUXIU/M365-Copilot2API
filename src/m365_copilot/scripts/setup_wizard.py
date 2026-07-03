@@ -2,12 +2,16 @@
 M365 Copilot 一键配置向导
 运行: python -m m365_copilot.scripts.setup
 """
-import os, sys, json, hashlib, base64, uuid, ssl, urllib.request, urllib.parse, webbrowser
+import os, sys, json, re, ssl, urllib.request
+
+if sys.stdout.encoding and sys.stdout.encoding.lower() not in ('utf-8', 'utf8'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 CLIENT_ID = "4765445b-32c6-49b0-83e6-1d93765276ca"
 SCOPE = "https://substrate.office.com/sydney/.default openid profile offline_access"
-TOKEN_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
-AUTHORIZE_URL = "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 DATA_DIR = os.path.join(BASE_DIR, "data", "tokens")
@@ -20,160 +24,170 @@ def step(title):
     print(f"{'='*60}")
 
 
-def get_tenant_and_oid():
-    step("步骤 1: 获取 Tenant ID 和 User OID")
+def extract_from_console_output(raw: str):
+    """Parse tenant, oid, refresh_token from browser console output."""
+    tenant = oid = refresh_token = None
+
+    m_oid = re.search(r"OID:\s*([a-f0-9-]+)", raw)
+    m_tenant = re.search(r"TENANT:\s*([a-f0-9-]+)", raw)
+    if m_oid and m_tenant:
+        oid = m_oid.group(1)
+        tenant = m_tenant.group(1)
+
+    m_rt = re.search(r"REFRESH[_\s]?TOKEN[:\s]+([A-Za-z0-9\-_.]+)", raw)
+    if m_rt:
+        refresh_token = m_rt.group(1)
+
+    if not refresh_token:
+        m_rt2 = re.search(r"refresh[_\s]?token[:\s]+([A-Za-z0-9\-_.]{20,})", raw, re.I)
+        if m_rt2:
+            refresh_token = m_rt2.group(1)
+
+    if not refresh_token or refresh_token == "NOT_FOUND":
+        m_json = re.search(r"\{.*\}", raw, re.DOTALL)
+        if m_json:
+            try:
+                data = json.loads(m_json.group())
+                tenant = tenant or data.get("tenant")
+                oid = oid or data.get("oid")
+                refresh_token = data.get("refresh_token")
+            except json.JSONDecodeError:
+                pass
+
+    return tenant, oid, refresh_token
+
+
+def get_config_from_browser():
+    step("步骤 1: 从浏览器获取配置")
     print()
-    print("在浏览器中登录 https://m365.cloud/microsoft")
-    print("然后打开 DevTools (F12) → Console, 粘贴运行这一行:")
+    print("请在浏览器中完成以下操作:")
+    print("  1. 打开 https://m365.cloud.microsoft 并登录")
+    print("  2. 按 F12 打开 DevTools → Console")
+    print("  3. 粘贴运行下面这行代码:")
     print()
-    print("  let k=Object.keys(localStorage).find(k=>k.startsWith('msal.')&&k.includes('|'));let p=k.split('|')[1].split('.');console.log('OID:',p[0]);console.log('TENANT:',p[1]);")
+    print("  (复制下面完整的一行)")
     print()
-    tenant = input("请输入 Tenant ID: ").strip()
-    oid = input("请输入 User OID:  ").strip()
+    print("-" * 60)
+    js_snippet = (
+        "(() => {"
+        "const k = Object.keys(localStorage).find(k => k.startsWith('msal.') && k.includes('|'));"
+        "if (!k) return 'NOT_FOUND';"
+        "const p = k.split('|')[1].split('.');"
+        "const oid = p[0], tenant = p[1];"
+        "const entries = Object.entries(localStorage);"
+        "const rtEntry = entries.find(([k]) => k.toLowerCase().includes('refreshtoken') && k.startsWith('msal.3'));"
+        "let rt = 'NOT_FOUND';"
+        "if (rtEntry) {"
+        "  try { const d = JSON.parse(rtEntry[1]); rt = d.secret || d.value || JSON.stringify(d); }"
+        "  catch(e) { rt = rtEntry[1]; }"
+        "}"
+        "return '===== 请复制下面完整的一行 JSON =====\\n' + JSON.stringify({oid, tenant, refresh_token: rt}) + '\\n===== 复制结束 =====';"
+        "})()"
+    )
+    print(js_snippet)
+    print("-" * 60)
+    print()
+    print("  请复制控制台输出的【完整 JSON 字符串】（前后带 === 标记）")
+    print("  如果显示 NOT_FOUND，请确认已在 m365.cloud.microsoft 登录")
+    print()
+    print("=" * 60)
+    print("【请复制从这里开始 ==================================】")
+    print("=" * 60)
+    print()
+
+    raw = input("【请把上面复制的 JSON 粘贴到这里 => ").strip()
+    if not raw:
+        print("错误: 未输入任何内容")
+        sys.exit(1)
+
+    tenant, oid, refresh_token = extract_from_console_output(raw)
+    if not tenant or not oid:
+        try:
+            data = json.loads(raw)
+            tenant = tenant or data.get("tenant")
+            oid = oid or data.get("oid")
+            refresh_token = refresh_token or data.get("refresh_token")
+        except json.JSONDecodeError:
+            pass
 
     if not tenant or not oid:
-        print("错误: Tenant ID 和 OID 不能为空")
+        print("错误: 无法解析 Tenant ID 或 User OID")
+        print("请确保 Console 输出包含 OID 和 TENANT 字段")
         sys.exit(1)
 
-    return tenant, oid
-
-
-def get_refresh_token(tenant):
-    step("步骤 2: 获取 Refresh Token (Auth Code + PKCE)")
-    print()
-    print("将打开浏览器登录 Microsoft 账户。登录后从地址栏复制 code 参数。")
-
-    verifier = base64.urlsafe_b64encode(uuid.uuid4().bytes * 6).rstrip(b'=').decode()
-    challenge = base64.urlsafe_b64encode(
-        hashlib.sha256(verifier.encode()).digest()
-    ).rstrip(b'=').decode()
-
-    params = {
-        'client_id': CLIENT_ID,
-        'response_type': 'code',
-        'response_mode': 'fragment',
-        'scope': SCOPE,
-        'redirect_uri': 'https://m365.cloud.microsoft',
-        'state': uuid.uuid4().hex,
-        'nonce': uuid.uuid4().hex,
-        'code_challenge': challenge,
-        'code_challenge_method': 'S256',
-        'prompt': 'select_account',
-    }
-
-    auth_url = AUTHORIZE_URL.format(tenant=tenant) + "?" + urllib.parse.urlencode(params)
-    print(f"\n浏览器链接: {auth_url}\n")
-
-    try:
-        webbrowser.open(auth_url)
-    except Exception:
-        pass
-
-    code = input("请输入授权 code (从浏览器地址栏 #code=... 复制): ").strip()
-    if not code:
-        print("错误: 未输入 code")
+    if not refresh_token or refresh_token == "NOT_FOUND":
+        print("错误: 无法从输出中提取 Refresh Token")
+        print("请确认已在 Console 中成功运行 JS 代码")
         sys.exit(1)
 
-    data = urllib.parse.urlencode({
-        'client_id': CLIENT_ID,
-        'code': code,
-        'redirect_uri': 'https://m365.cloud.microsoft',
-        'grant_type': 'authorization_code',
-        'code_verifier': verifier,
-    }).encode()
-
-    token_url = TOKEN_URL.format(tenant=tenant)
-    req = urllib.request.Request(token_url, data=data)
-    req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-    req.add_header('Origin', 'https://m365.cloud.microsoft')
-
-    try:
-        with urllib.request.urlopen(req, context=ssl.create_default_context()) as resp:
-            result = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        err = json.loads(e.read())
-        print(f"获取 token 失败: {err.get('error')}: {err.get('error_description', '')[:200]}")
-        sys.exit(1)
-
-    if 'refresh_token' not in result:
-        print("错误: 响应中未包含 refresh_token")
-        sys.exit(1)
-
-    return result['refresh_token']
+    return tenant, oid, refresh_token
 
 
-def save_config(tenant, oid, refresh_token):
-    step("步骤 3: 保存配置")
+def verify_token(tenant, oid, refresh_token):
+    """Verify refresh token by exchanging for access token."""
+    step("步骤 2: 验证 Token")
     print()
 
+    rt_file = os.path.join(DATA_DIR, "rt_90day.txt")
+    cache_file = os.path.join(DATA_DIR, "token_cache.json")
     os.makedirs(DATA_DIR, exist_ok=True)
 
-    # 保存 refresh token (加密存储)
-    from .crypto import encrypt as _enc
-    rt_file = os.path.join(DATA_DIR, "rt_90day.txt")
-    with open(rt_file, 'w') as f:
-        f.write(_enc(refresh_token))
-    print(f"  Refresh token -> {rt_file} (AES-128-CBC encrypted)")
+    sys.path.insert(0, os.path.join(BASE_DIR, "src"))
+    from m365_copilot.auth import TokenManager
+    from m365_copilot.scripts.crypto import encrypt
 
-    # 保存 .env
+    with open(rt_file, "w") as f:
+        f.write(encrypt(refresh_token))
+    print(f"  Refresh token 已加密保存")
+
+    os.environ["M365_TENANT_ID"] = tenant
+    os.environ["M365_USER_OID"] = oid
+
+    tm = TokenManager(tenant, CLIENT_ID, SCOPE, rt_file, cache_file)
+    try:
+        access_token = tm.get()
+        print(f"  ✓ Token 验证成功 (access_token 长度: {len(access_token)})")
+    except Exception as e:
+        print(f"  ✗ Token 验证失败: {e}")
+        print("  可能原因: Refresh Token 已过期，请重新登录浏览器获取")
+        sys.exit(1)
+
+    return rt_file, cache_file
+
+
+def save_env(tenant, oid):
     env_content = f"""# M365 Copilot Configuration
 M365_TENANT_ID={tenant}
 M365_USER_OID={oid}
 M365_CLIENT_ID={CLIENT_ID}
 """
-    with open(ENV_FILE, 'w') as f:
+    with open(ENV_FILE, "w") as f:
         f.write(env_content)
-    print(f"  环境变量     → {ENV_FILE}")
-
-    # 验证 token 可用
-    print("\n  验证 token...")
-    try:
-        sys.path.insert(0, os.path.join(BASE_DIR, "src"))
-        from m365_copilot.auth import TokenManager
-
-        cache_file = os.path.join(DATA_DIR, "token_cache.json")
-        os.environ['M365_TENANT_ID'] = tenant
-        os.environ['M365_USER_OID'] = oid
-
-        tm = TokenManager(tenant, CLIENT_ID, SCOPE, rt_file, cache_file)
-        access_token = tm.get()
-        print(f"  ✓ Token 验证成功 (长度: {len(access_token)})")
-    except Exception as e:
-        print(f"  ✗ Token 验证失败: {e}")
-        sys.exit(1)
+    print(f"  环境变量已保存 → {ENV_FILE}")
 
 
 def main():
     print("=" * 60)
-    print("  M365 Copilot 配置向导 v1.0")
+    print("  M365 Copilot 配置向导 v2.0")
     print("=" * 60)
     print()
-    print("此脚本将引导你完成以下步骤:")
-    print("  1. 获取 Tenant ID 和 User OID")
-    print("  2. 通过浏览器登录获取 Refresh Token")
-    print("  3. 保存配置并验证")
+    print("只需一步: 在浏览器 Console 运行一行 JS，粘贴输出即可。")
+    print()
 
-    tenant, oid = get_tenant_and_oid()
-
-    print(f"\n  Tenant ID: {tenant}")
-    print(f"  User OID:  {oid}")
-
-    confirm = input("\n确认无误? (y/n): ").strip().lower()
-    if confirm != 'y':
-        print("已取消")
-        sys.exit(0)
-
-    refresh_token = get_refresh_token(tenant)
-    save_config(tenant, oid, refresh_token)
+    tenant, oid, refresh_token = get_config_from_browser()
+    rt_file, cache_file = verify_token(tenant, oid, refresh_token)
+    save_env(tenant, oid)
 
     step("配置完成!")
     print()
     print("使用方式:")
-    print("  python -m m365_copilot \"你好\"           # CLI 提问")
-    print("  python -m m365_copilot -i                 # 交互模式")
-    print("  python -m m365_copilot --list-models      # 列出模型")
+    print("  m365-copilot \"你好\"              # CLI 提问")
+    print("  m365-copilot -i                  # 交互模式")
+    print("  m365-copilot --list-models       # 列出模型")
+    print("  m365-copilot-server --port 8000  # 启动 API 服务")
     print()
-    print("环境变量已保存到 .env, 每次运行会自动加载。")
+    print(f"Token 存储: {DATA_DIR}")
+    print(f"配置文件:   {ENV_FILE}")
 
 
 if __name__ == "__main__":

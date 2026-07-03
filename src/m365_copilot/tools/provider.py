@@ -82,7 +82,7 @@ class MCPProvider:
             "你可以调用以下工具来帮助回答问题。"
             "当需要使用工具时，请输出 JSON 格式的工具调用：\n"
             "```json\n"
-            '{"tool": "工具名", "arguments": {...}}\n'
+            '{"function": {"name": "工具名", "arguments": {...}}}\n'
             "```\n"
             "\n可用工具：" + "\n".join(lines)
         )

@@ -57,6 +57,9 @@ class M365Client:
         self._ws_token = None
         self._ws_url = None
         self._ws_dirty = False
+        self._last_tool_calls = []
+        self._last_finish_reason = "stop"
+        self._last_full_text = ""
 
     async def close(self):
         if self._ws is not None:
@@ -133,11 +136,12 @@ class M365Client:
         while True:
             try:
                 msg = await asyncio.wait_for(ws.recv(), timeout=self.timeout_recv)
-            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed,
+                    ConnectionResetError, OSError):
                 self._invalidate_ws()
                 break
             if isinstance(msg, bytes):
-                msg = msg.decode("utf-8", errors="replace")
+                msg = msg.decode("utf-8", errors="ignore")
             for part in msg.split("\x1e"):
                 part = part.strip()
                 if not part:
@@ -158,13 +162,12 @@ class M365Client:
 
     async def chat_conversation(self, messages, tone="Magic", gpt_override=None, conversation_id=None,
                                 enable_image_gen=False, extra_options=None):
-        result_text = ""
         async for chunk, is_final in self.chat_conversation_stream_gen(
             messages, tone, gpt_override, conversation_id,
             enable_image_gen=enable_image_gen, extra_options=extra_options):
             if not is_final:
-                result_text += chunk
-        return clean_text(result_text), self._last_tool_calls, self._last_finish_reason
+                pass
+        return clean_text(self._last_full_text), self._last_tool_calls, self._last_finish_reason
 
     async def chat_conversation_stream_gen(self, messages, tone="Magic", gpt_override=None, conversation_id=None,
                                           enable_image_gen=False, extra_options=None):
@@ -174,11 +177,13 @@ class M365Client:
         await ws.send(payload + "\x1e")
 
         tool_calls = []
+        self._last_full_text = ""
 
         while True:
             try:
                 msg = await asyncio.wait_for(ws.recv(), timeout=self.timeout_recv_final)
-            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed,
+                    ConnectionResetError, OSError):
                 self._invalidate_ws()
                 break
             if isinstance(msg, bytes):
@@ -194,14 +199,24 @@ class M365Client:
                 mt = data.get("type")
                 if mt == 1 and data.get("target") == "update":
                     for arg in data.get("arguments", []):
-                        if "writeAtCursor" in arg:
-                            yield (arg["writeAtCursor"], False)
                         if "messages" in arg and arg["messages"]:
                             for m in arg["messages"]:
                                 if m.get("messageType") in TOOL_MESSAGE_TYPES:
                                     tc = extract_tool_call(m)
                                     if tc:
                                         tool_calls.append(tc)
+                            new_text = arg["messages"][-1].get("text", "")
+                            if new_text and new_text != self._last_full_text:
+                                if new_text.startswith(self._last_full_text):
+                                    chunk = new_text[len(self._last_full_text):]
+                                else:
+                                    chunk = new_text
+                                self._last_full_text = new_text
+                                if chunk:
+                                    yield (chunk, False)
+                        if "writeAtCursor" in arg:
+                            self._last_full_text += arg["writeAtCursor"]
+                            yield (arg["writeAtCursor"], False)
                 elif mt == 3:
                     self._last_tool_calls = tool_calls
                     self._last_finish_reason = "tool_calls" if tool_calls else "stop"
@@ -218,11 +233,12 @@ class M365Client:
         while True:
             try:
                 msg = await asyncio.wait_for(ws.recv(), timeout=self.timeout_recv)
-            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed):
+            except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed,
+                    ConnectionResetError, OSError):
                 self._invalidate_ws()
                 break
             if isinstance(msg, bytes):
-                msg = msg.decode("utf-8", errors="replace")
+                msg = msg.decode("utf-8", errors="ignore")
             for part in msg.split("\x1e"):
                 part = part.strip()
                 if not part:
@@ -234,11 +250,7 @@ class M365Client:
                 mt = data.get("type")
                 if mt == 1 and data.get("target") == "update":
                     for arg in data.get("arguments", []):
-                        if "writeAtCursor" in arg:
-                            sys.stdout.buffer.write(arg["writeAtCursor"].encode('utf-8'))
-                            sys.stdout.flush()
-                            full_text += arg["writeAtCursor"]
-                        elif "messages" in arg and arg["messages"]:
+                        if "messages" in arg and arg["messages"]:
                             full_text = arg["messages"][-1].get("text", full_text)
                 elif mt == 3:
                     self._mark_dirty()

@@ -25,6 +25,16 @@ TOOL_MESSAGE_TYPES = {
 }
 
 
+def _require_env(key):
+    val = os.environ.get(key)
+    if not val:
+        raise ValueError(
+            f"Environment variable {key} is required.\n"
+            "Get it from: https://graph.microsoft.com/v1.0/me (id and tenantId)"
+        )
+    return val
+
+
 def lookup_model(model_key):
     if model_key in MODELS:
         return MODELS[model_key]

@@ -1,12 +1,41 @@
+# Byte-compiled
 __pycache__/
 *.pyc
 *.pyo
+
+# Environment
 .env
+.env.local
+*.env
+
+# Secrets & tokens
 data/tokens/
-AGENTS.md
+data/cache/
+
+# Build artifacts
 *.egg-info/
 dist/
 build/
+
+# Virtual environments
 .venv/
 venv/
-tests/
+.venv*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Project-specific
+AGENTS.md

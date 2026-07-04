@@ -1,4 +1,4 @@
-import json, uuid, asyncio, sys
+import json, uuid, asyncio, sys, re
 
 import websockets
 import websockets.exceptions
@@ -13,7 +13,6 @@ def clean_text(text):
         return ""
     if isinstance(text, bytes):
         text = text.decode("utf-8", errors="ignore")
-    import re
     cleaned = "".join(c for c in text if c.isprintable() or c in "\n\t\r")
     cleaned = re.sub(r"[\x00-\x1f\x7f]{1,3}$", "", cleaned)
     return cleaned.strip()
@@ -81,9 +80,9 @@ class M365Client:
     def _mark_dirty(self):
         self._ws_dirty = True
 
-    async def _ensure_ws(self, conversation_id=None):
+    async def _ensure_ws(self, conversation_id=None, hex_sid=None):
         token = self.token_manager.get()
-        url, hex_sid, uuid_sid = build_url(token, conversation_id=conversation_id)
+        url, hex_sid, uuid_sid = build_url(token, hex_sid=hex_sid, conversation_id=conversation_id)
 
         ws_alive = (
             self._ws is not None
@@ -109,17 +108,17 @@ class M365Client:
         return self._ws, hex_sid, uuid_sid
 
     async def chat(self, text, tone="Magic", gpt_override=None, conversation_id=None,
-                   enable_image_gen=False, extra_options=None):
-        ws, hex_sid, uuid_sid = await self._ensure_ws(conversation_id)
+                   enable_image_gen=False, extra_options=None, hex_sid=None):
+        ws, hex_sid, uuid_sid = await self._ensure_ws(conversation_id, hex_sid=hex_sid)
         payload = build_payload(hex_sid, uuid_sid, text, tone, gpt_override,
                                 enable_image_gen=enable_image_gen, extra_options=extra_options)
         return await self._send_recv(ws, payload)
 
     async def chat_stream(self, text, tone="Magic", gpt_override=None, conversation_id=None,
-                          enable_image_gen=False, extra_options=None):
+                          enable_image_gen=False, extra_options=None, hex_sid=None):
         full_text = ""
         async for chunk, is_final in self.chat_stream_gen(text, tone, gpt_override, conversation_id,
-                                                          enable_image_gen=enable_image_gen, extra_options=extra_options):
+                                                          enable_image_gen=enable_image_gen, extra_options=extra_options, hex_sid=hex_sid):
             if not is_final:
                 sys.stdout.buffer.write(chunk.encode('utf-8'))
                 sys.stdout.flush()
@@ -127,8 +126,8 @@ class M365Client:
         return full_text
 
     async def chat_stream_gen(self, text, tone="Magic", gpt_override=None, conversation_id=None,
-                              enable_image_gen=False, extra_options=None):
-        ws, hex_sid, uuid_sid = await self._ensure_ws(conversation_id)
+                              enable_image_gen=False, extra_options=None, hex_sid=None):
+        ws, hex_sid, uuid_sid = await self._ensure_ws(conversation_id, hex_sid=hex_sid)
         payload = build_payload(hex_sid, uuid_sid, text, tone, gpt_override,
                                 enable_image_gen=enable_image_gen, extra_options=extra_options)
         await ws.send(payload + "\x1e")
@@ -161,18 +160,18 @@ class M365Client:
         yield ("", True)
 
     async def chat_conversation(self, messages, tone="Magic", gpt_override=None, conversation_id=None,
-                                enable_image_gen=False, extra_options=None):
+                                enable_image_gen=False, extra_options=None, hex_sid=None):
         result_text = ""
         async for chunk, is_final in self.chat_conversation_stream_gen(
             messages, tone, gpt_override, conversation_id,
-            enable_image_gen=enable_image_gen, extra_options=extra_options):
+            enable_image_gen=enable_image_gen, extra_options=extra_options, hex_sid=hex_sid):
             if not is_final:
                 result_text += chunk
         return clean_text(result_text), self._last_tool_calls, self._last_finish_reason
 
     async def chat_conversation_stream_gen(self, messages, tone="Magic", gpt_override=None, conversation_id=None,
-                                          enable_image_gen=False, extra_options=None):
-        ws, hex_sid, uuid_sid = await self._ensure_ws(conversation_id)
+                                          enable_image_gen=False, extra_options=None, hex_sid=None):
+        ws, hex_sid, uuid_sid = await self._ensure_ws(conversation_id, hex_sid=hex_sid)
         payload = build_conversation_payload(hex_sid, uuid_sid, messages, tone, gpt_override,
                                              enable_image_gen=enable_image_gen, extra_options=extra_options)
         await ws.send(payload + "\x1e")

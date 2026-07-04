@@ -40,7 +40,20 @@ VARIANTS = (
     "feature.MacOutlookHubToHelix,Agt_bizchat_enableGpt5ForHelix"
 )
 
-OPTIONS_SETS_FULL = [
+IMAGE_OPTIONS = frozenset({
+    "cwc_flux_image", "cwc_flux_v3", "flux_v3_progress_messages",
+    "flux_v3_references", "flux_v3_references_entities",
+    "flux_v3_image_gen_enable_dimensions",
+    "flux_v3_image_gen_enable_non_watermarked_storage",
+    "flux_v3_image_gen_enable_icon_dimensions",
+    "flux_v3_image_gen_enable_system_text_with_params",
+    "flux_v3_image_gen_enable_designer_dimensions_meta_prompting_in_system_prompts",
+    "flux_v3_image_gen_enable_story", "flux_v3_gptv_enable_upload_multi_image_in_turn_wo_ch",
+})
+
+FILE_UPLOAD_OPTIONS = frozenset({"cwc_fileupload_odb"})
+
+OPTIONS_SETS_FULL = (
     "search_result_progress_messages_with_search_queries",
     "update_textdoc_response_after_streaming",
     "deepleo_networking_timeout_10minutes_canmore",
@@ -63,7 +76,10 @@ OPTIONS_SETS_FULL = [
     "flux_v3_image_gen_enable_designer_dimensions_meta_prompting_in_system_prompts",
     "flux_v3_image_gen_enable_story", "rich_responses",
     "pages_citations", "pages_citations_multiturn",
-]
+)
+OPTIONS_SETS_FULL_NO_IMG = tuple(o for o in OPTIONS_SETS_FULL if o not in IMAGE_OPTIONS)
+OPTIONS_SETS_FULL_NO_FILE = tuple(o for o in OPTIONS_SETS_FULL if o not in FILE_UPLOAD_OPTIONS)
+OPTIONS_SETS_FULL_NO_IMG_FILE = tuple(o for o in OPTIONS_SETS_FULL_NO_IMG if o not in FILE_UPLOAD_OPTIONS)
 
 OPTIONS_SETS_LITE = [
     "search_result_progress_messages_with_search_queries",
@@ -71,19 +87,6 @@ OPTIONS_SETS_LITE = [
     "cwc_flux_image", "cwc_code_interpreter",
     "enable_batch_token_processing", "rich_responses",
 ]
-
-IMAGE_OPTIONS = frozenset({
-    "cwc_flux_image", "cwc_flux_v3", "flux_v3_progress_messages",
-    "flux_v3_references", "flux_v3_references_entities",
-    "flux_v3_image_gen_enable_dimensions",
-    "flux_v3_image_gen_enable_non_watermarked_storage",
-    "flux_v3_image_gen_enable_icon_dimensions",
-    "flux_v3_image_gen_enable_system_text_with_params",
-    "flux_v3_image_gen_enable_designer_dimensions_meta_prompting_in_system_prompts",
-    "flux_v3_image_gen_enable_story", "flux_v3_gptv_enable_upload_multi_image_in_turn_wo_ch",
-})
-
-FILE_UPLOAD_OPTIONS = frozenset({"cwc_fileupload_odb"})
 
 ALLOWED_MSG_TYPES = [
     "Chat", "Suggestion", "InternalSearchQuery", "Disengaged",
@@ -99,7 +102,6 @@ ALLOWED_MSG_TYPES = [
 
 def build_url(token, hex_sid=None, conversation_id=None):
     if not USER_OID or not TENANT_ID:
-        from .models import USER_OID as u, TENANT_ID as t
         raise ValueError(
             "M365_USER_OID and M365_TENANT_ID environment variables required.\n"
             "Get them from: https://graph.microsoft.com/v1.0/me (id and tenantId)"
@@ -122,11 +124,14 @@ def build_url(token, hex_sid=None, conversation_id=None):
 def build_payload(hex_sid, uuid_sid, text, tone="Magic", gpt_override=None,
                   enable_image_gen=False, enable_file_upload=False, extra_options=None):
     inv_id = str(uuid.uuid4())
-    options = list(OPTIONS_SETS_FULL)
-    if not enable_image_gen:
-        options = [o for o in options if o not in IMAGE_OPTIONS]
-    if not enable_file_upload:
-        options = [o for o in options if o not in FILE_UPLOAD_OPTIONS]
+    if enable_image_gen and enable_file_upload:
+        options = list(OPTIONS_SETS_FULL)
+    elif enable_image_gen:
+        options = list(OPTIONS_SETS_FULL_NO_FILE)
+    elif enable_file_upload:
+        options = list(OPTIONS_SETS_FULL_NO_IMG)
+    else:
+        options = list(OPTIONS_SETS_FULL_NO_IMG_FILE)
     if extra_options:
         options.extend(extra_options)
     p = {
@@ -196,11 +201,14 @@ def build_payload_with_tools(hex_sid, uuid_sid, text, tone="Magic", gpt_override
 def build_conversation_payload(hex_sid, uuid_sid, messages, tone="Magic", gpt_override=None,
                                enable_image_gen=False, enable_file_upload=False, extra_options=None):
     inv_id = str(uuid.uuid4())
-    options = list(OPTIONS_SETS_FULL)
-    if not enable_image_gen:
-        options = [o for o in options if o not in IMAGE_OPTIONS]
-    if not enable_file_upload:
-        options = [o for o in options if o not in FILE_UPLOAD_OPTIONS]
+    if enable_image_gen and enable_file_upload:
+        options = list(OPTIONS_SETS_FULL)
+    elif enable_image_gen:
+        options = list(OPTIONS_SETS_FULL_NO_FILE)
+    elif enable_file_upload:
+        options = list(OPTIONS_SETS_FULL_NO_IMG)
+    else:
+        options = list(OPTIONS_SETS_FULL_NO_IMG_FILE)
     if extra_options:
         options.extend(extra_options)
     m365_history = []

@@ -34,6 +34,49 @@ def _extract_json_objects(text: str):
     return results
 
 
+def detect_tool_intent(text):
+    tl = text.lower()
+    if any(w in tl for w in [
+        "what time", "current time", "time now", "date today",
+        "today's date", "what's the time", "current date",
+    ]):
+        return "get_current_time"
+    if any(w in tl for w in ["calculate", "compute", "evaluate", "solve"]):
+        return "calculate"
+    if bool(re.search(r"\d+\s*[\+\-\*\/\(\)]", tl)):
+        return "calculate"
+    if any(w in tl for w in ["dice", "roll", "die", "random number"]):
+        return "roll_dice"
+    return None
+
+
+def extract_tool_args(text, tool_name):
+    tl = text.lower()
+    if tool_name == "calculate":
+        for prefix in ["calculate ", "compute ", "evaluate ", "solve "]:
+            if prefix in tl:
+                expr = tl.split(prefix, 1)[1].strip()
+                expr = re.sub(r"[^0-9+\-*/().%\s]", "", expr)
+                if expr:
+                    return {"expression": expr}
+        matches = re.findall(r"[\d\s+\-*/().]+\d", tl)
+        if matches:
+            expr = matches[0].strip()
+            if any(op in expr for op in ["+", "-", "*", "/"]):
+                return {"expression": expr}
+    if tool_name == "roll_dice":
+        m = re.search(r"(\d+)[- ]sided", tl)
+        if m:
+            return {"sides": int(m.group(1))}
+        m = re.search(r"d(\d+)", tl)
+        if m:
+            return {"sides": int(m.group(1))}
+        return {"sides": 6}
+    if tool_name == "get_current_time":
+        return {}
+    return {}
+
+
 class ToolCallDetector:
     @staticmethod
     def _normalize_args(args):

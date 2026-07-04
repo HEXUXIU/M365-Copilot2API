@@ -6,6 +6,7 @@ from ..auth import TokenManager
 from ..client import M365Client
 from ..models import MODELS, lookup_model, TENANT_ID, USER_OID, CLIENT_ID, SCOPE
 from ..tools import provider, ToolCallDetector
+from ..tools.detector import detect_tool_intent, extract_tool_args
 from ..scripts.plugin_loader import load_user_tools
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -20,9 +21,6 @@ CONTEXT_CACHE_DIR = os.path.join(BASE_DIR, "data", "cache")
 
 ANTHROPIC_MODEL_MAP = {
     "claude-sonnet-4-20250514": "claude",
-    "claude-sonnet-4": "claude",
-    "claude-sonnet-4-20250514": "claude",
-    "claude-sonnet-4": "claude",
     "claude-3.5-sonnet": "claude",
     "gpt-5.5": "gpt5.5",
     "gpt-5.4": "gpt5.4",
@@ -43,6 +41,8 @@ def _resolve_anthropic_model(anthropic_id):
 
 
 class ContextCache:
+    ctx_cache_lock = threading.Lock()
+
     def __init__(self, cache_dir, maxsize=256):
         self.cache_dir = cache_dir
         os.makedirs(cache_dir, exist_ok=True)
@@ -60,34 +60,38 @@ class ContextCache:
         return os.path.join(self.cache_dir, f"{safe}.json")
 
     def get(self, key):
-        if key in self._mem:
-            self._order.remove(key)
-            self._order.append(key)
-            return self._mem[key]
+        with self.ctx_cache_lock:
+            if key in self._mem:
+                self._order.remove(key)
+                self._order.append(key)
+                return self._mem[key]
         p = self._path(key)
         if os.path.exists(p):
             with open(p) as f:
                 data = json.load(f)
-            self._mem[key] = data
-            self._order.append(key)
-            self._evict()
+            with self.ctx_cache_lock:
+                self._mem[key] = data
+                self._order.append(key)
+                self._evict()
             return data
         return None
 
     def set(self, key, value):
-        self._mem[key] = value
-        if key in self._order:
-            self._order.remove(key)
-        self._order.append(key)
-        self._evict()
+        with self.ctx_cache_lock:
+            self._mem[key] = value
+            if key in self._order:
+                self._order.remove(key)
+            self._order.append(key)
+            self._evict()
         p = self._path(key)
         with open(p, "w") as f:
             json.dump(value, f, ensure_ascii=False)
 
     def pop(self, key):
-        self._mem.pop(key, None)
-        if key in self._order:
-            self._order.remove(key)
+        with self.ctx_cache_lock:
+            self._mem.pop(key, None)
+            if key in self._order:
+                self._order.remove(key)
         p = self._path(key)
         if os.path.exists(p):
             os.remove(p)
@@ -169,67 +173,33 @@ def fim_to_chat(prompt, suffix=None):
     ]
 
 
+_client_lock = threading.Lock()
 _loop = None
 _tm = None
 _client = None
 
 
 def _get_loop():
-    global _loop
-    if _loop is None or _loop.is_closed():
-        _loop = asyncio.new_event_loop()
-    return _loop
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
 
 
 def _get_client():
     global _tm, _client
     if _client is None:
-        _tm = TokenManager(TENANT_ID, CLIENT_ID, SCOPE, RT_FILE, CACHE_FILE)
-        _client = M365Client(_tm)
+        with _client_lock:
+            if _client is None:
+                _tm = TokenManager(TENANT_ID, CLIENT_ID, SCOPE, RT_FILE, CACHE_FILE)
+                _client = M365Client(_tm)
     return _client
 
 
 def _run_async(coro):
-    loop = _get_loop()
-    return loop.run_until_complete(coro)
-
-
-def _detect_tool_intent(text):
-    tl = text.lower()
-    if any(w in tl for w in ["what time", "current time", "time now", "date today", "today's date", "what's the time", "current date"]):
-        return "get_current_time"
-    has_math = any(w in tl for w in ["calculate", "compute", "evaluate", "solve"])
-    has_expr = bool(re.search(r"\d+\s*[\+\-\*\/\(\)]", tl))
-    if has_math or has_expr:
-        return "calculate"
-    if any(w in tl for w in ["dice", "roll", "die", "random number"]):
-        return "roll_dice"
-    return None
-
-
-def _extract_tool_args(text, tool_name):
-    tl = text.lower()
-    if tool_name == "calculate":
-        for prefix in ["calculate ", "compute ", "evaluate ", "solve "]:
-            if prefix in tl:
-                expr = tl.split(prefix, 1)[1].strip()
-                expr = re.sub(r"[^0-9+\-*/().%\s]", "", expr)
-                if expr:
-                    return {"expression": expr}
-        matches = re.findall(r"[\d\s+\-*/().]+\d", tl)
-        if matches:
-            return {"expression": matches[0].strip()}
-    if tool_name == "roll_dice":
-        m = re.search(r"(\d+)[- ]sided", tl)
-        if m:
-            return {"sides": int(m.group(1))}
-        m = re.search(r"d(\d+)", tl)
-        if m:
-            return {"sides": int(m.group(1))}
-        return {"sides": 6}
-    if tool_name == "get_current_time":
-        return {}
-    return {}
+    return _get_loop().run_until_complete(coro)
 
 
 def _execute_tool(name, args):
@@ -340,27 +310,27 @@ class OpenAIHandler(http.server.BaseHTTPRequestHandler):
             cached = self.ctx_cache.get(f"session:{session_id}")
             if cached:
                 conv_id = cached.get("conversation_id")
+            if not conv_id:
+                conv_id = uuid.uuid4().hex
+                self.ctx_cache.set(f"session:{session_id}", {"conversation_id": conv_id})
 
-        messages = self._run_tool_loop(messages, cfg, client, conv_id)
+        messages = self._apply_intent_tools(messages)
 
         if stream:
             self._stream_chat(messages, cfg, client, conv_id)
         else:
             self._non_stream_chat(messages, cfg, client, conv_id)
 
-    def _run_tool_loop(self, messages, cfg, client, conv_id):
-        tone = cfg["tone"]
-        gpt_override = cfg["override"]
-
+    def _apply_intent_tools(self, messages):
         last_user = ""
         for m in reversed(messages):
             if m.get("role") == "user":
                 last_user = m.get("content", "")
                 break
 
-        intent = _detect_tool_intent(last_user)
+        intent = detect_tool_intent(last_user)
         if intent and intent in provider.tools:
-            args = _extract_tool_args(last_user, intent)
+            args = extract_tool_args(last_user, intent)
             result = _execute_tool(intent, args)
             logging.info(f"[tool] {intent}({args}) -> {result[:80]}")
             messages = list(messages)
@@ -368,28 +338,11 @@ class OpenAIHandler(http.server.BaseHTTPRequestHandler):
                 if m.get("role") == "user":
                     m["content"] = f"{last_user}\n\n[Tool Result: {intent} returned '{result}']"
                     break
-            return messages
-
-        for _round in range(MAX_TOOL_ROUNDS):
-            resp_text, _, _ = _run_async(
-                client.chat_conversation(messages, tone, gpt_override, conversation_id=conv_id)
-            )
-
-            detected = ToolCallDetector.detect(resp_text)
-            if not detected:
-                return messages
-
-            tool_name, tool_args = detected
-            if tool_name not in provider.tools:
-                return messages
-
-            result = _execute_tool(tool_name, tool_args)
-            logging.info(f"[tool] {tool_name}({tool_args}) -> {result[:80]}")
-            messages = list(messages)
-            messages.append({"role": "assistant", "content": resp_text})
-            messages.append({"role": "tool", "content": result, "name": tool_name})
-
         return messages
+
+    def _save_conv_id(self, session_id, conv_id):
+        if session_id and conv_id:
+            self.ctx_cache.set(f"session:{session_id}", {"conversation_id": conv_id})
 
     def _stream_chat(self, messages, cfg, client, conv_id):
         chunk_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -407,26 +360,34 @@ class OpenAIHandler(http.server.BaseHTTPRequestHandler):
         try:
             async def stream_loop():
                 has_content = False
-                full_text = ""
-                async for chunk, is_final in client.chat_conversation_stream_gen(
-                    messages, tone, gpt_override, conversation_id=conv_id):
-                    if is_final:
-                        break
-                    full_text += chunk
-                    if not has_content:
-                        self.wfile.write(sse_msg({"role": "assistant", "content": chunk}, chunk_id, openai_model).encode())
-                        has_content = True
-                    else:
-                        self.wfile.write(sse_msg({"content": chunk}, chunk_id, openai_model).encode())
+                current_messages = list(messages)
 
-                if client._last_tool_calls:
-                    if not has_content:
-                        self.wfile.write(sse_msg({"role": "assistant", "content": None}, chunk_id, openai_model).encode())
-                    for tc in client._last_tool_calls:
-                        self.wfile.write(sse_msg({
-                            "tool_calls": [{"index": 0, "id": tc["id"], "type": "function",
-                                            "function": {"name": tc["function"]["name"], "arguments": tc["function"]["arguments"]}}]
-                        }, chunk_id, openai_model).encode())
+                for _round in range(MAX_TOOL_ROUNDS + 1):
+                    full_text = ""
+                    async for chunk, is_final in client.chat_conversation_stream_gen(
+                        current_messages, tone, gpt_override, conversation_id=conv_id):
+                        if is_final:
+                            break
+                        full_text += chunk
+                        if not has_content:
+                            self.wfile.write(sse_msg({"role": "assistant", "content": chunk}, chunk_id, openai_model).encode())
+                            has_content = True
+                        else:
+                            self.wfile.write(sse_msg({"content": chunk}, chunk_id, openai_model).encode())
+
+                    detected = ToolCallDetector.detect(full_text)
+                    if not detected:
+                        break
+
+                    tool_name, tool_args = detected
+                    if tool_name not in provider.tools:
+                        break
+
+                    result = _execute_tool(tool_name, tool_args)
+                    logging.info(f"[tool] {tool_name}({tool_args}) -> {result[:80]}")
+                    current_messages = list(current_messages)
+                    current_messages.append({"role": "assistant", "content": full_text})
+                    current_messages.append({"role": "tool", "content": result, "name": tool_name})
 
                 prompt_str = str(messages)
                 usage = {
@@ -450,9 +411,23 @@ class OpenAIHandler(http.server.BaseHTTPRequestHandler):
         gpt_override = cfg["override"]
 
         try:
-            result_text, tool_calls, finish_reason = _run_async(
-                client.chat_conversation(messages, tone, gpt_override, conversation_id=conv_id)
-            )
+            current_messages = list(messages)
+            for _round in range(MAX_TOOL_ROUNDS + 1):
+                result_text, tool_calls, finish_reason = _run_async(
+                    client.chat_conversation(current_messages, tone, gpt_override, conversation_id=conv_id)
+                )
+                if not tool_calls:
+                    break
+                for tc in tool_calls:
+                    name = tc["function"]["name"]
+                    if name not in provider.tools:
+                        continue
+                    args = json.loads(tc["function"]["arguments"])
+                    result = _execute_tool(name, args)
+                    logging.info(f"[tool] {name}({args}) -> {result[:80]}")
+                    current_messages = list(current_messages)
+                    current_messages.append({"role": "assistant", "content": result_text})
+                    current_messages.append({"role": "tool", "content": result, "name": name})
         except Exception as e:
             self._send_error(500, str(e))
             return
@@ -771,3 +746,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
         server.shutdown()
+
+
+if __name__ == "__main__":
+    main()

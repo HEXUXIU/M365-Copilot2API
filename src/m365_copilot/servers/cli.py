@@ -7,6 +7,7 @@ from ..auth import TokenManager
 from ..client import M365Client
 from ..models import MODELS, TENANT_ID, USER_OID, CLIENT_ID, SCOPE
 from ..tools import provider, builtin, ToolCallDetector  # noqa: F401 (registers tools)
+from ..tools.detector import detect_tool_intent, extract_tool_args
 from ..scripts.plugin_loader import load_user_tools
 from ..cookie_store import CookieStore
 from .api import ConversationAPI
@@ -54,47 +55,12 @@ async def _tool_loop(client, text, message_history, tone, gpt_override, conversa
     return resp_text
 
 
-def detect_tool_intent(text):
-    tl = text.lower()
-    if any(w in tl for w in [
-        "what time", "current time", "time now", "date today",
-        "today's date", "what's the time", "current date",
-    ]):
-        return "get_current_time", provider.tools.get("get_current_time")
-    has_math = any(w in tl for w in ["calculate", "compute", "evaluate", "solve"])
-    has_expr = bool(re.search(r"\d+\s*[\+\-\*\/\(\)]", tl))
-    if has_math or has_expr:
-        return "calculate", provider.tools.get("calculate")
-    if any(w in tl for w in ["dice", "roll", "die", "random number"]):
-        return "roll_dice", provider.tools.get("roll_dice")
-    return None, None
-
-
-def extract_tool_args(text, tool_name):
-    tl = text.lower()
-    if tool_name == "calculate":
-        for prefix in ["calculate ", "compute ", "evaluate ", "solve "]:
-            if prefix in tl:
-                expr = tl.split(prefix, 1)[1].strip()
-                expr = re.sub(r"[^0-9+\-*/().%\s]", "", expr)
-                if expr:
-                    return {"expression": expr}
-        for expr in re.findall(r"[\d\s+\-*/().]+\d", tl):
-            expr = expr.strip()
-            if any(op in expr for op in ["+", "-", "*", "/"]):
-                return {"expression": expr}
-        return {}
-    if tool_name == "roll_dice":
-        m = re.search(r"d(\d+)", tl)
-        if m:
-            return {"sides": int(m.group(1))}
-        return {}
-    return {}
-
-
 def execute_and_prepare(text):
-    name, tool = detect_tool_intent(text)
-    if tool is None:
+    name = detect_tool_intent(text)
+    if not name:
+        return text, None
+    tool = provider.tools.get(name)
+    if not tool:
         return text, None
     args = extract_tool_args(text, name)
     try:

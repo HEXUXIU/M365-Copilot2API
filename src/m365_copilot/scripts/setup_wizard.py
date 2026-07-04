@@ -26,6 +26,10 @@ def step(title):
 
 def extract_from_console_output(raw: str):
     """Parse tenant, oid, refresh_token from browser console output."""
+    raw = re.sub(r'^粘贴\s*=>\s*', '', raw)
+    raw = re.sub(r'^PS\s+[^>]+>\s*', '', raw)
+    raw = re.sub(r'^>\s*', '', raw)
+
     tenant = oid = refresh_token = None
 
     m_oid = re.search(r"OID:\s*([a-f0-9-]+)", raw)
@@ -44,15 +48,37 @@ def extract_from_console_output(raw: str):
             refresh_token = m_rt2.group(1)
 
     if not refresh_token or refresh_token == "NOT_FOUND":
-        m_json = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m_json:
-            try:
-                data = json.loads(m_json.group())
-                tenant = tenant or data.get("tenant")
-                oid = oid or data.get("oid")
-                refresh_token = data.get("refresh_token")
-            except json.JSONDecodeError:
-                pass
+        m = re.search(r"\{", raw)
+        if m:
+            start = m.start()
+            depth = 0
+            in_string = False
+            escape = False
+            for i in range(start, len(raw)):
+                c = raw[i]
+                if escape:
+                    escape = False
+                    continue
+                if c == '\\' and in_string:
+                    escape = True
+                    continue
+                if c == '"' and not escape:
+                    in_string = not in_string
+                    continue
+                if not in_string:
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                data = json.loads(raw[start:i+1])
+                                tenant = tenant or data.get("tenant")
+                                oid = oid or data.get("oid")
+                                refresh_token = data.get("refresh_token")
+                            except json.JSONDecodeError:
+                                pass
+                            break
 
     return tenant, oid, refresh_token
 

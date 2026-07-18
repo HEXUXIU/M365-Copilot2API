@@ -19,7 +19,6 @@
 	padding: 0;
 }
 html, body {
-	overflow-x: hidden;
 	max-width: 100%;
 }
 body {
@@ -487,8 +486,10 @@ button:disabled{cursor:not-allowed;opacity:.55}
  .content{padding:20px 14px;max-width:100%;overflow-x:hidden}
  .page-head{gap:14px;align-items:flex-start}
  .page-head .btn{white-space:nowrap}
- .table-wrap{overflow-x:hidden}
+ .table-wrap{overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch}
  .table{width:100%;min-width:0;table-layout:fixed}
+ .log-table{width:max-content;min-width:760px;table-layout:auto}
+ .log-table th,.log-table td{white-space:nowrap;word-break:normal;overflow-wrap:normal}
  .table th,.table td{padding:11px 10px;min-width:0;overflow-wrap:anywhere;word-break:break-word}
  .table th:first-child,.table td:first-child{width:64%}
  .table th:nth-child(2),.table td:nth-child(2){width:22%}

@@ -6,11 +6,8 @@ M365 ChatHub gateway for **authorized Microsoft 365 Copilot sessions**. It expos
 
 ## Reference repositories
 
-- **This repository:** <https://github.com/uefi2333/m365-native>
-- **Related upstream protocol research:** <https://github.com/uefi233/m365-native> (ChatHub payload/event compatibility is maintained in this project.)
+- **M365-Copilot2API:** <https://github.com/HEXUXIU/M365-Copilot2API>
 - **Microsoft 365 Copilot:** <https://www.microsoft.com/microsoft-365/copilot>
-
-The gateway talks to the Microsoft 365 ChatHub service using the bundled authorized-account/PKCE flow. Microsoft service behavior can change without notice; treat the ChatHub integration as an upstream compatibility layer.
 
 ## Features
 

@@ -763,31 +763,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		answerReq := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, Tools: body.Tools, ToolChoice: body.ToolChoice}
 		id := "chatcmpl-" + uuid.NewString()
 		model := firstNonEmpty(body.Model, "m365-copilot")
-		var text strings.Builder
-		var streamedTools []detectedToolCall
-		_, err := s.chat.ChatWithEvents(ctx, account, answerReq, func(ev chathub.StreamEvent) error {
-			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
-				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
-				return nil
-			}
-			if ev.Kind == "text" && ev.Text != "" {
-				text.WriteString(ev.Text)
-			}
-			return nil
-		})
-		if err != nil {
-			http.Error(w, upstreamError(err), http.StatusBadGateway)
-			return
-		}
-		calls := streamedTools
-		if len(calls) == 0 {
-			calls = fencedToolCalls(text.String(), toolMaps, body.ToolChoice)
-		}
-		if len(calls) > 0 {
-			calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
-			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()})
-			return
-		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
@@ -798,9 +773,60 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprint(w, ": connected\n\n")
 		flusher.Flush()
-		delta := map[string]any{"role": "assistant", "content": text.String()}
-		chunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}}
-		fmt.Fprintf(w, "data: %s\n\n", mustJSON(chunk))
+		var text strings.Builder
+		var pending strings.Builder
+		var streamedTools []detectedToolCall
+		first := true
+		emitText := func(part string) {
+			if part == "" {
+				return
+			}
+			delta := map[string]any{"content": part}
+			if first {
+				delta["role"] = "assistant"
+				first = false
+			}
+			chunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}}
+			fmt.Fprintf(w, "data: %s\n\n", mustJSON(chunk))
+			flusher.Flush()
+		}
+		_, err := s.chat.ChatWithEvents(ctx, account, answerReq, func(ev chathub.StreamEvent) error {
+			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
+				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
+				return nil
+			}
+			if ev.Kind != "text" || ev.Text == "" {
+				return nil
+			}
+			text.WriteString(ev.Text)
+			pending.WriteString(ev.Text)
+			v := pending.String()
+			if i := strings.Index(v, "```"); i >= 0 {
+				emitText(v[:i])
+				pending.Reset()
+				pending.WriteString(v[i:])
+				return nil
+			}
+			if len(v) > 8 {
+				emitText(v[:len(v)-8])
+				pending.Reset()
+				pending.WriteString(v[len(v)-8:])
+			}
+			return nil
+		})
+		if err != nil {
+			return
+		}
+		calls := streamedTools
+		if len(calls) == 0 {
+			calls = fencedToolCalls(text.String(), toolMaps, body.ToolChoice)
+		}
+		if len(calls) > 0 {
+			calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()}, true)
+			return
+		}
+		emitText(pending.String())
 		fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 		return

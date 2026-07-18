@@ -1,0 +1,18 @@
+services:
+  m365-native:
+    build: .
+    image: m365-native:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4141:4141"
+    environment:
+      M365_LISTEN: 0.0.0.0:4141
+      M365_CONFIG: /data/accounts.json
+      M365_TOKEN_CACHE: /data/token-cache.json
+      M365_SESSION_CACHE: /data/sessions.json
+      M365_API_KEYS: /data/api-keys.json
+      M365_CHAT_TIMEOUT_SECONDS: "120"
+      M365_IMAGE_TIMEOUT_SECONDS: "150"
+    volumes:
+      - ./data:/data
+      - ./secrets/m365_admin_password:/run/secrets/m365_admin_password:ro

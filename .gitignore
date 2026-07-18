@@ -33,3 +33,5 @@ __pycache__/
 /m365-native.service
 /m365-native.rollback*
 *.log
+/data/
+/secrets/

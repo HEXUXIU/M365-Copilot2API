@@ -163,6 +163,6 @@ func (s *Server) adminChangePassword(w http.ResponseWriter, r *http.Request) {
 	s.mustChangePassword = false
 	s.adminSessions = map[string]time.Time{}
 	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Path: "/", HttpOnly: true, Secure: secureAdminCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	jsonOut(w, map[string]any{"status": "password_changed", "reauthenticate": true})
 }

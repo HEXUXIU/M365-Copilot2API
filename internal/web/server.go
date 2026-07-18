@@ -12,6 +12,7 @@ import (
 	"log"
 	"m365-native/internal/auth"
 	"m365-native/internal/chathub"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -131,6 +132,15 @@ func (s *Server) adminMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func secureAdminCookie(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	// Only trust X-Forwarded-Proto from a loopback reverse proxy.
+	host, _, _ := net.SplitHostPort(r.RemoteAddr)
+	return net.ParseIP(host).IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
 func (s *Server) validAdminSession(r *http.Request) bool {
 	c, err := r.Cookie("m365_admin_session")
 	if err != nil || c.Value == "" {
@@ -181,7 +191,7 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.adminSessions[token] = time.Now().Add(24 * time.Hour)
 	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Value: token, Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: 86400})
+	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Value: token, Path: "/", HttpOnly: true, Secure: secureAdminCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: 86400})
 	jsonOut(w, map[string]any{"status": "authenticated", "must_change_password": mustChange})
 }
 func (s *Server) adminLogout(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +200,7 @@ func (s *Server) adminLogout(w http.ResponseWriter, r *http.Request) {
 		delete(s.adminSessions, c.Value)
 		s.mu.Unlock()
 	}
-	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Path: "/", HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode, MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Path: "/", HttpOnly: true, Secure: secureAdminCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 	jsonOut(w, map[string]string{"status": "logged_out"})
 }
 func (s *Server) adminSession(w http.ResponseWriter, r *http.Request) {

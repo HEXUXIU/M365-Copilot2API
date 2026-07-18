@@ -119,9 +119,16 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	if len(calls) == 0 && strings.TrimSpace(text.String()) == "" {
-		// The upstream connection can close normally without producing a
-		// response. Do not emit a completed Responses resource with an empty
-		// message ID that clients may try to reference on the next turn.
+		// Never leave a Responses stream after response.created without a
+		// terminal event: clients otherwise render this as a successful blank
+		// answer and may reuse an incomplete response on the next turn.
+		emit("response.failed", map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id": id, "object": "response", "status": "failed", "model": model,
+				"error": map[string]any{"code": "empty_upstream_response", "message": "ChatHub returned no text or tool call"},
+			},
+		})
 		return
 	}
 	output := []any{}

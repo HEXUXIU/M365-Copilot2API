@@ -186,20 +186,19 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	var events []json.RawMessage
 	seenStreamTools := map[string]bool{}
 
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return Result{}, ctx.Err()
 		default:
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(25 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
-			if final != "" || len(deltas) > 0 {
-				break
-			}
-			return Result{}, fmt.Errorf("ws read: %w", err)
+			// Never convert a timeout or dropped WebSocket into a successful
+			// partial response. A response is complete only after SignalR type 3.
+			return Result{}, fmt.Errorf("ws read before completion: %w", err)
 		}
 		for _, part := range strings.Split(string(msg), rs) {
 			part = strings.TrimSpace(part)
@@ -326,24 +325,10 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		}
 	}
 
-	text := final
-	if text == "" {
-		text = strings.Join(deltas, "")
-	}
-	if text == "" {
-		return Result{}, fmt.Errorf("empty chathub response")
-	}
-	return Result{
-		Text:           text,
-		ConversationID: req.ConversationID,
-		SessionID:      req.SessionID,
-		RequestID:      requestID,
-		Throttling:     throttling,
-		RawResult:      rawResult,
-		Events:         events,
-		Normalized:     NormalizeEvents(events),
-		Images:         imageURLs(events),
-	}, nil
+	// Reaching the overall deadline without a SignalR completion frame is
+	// an incomplete upstream response. Do not return accumulated deltas as if
+	// they were a successful, finished answer.
+	return Result{}, fmt.Errorf("chathub response deadline exceeded before completion")
 }
 
 func buildWSURL(acc Account, sessionID, conversationID, requestID string) (string, error) {

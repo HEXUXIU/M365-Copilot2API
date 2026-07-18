@@ -6,29 +6,57 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 )
 
+type modelMapping struct {
+	PublicModel           string `json:"publicModel"`
+	UpstreamTone          string `json:"upstreamTone"`
+	DisplayName           string `json:"displayName"`
+	DefaultReasoningLevel string `json:"defaultReasoningLevel"`
+}
+
+var defaultModelMappings = []modelMapping{
+	{PublicModel: "gpt-5.6-sol", UpstreamTone: "Gpt_5_6_Reasoning", DisplayName: "GPT-5.6-Sol", DefaultReasoningLevel: "low"},
+	{PublicModel: "gpt-5.6-terra", UpstreamTone: "Gpt_5_6_Reasoning", DisplayName: "GPT-5.6-Terra", DefaultReasoningLevel: "medium"},
+	{PublicModel: "gpt-5.6-luna", UpstreamTone: "Gpt_5_6_Reasoning", DisplayName: "GPT-5.6-Luna", DefaultReasoningLevel: "medium"},
+}
+
+var publicModelID = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+var configurableCodexModels = []string{
+	"gpt-5.2",
+	"gpt-5.4",
+	"gpt-5.4-mini",
+	"gpt-5.5",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
+	"codex-auto-review",
+}
+
 type runtimeSettings struct {
-	MaxToolCallsPerTurn int    `json:"maxToolCallsPerTurn"`
-	MaxToolRounds       int    `json:"maxToolRounds"`
-	ContextWindow       int    `json:"contextWindow"`
-	MaxOutputTokens     int    `json:"maxOutputTokens"`
-	ChatTimeoutSeconds  int    `json:"chatTimeoutSeconds"`
-	ImageTimeoutSeconds int    `json:"imageTimeoutSeconds"`
-	LogLevel            string `json:"logLevel"`
-	DebugLogPath        string `json:"debugLogPath"`
-	ListenAddress       string `json:"listenAddress"`
-	ConfigPath          string `json:"configPath"`
-	TokenCachePath      string `json:"tokenCachePath"`
-	SessionCachePath    string `json:"sessionCachePath"`
-	ClientID            string `json:"clientId"`
-	Authority           string `json:"authority"`
-	RedirectURI         string `json:"redirectUri"`
-	Scope               string `json:"scope"`
-	ToolPlanningMode    string `json:"toolPlanningMode"`
+	MaxToolCallsPerTurn int            `json:"maxToolCallsPerTurn"`
+	MaxToolRounds       int            `json:"maxToolRounds"`
+	ContextWindow       int            `json:"contextWindow"`
+	MaxOutputTokens     int            `json:"maxOutputTokens"`
+	ChatTimeoutSeconds  int            `json:"chatTimeoutSeconds"`
+	ImageTimeoutSeconds int            `json:"imageTimeoutSeconds"`
+	LogLevel            string         `json:"logLevel"`
+	DebugLogPath        string         `json:"debugLogPath"`
+	ListenAddress       string         `json:"listenAddress"`
+	ConfigPath          string         `json:"configPath"`
+	TokenCachePath      string         `json:"tokenCachePath"`
+	SessionCachePath    string         `json:"sessionCachePath"`
+	ClientID            string         `json:"clientId"`
+	Authority           string         `json:"authority"`
+	RedirectURI         string         `json:"redirectUri"`
+	Scope               string         `json:"scope"`
+	ModelMappings       []modelMapping `json:"modelMappings"`
+	ToolPlanningMode    string         `json:"toolPlanningMode"`
 }
 
 type settingsStore struct {
@@ -52,6 +80,7 @@ func defaultRuntimeSettings() runtimeSettings {
 		DebugLogPath: os.Getenv("M365_DEBUG_LOG"), ListenAddress: os.Getenv("M365_LISTEN"), ConfigPath: os.Getenv("M365_CONFIG"),
 		TokenCachePath: os.Getenv("M365_TOKEN_CACHE"), SessionCachePath: os.Getenv("M365_SESSION_CACHE"), ClientID: os.Getenv("M365_CLIENT_ID"),
 		Authority: os.Getenv("M365_AUTHORITY"), RedirectURI: os.Getenv("M365_REDIRECT_URI"), Scope: os.Getenv("M365_SCOPE"),
+		ModelMappings:    append([]modelMapping(nil), defaultModelMappings...),
 		ToolPlanningMode: toolPlanningMode(os.Getenv("M365_TOOL_PLANNING_MODE")),
 	}
 }
@@ -108,6 +137,27 @@ func validateSettings(v runtimeSettings) error {
 	if v.LogLevel != "silent" && v.LogLevel != "error" && v.LogLevel != "warn" && v.LogLevel != "info" && v.LogLevel != "debug" {
 		return fmt.Errorf("日志等级必须为 silent、error、warn、info 或 debug")
 	}
+	seen := make(map[string]struct{}, len(v.ModelMappings))
+	for _, mapping := range v.ModelMappings {
+		model := strings.TrimSpace(mapping.PublicModel)
+		if !publicModelID.MatchString(model) {
+			return fmt.Errorf("公开模型 ID 只能包含字母、数字、点、下划线或连字符，且长度为 1-128")
+		}
+		key := strings.ToLower(model)
+		if _, exists := seen[key]; exists {
+			return fmt.Errorf("公开模型 ID %q 重复", model)
+		}
+		seen[key] = struct{}{}
+		if !validUpstreamTone(strings.TrimSpace(mapping.UpstreamTone)) {
+			return fmt.Errorf("上游 tone %q 不受支持", mapping.UpstreamTone)
+		}
+		if strings.TrimSpace(mapping.DisplayName) == "" {
+			return fmt.Errorf("公开模型 %q 缺少显示名称", model)
+		}
+		if _, err := normalizeReasoningEffort(mapping.DefaultReasoningLevel); err != nil || strings.TrimSpace(mapping.DefaultReasoningLevel) == "" {
+			return fmt.Errorf("公开模型 %q 的默认推理级别无效", model)
+		}
+	}
 	return nil
 }
 func (s *settingsStore) get() runtimeSettings { s.mu.RLock(); defer s.mu.RUnlock(); return s.v }
@@ -130,7 +180,7 @@ func (s *settingsStore) save(v runtimeSettings) error {
 func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		jsonOut(w, map[string]any{"settings": s.settings.get(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
+		jsonOut(w, map[string]any{"settings": s.settings.get(), "codexModels": configurableCodexModels, "upstreamTones": knownUpstreamTones(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
 	case http.MethodPut:
 		var v runtimeSettings
 		if json.NewDecoder(r.Body).Decode(&v) != nil {

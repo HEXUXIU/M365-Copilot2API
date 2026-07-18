@@ -10,8 +10,21 @@ import (
 
 type detectedToolCall struct {
 	ID        string          `json:"id"`
+	Type      string          `json:"type"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+}
+
+func toolType(name string, tools []map[string]any) string {
+	for _, t := range tools {
+		f, _ := t["function"].(map[string]any)
+		if n, _ := f["name"].(string); n == name {
+			if typ, _ := t["type"].(string); typ != "" {
+				return typ
+			}
+		}
+	}
+	return "function"
 }
 
 func allowedToolNames(tools []map[string]any) map[string]bool {
@@ -76,7 +89,7 @@ func extractToolCalls(text string, tools []map[string]any, choice any) ([]detect
 			continue
 		}
 		a, _ := json.Marshal(m["arguments"])
-		out = append(out, detectedToolCall{ID: callID(n, string(a), i), Name: n, Arguments: a})
+		out = append(out, detectedToolCall{ID: callID(n, string(a), i), Type: toolType(n, tools), Name: n, Arguments: a})
 	}
 	return out, len(out) > 0
 }

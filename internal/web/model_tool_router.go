@@ -55,7 +55,7 @@ func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]
 			continue
 		}
 		b, _ := json.Marshal(c.Arguments)
-		out = append(out, detectedToolCall{ID: callID(c.Name, string(b), i), Name: c.Name, Arguments: b})
+		out = append(out, detectedToolCall{ID: callID(c.Name, string(b), i), Type: toolType(c.Name, tools), Name: c.Name, Arguments: b})
 	}
 	return out, true
 }

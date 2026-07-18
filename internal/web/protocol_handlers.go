@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +45,12 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	r2.ContentLength = int64(len(b))
 	pr, pw := io.Pipe()
 	irw := &pipeResponseWriter{h: make(http.Header), w: pw}
-	go func() { s.openaiChat(irw, r2); _ = pw.Close() }()
+	innerDone := make(chan struct{})
+	go func() {
+		s.openaiChat(irw, r2)
+		_ = pw.Close()
+		close(innerDone)
+	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -65,8 +71,8 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	contentID := "txt_" + uuid.NewString()
 	textStarted := false
 	type tcState struct {
-		ID, Name, Args string
-		ItemID         string
+		ID, Name, Args, Type string
+		ItemID               string
 	}
 	calls := map[int]*tcState{}
 	scanner := bufio.NewScanner(pr)
@@ -99,10 +105,21 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 				tc, _ := raw.(map[string]any)
 				idx := int(tc["index"].(float64))
 				st := calls[idx]
+				typ := "function"
+				if v, ok := tc["type"].(string); ok && v == "custom" {
+					typ = "custom"
+				}
 				if st == nil {
-					st = &tcState{ItemID: "fc_" + uuid.NewString()}
+					prefix := "fc_"
+					item := map[string]any{"type": "function_call", "call_id": "", "name": "", "arguments": "", "status": "in_progress"}
+					if typ == "custom" {
+						prefix = "ctc_"
+						item = map[string]any{"type": "custom_tool_call", "call_id": "", "name": "", "input": "", "status": "in_progress"}
+					}
+					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ}
 					calls[idx] = st
-					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": idx, "item": map[string]any{"type": "function_call", "id": st.ItemID, "call_id": "", "name": "", "arguments": "", "status": "in_progress"}})
+					item["id"] = st.ItemID
+					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": idx, "item": item})
 				}
 				if v, ok := tc["id"].(string); ok {
 					st.ID = v
@@ -117,6 +134,21 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 				}
 			}
 		}
+	}
+	<-innerDone
+	if scanner.Err() != nil || irw.status >= http.StatusBadRequest {
+		status := irw.status
+		if status == 0 {
+			status = http.StatusBadGateway
+		}
+		emit("response.failed", map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id": id, "object": "response", "status": "failed", "model": model,
+				"error": map[string]any{"code": status, "message": "inner chat request failed"},
+			},
+		})
+		return
 	}
 	if len(calls) == 0 && strings.TrimSpace(text.String()) == "" {
 		// Never leave a Responses stream after response.created without a
@@ -138,6 +170,16 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			if st == nil {
 				continue
 			}
+			if st.Type == "custom" {
+				input := customToolInput(st.Args)
+				item := map[string]any{"type": "custom_tool_call", "id": "ctc_" + uuid.NewString(), "call_id": st.ID, "name": st.Name, "input": input, "status": "completed"}
+				output = append(output, item)
+				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": i, "item": map[string]any{"type": "custom_tool_call", "id": item["id"], "call_id": st.ID, "name": st.Name, "input": "", "status": "in_progress"}})
+				emit("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "output_index": i, "item_id": item["id"], "delta": input})
+				emit("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "output_index": i, "item_id": item["id"], "input": input})
+				emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
+				continue
+			}
 			item := map[string]any{"type": "function_call", "id": "fc_" + uuid.NewString(), "call_id": st.ID, "name": st.Name, "arguments": st.Args, "status": "completed"}
 			output = append(output, item)
 			emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": i, "item": map[string]any{"type": "function_call", "id": item["id"], "call_id": st.ID, "name": st.Name, "arguments": "", "status": "in_progress"}})
@@ -157,7 +199,12 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		item["content"] = []any{map[string]any{"type": "output_text", "id": contentID, "text": text.String(), "annotations": []any{}}}
 		emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": 0, "item": item})
 	}
-	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output}
+	usageOutput := text.String()
+	for _, call := range calls {
+		usageOutput += call.Name + call.Args
+	}
+	estimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, usageOutput)
+	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": estimate.Values, "m365": localUsageMetadata(estimate.Source)}
 	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
 }
 
@@ -217,6 +264,17 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		writeResponsesError(w, http.StatusBadGateway, "upstream_error", "ChatHub returned an empty response; no reusable message was created")
 		return
 	}
+	msg, _ := openAIChoice(out)
+	outputForUsage := ""
+	if msg != nil {
+		outputForUsage = fmt.Sprint(msg["content"])
+		if calls, ok := msg["tool_calls"].([]any); ok {
+			outputForUsage += fmt.Sprint(calls)
+		}
+	}
+	estimate := estimateResponsesUsage(firstNonEmpty(body.Model, "m365-copilot"), o.Messages, o.Tools, o.ToolChoice, outputForUsage)
+	out["usage"] = estimate.Values
+	out["m365_usage_source"] = estimate.Source
 	// Retain the normalized history so a subsequent previous_response_id can
 	// validate its function_call_output against the original tool call.
 	if _, ok := out["id"].(string); ok {

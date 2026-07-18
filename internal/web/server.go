@@ -564,7 +564,9 @@ func (s *Server) openaiModels(w http.ResponseWriter, r *http.Request) {
 	for _, model := range data {
 		model["created"] = created
 	}
-	jsonOut(w, map[string]any{"object": "list", "data": data})
+	// Codex v0.144.5 requires `models`, while OpenAI-compatible clients use
+	// `data`. Keep both aliases backed by the same catalog.
+	jsonOut(w, map[string]any{"object": "list", "data": data, "models": data})
 }
 
 type oaiMsg struct {

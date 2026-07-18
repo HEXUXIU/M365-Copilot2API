@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/google/uuid"
 )
@@ -18,70 +17,6 @@ func openAIChoice(v map[string]any) (map[string]any, string) {
 	m, _ := c["message"].(map[string]any)
 	finish, _ := c["finish_reason"].(string)
 	return m, finish
-}
-
-func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src map[string]any) {
-	id := firstNonEmpty(fmt.Sprint(src["m365_response_id"]), "resp_"+uuid.NewString())
-	msg, _ := openAIChoice(src)
-	var output []any
-	if calls, ok := msg["tool_calls"].([]any); ok {
-		if len(calls) > 0 {
-			output = append(output, map[string]any{"type": "message", "id": "msg_" + uuid.NewString(), "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": toolPlanSummaryFromMaps(calls), "annotations": []any{}}}})
-		}
-		for _, raw := range calls {
-			tc, _ := raw.(map[string]any)
-			fn, _ := tc["function"].(map[string]any)
-			output = append(output, map[string]any{"type": "function_call", "id": "fc_" + uuid.NewString(), "call_id": tc["id"], "name": fn["name"], "arguments": fn["arguments"], "status": "completed"})
-		}
-	} else {
-		text, _ := msg["content"].(string)
-		messageID := "msg_" + uuid.NewString()
-		output = append(output, map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}})
-	}
-	resp := map[string]any{"id": id, "object": "response", "created_at": time.Now().Unix(), "status": "completed", "model": model, "output": output}
-	if !stream {
-		jsonOut(w, resp)
-		return
-	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	f, _ := w.(http.Flusher)
-	emit := func(name string, v any) {
-		writeSSE(w, name, v)
-		if f != nil {
-			f.Flush()
-		}
-	}
-	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "status": "in_progress", "model": model, "output": []any{}}})
-	for i, item := range output {
-		m, _ := item.(map[string]any)
-		addedItem := item
-		if m["type"] == "function_call" {
-			// Arguments are streamed by function_call_arguments.delta. Starting
-			// with the completed arguments here makes conforming clients append
-			// the same JSON twice and produces an invalid `{...}{...}` value.
-			added := make(map[string]any, len(m))
-			for k, v := range m {
-				added[k] = v
-			}
-			added["arguments"] = ""
-			added["status"] = "in_progress"
-			addedItem = added
-		}
-		emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": i, "item": addedItem})
-		if m["type"] == "message" {
-			content, _ := m["content"].([]any)
-			if len(content) > 0 {
-				c, _ := content[0].(map[string]any)
-				emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": i, "content_index": 0, "delta": c["text"]})
-			}
-		} else if m["type"] == "function_call" {
-			args, _ := m["arguments"].(string)
-			emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": i, "item_id": m["id"], "delta": args})
-			emit("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "output_index": i, "item_id": m["id"], "arguments": args})
-		}
-		emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
-	}
-	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
 }
 
 func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src map[string]any) {

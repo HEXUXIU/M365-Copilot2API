@@ -1,0 +1,35 @@
+# Local credentials and runtime state
+.env
+.env.*
+!.env.example
+accounts.json
+*.token
+*.tokens
+*.har
+cookies*.txt
+/tmp/
+
+# Build artifacts
+/m365-native
+/bin/
+/dist/
+*.out
+*.log
+
+# Python/runtime artifacts
+__pycache__/
+*.py[cod]
+
+# IDE/OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local runtime and diagnostic artifacts
+/debug-logs.jsonl
+/server
+/m365-native
+/m365-native.next
+/m365-native.service
+/m365-native.rollback*
+*.log

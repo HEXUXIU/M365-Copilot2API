@@ -1,0 +1,535 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>M365 Native</title><style>
+:root {
+	color-scheme: light;
+	--bg: #f3f2f1; /* Fluent light gray background */
+	--surface: #ffffff; /* Stark white card surface */
+	--line: #e0e0e0; /* Clean light gray borders */
+	--text: #242424; /* Microsoft deep charcoal text */
+	--muted: #616161; /* Medium gray for secondary info */
+	--primary: #242424; /* Black primary buttons and dark details */
+	--primary-hover: #000000;
+	--accent-blue: #0f6cbd; /* Microsoft Fluent blue accent */
+	--green: #107c41; /* Excel green for success / online */
+	--red: #d13438; /* Warning red */
+	--sidebar: 250px;
+}
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+body {
+	background: var(--bg);
+	color: var(--text);
+	font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif;
+	font-size: 14px;
+	line-height: 1.4286;
+	-webkit-font-smoothing: antialiased;
+}
+.app {
+	display: flex;
+	min-height: 100vh;
+}
+.sidebar {
+	width: var(--sidebar);
+	background: #ffffff;
+	border-right: 1px solid var(--line);
+	padding: 24px 16px;
+	flex-shrink: 0;
+	display: flex;
+	flex-direction: column;
+}
+.logo {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	font-size: 16px;
+	font-weight: 600;
+	padding: 0 8px 28px;
+	color: var(--text);
+}
+.logo-mark {
+	width: 24px;
+	height: 24px;
+	background: #242424;
+	color: #ffffff;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 12px;
+	font-weight: 700;
+	border-radius: 4px;
+	border: 1px solid #111;
+}
+.nav-label {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	color: var(--muted);
+	padding: 0 12px;
+	margin: 16px 0 6px;
+	letter-spacing: 0.05em;
+}
+.nav {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.nav button {
+	width: 100%;
+	text-align: left;
+	background: transparent;
+	color: var(--text);
+	border: 0;
+	border-radius: 4px;
+	padding: 8px 12px;
+	cursor: pointer;
+	font: inherit;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	transition: background 0.1s ease, color 0.1s ease;
+}
+.nav button:hover {
+	background: #f3f2f1;
+}
+.nav button.active {
+	background: #edebe9;
+	font-weight: 600;
+	position: relative;
+}
+.nav button.active::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 8px;
+	bottom: 8px;
+	width: 3px;
+	background: var(--accent-blue);
+	border-radius: 0 2px 2px 0;
+}
+.sidebar-foot {
+	margin-top: auto;
+	color: var(--muted);
+	font-size: 11px;
+	padding: 12px 12px 0;
+	border-top: 1px solid var(--line);
+}
+.sidebar-foot span {
+	font-weight: 600;
+}
+.main {
+	flex: 1;
+	min-width: 0;
+	background: #faf9f8;
+	display: flex;
+	flex-direction: column;
+}
+.topbar {
+	height: 48px;
+	background: #ffffff;
+	border-bottom: 1px solid var(--line);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 32px;
+}
+.topbar h1 {
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--text);
+}
+.topbar-right {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	font-size: 13px;
+}
+.content {
+	max-width: 1200px;
+	padding: 32px;
+	flex: 1;
+}
+.page-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	margin-bottom: 24px;
+	border-bottom: 1px solid var(--line);
+	padding-bottom: 16px;
+}
+.page-head h2 {
+	font-size: 20px;
+	font-weight: 600;
+	margin-bottom: 4px;
+	color: var(--text);
+}
+.page-head p {
+	color: var(--muted);
+	font-size: 13px;
+}
+.btn {
+	border: 1px solid var(--line);
+	background: #ffffff;
+	color: var(--text);
+	border-radius: 2px;
+	padding: 6px 12px;
+	cursor: pointer;
+	font-size: 13px;
+	font-weight: 600;
+	transition: background-color 0.1s, border-color 0.1s;
+}
+.btn:hover {
+	background-color: #f3f2f1;
+	border-color: #a19f9d;
+}
+.btn.primary {
+	background: var(--primary);
+	border-color: var(--primary);
+	color: #ffffff;
+}
+.btn.primary:hover {
+	background: var(--primary-hover);
+	border-color: var(--primary-hover);
+}
+.btn.danger {
+	color: var(--red);
+	border-color: var(--line);
+}
+.btn.danger:hover {
+	background-color: #fde7e9;
+	border-color: var(--red);
+}
+.stats {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 16px;
+	margin-bottom: 24px;
+}
+.stat {
+	background: var(--surface);
+	border: 1px solid var(--line);
+	padding: 16px;
+	box-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,0.02), 0 0.3px 0.9px 0 rgba(0,0,0,0.01);
+}
+.stat-label {
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+.stat-value {
+	display: block;
+	font-size: 24px;
+	font-weight: 300;
+	margin-top: 4px;
+	color: var(--text);
+}
+.panel {
+	background: var(--surface);
+	border: 1px solid var(--line);
+	box-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,0.02), 0 0.3px 0.9px 0 rgba(0,0,0,0.01);
+}
+.panel-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 16px 20px;
+	border-bottom: 1px solid var(--line);
+}
+.panel-title {
+	font-size: 14px;
+	font-weight: 600;
+}
+.panel-sub {
+	font-size: 12px;
+	color: var(--muted);
+}
+.table-wrap {
+	overflow-x: auto;
+}
+.table {
+	width: 100%;
+	border-collapse: collapse;
+}
+.table th {
+	text-align: left;
+	color: var(--muted);
+	font-size: 12px;
+	font-weight: 600;
+	background: #fdfdfd;
+	border-bottom: 1px solid var(--line);
+}
+.table th, .table td {
+	padding: 12px 20px;
+	border-bottom: 1px solid var(--line);
+	white-space: nowrap;
+}
+.table tr:hover td {
+	background-color: #faf9f8;
+}
+.table tr:last-child td {
+	border-bottom: 0;
+}
+.account-cell {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+.avatar {
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	background: #edebe9;
+	color: var(--text);
+	display: grid;
+	place-items: center;
+	font-weight: 600;
+	font-size: 11px;
+	border: 1px solid var(--line);
+}
+.muted {
+	color: var(--muted);
+}
+.status {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--green);
+	font-size: 13px;
+	font-weight: 600;
+}
+.status i {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+}
+.empty {
+	text-align: center;
+	padding: 48px 20px;
+	color: var(--muted);
+	background: #ffffff;
+}
+.form-panel {
+	max-width: 650px;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	padding: 24px;
+	box-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,0.02), 0 0.3px 0.9px 0 rgba(0,0,0,0.01);
+}
+.form-row {
+	margin-bottom: 20px;
+}
+.form-row label {
+	display: block;
+	font-size: 13px;
+	font-weight: 600;
+	margin-bottom: 6px;
+	color: var(--text);
+}
+.input {
+	width: 100%;
+	border: 1px solid #a19f9d;
+	border-radius: 2px;
+	padding: 7px 10px;
+	outline: 0;
+	font: inherit;
+	background: #ffffff;
+	transition: border-color 0.15s ease-in-out;
+}
+.input:focus {
+	border-color: var(--accent-blue);
+	box-shadow: 0 0 0 1px var(--accent-blue);
+}
+.help {
+	font-size: 12px;
+	color: var(--muted);
+	margin-top: 6px;
+}
+.actions {
+	display: flex;
+	gap: 8px;
+}
+.notice {
+	position: fixed;
+	right: 24px;
+	bottom: 24px;
+	background: #242424;
+	color: #ffffff;
+	padding: 12px 18px;
+	border-radius: 2px;
+	display: none;
+	box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+	font-weight: 600;
+	font-size: 13px;
+	z-index: 99;
+}
+.notice.show {
+	display: block;
+}
+.auth-box {
+	margin-top: 16px;
+	padding: 16px;
+	background: #faf9f8;
+	border: 1px solid var(--line);
+}
+.auth-box a {
+	color: var(--accent-blue);
+	text-decoration: none;
+}
+.auth-box a:hover {
+	text-decoration: underline;
+}
+.modal {
+	position: fixed;
+	inset: 0;
+	background: rgba(0,0,0,0.4);
+	display: none;
+	align-items: center;
+	justify-content: center;
+	z-index: 30;
+}
+.modal.open {
+	display: flex;
+}
+.modal-card {
+	width: min(500px, calc(100vw - 32px));
+	background: var(--surface);
+	border: 1px solid var(--line);
+	box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+	padding: 24px;
+}
+.modal-card h3 {
+	margin-bottom: 8px;
+	font-size: 16px;
+	font-weight: 600;
+}
+.key-output {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	margin: 16px 0;
+	padding: 10px;
+	background: #faf9f8;
+	border: 1px solid var(--line);
+}
+.key-output code {
+	flex: 1;
+	overflow: auto;
+	white-space: nowrap;
+	font-family: Consolas, "Courier New", Courier, monospace;
+	font-size: 13px;
+}
+.copy-btn {
+	white-space: nowrap;
+}
+@media(max-width:700px){
+	.sidebar {
+		width: 48px;
+		padding: 16px 4px;
+	}
+	.logo span, .nav-label, .nav button span, .sidebar-foot {
+		display: none;
+	}
+	.logo {
+		padding-bottom: 16px;
+		justify-content: center;
+	}
+	.nav button {
+		padding: 8px 0;
+		justify-content: center;
+	}
+	.topbar {
+		padding: 0 16px;
+	}
+	.content {
+		padding: 16px;
+	}
+	.stats {
+		grid-template-columns: 1fr;
+	}
+	.topbar-right {
+		display: none;
+	}
+}
+
+/* Precision polish: interaction, hierarchy, accessibility, and responsive details. */
+:focus-visible{outline:2px solid var(--accent-blue);outline-offset:2px}
+button,.input{min-height:32px}
+button:disabled{cursor:not-allowed;opacity:.55}
+::selection{background:#cfe4f7;color:#242424}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#f3f2f1}
+::-webkit-scrollbar-thumb{background:#c8c6c4;border:3px solid #f3f2f1;border-radius:8px}
+::-webkit-scrollbar-thumb:hover{background:#a19f9d}
+.topbar-right #serviceStatus{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.topbar-right #serviceStatus::before{content:"";width:7px;height:7px;border-radius:50%;background:#107c41;box-shadow:0 0 0 3px #107c4120}
+.table td:first-child{color:#242424}
+.table td:last-child:not(:first-child){text-align:right}
+.table th:last-child{text-align:right}
+.table code,.help code,.key-output code{color:#404040;background:#f3f2f1;border:1px solid #edebe9;padding:2px 5px;border-radius:2px}
+.status{padding:3px 8px;border:1px solid #b7dfc9;background:#f1fbf5;border-radius:999px}
+.status i{width:6px;height:6px}
+.stat{position:relative;overflow:hidden}
+.stat::after{content:"";position:absolute;right:0;top:0;width:3px;height:100%;background:#0f6cbd;opacity:.7}
+.page-head .btn{flex-shrink:0}
+.panel,.form-panel,.stat{border-radius:4px}
+.btn,.input{transition:background-color .12s ease,border-color .12s ease,box-shadow .12s ease,transform .12s ease}
+.btn:active{transform:translateY(1px)}
+.empty{min-height:120px}
+.modal-card{border-radius:4px}
+.notice{border-left:3px solid #0f6cbd}
+@media(max-width:700px){
+ .content{padding:20px 14px}
+ .page-head{gap:14px;align-items:flex-start}
+ .page-head .btn{white-space:nowrap}
+ .table th,.table td{padding:11px 14px}
+ .form-panel{padding:18px}
+ .modal-card{padding:20px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+
+/* Precision polish II: Fluent console density and state presentation. */
+.nav button{position:relative}
+.nav button:not(.active)::after{content:"";position:absolute;left:12px;right:12px;bottom:0;height:1px;background:transparent}
+.nav button:focus-visible{z-index:1}
+.page-head h2{letter-spacing:-.01em}
+.page-head p{max-width:680px}
+.form-panel .form-row:last-child{margin-bottom:0}
+#settingsForm{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:20px;row-gap:0}
+#settingsForm .form-row{min-width:0}
+#settingsForm .form-row:nth-child(1),#settingsForm .form-row:nth-child(7),#settingsForm .form-row:nth-child(13){grid-column:1/-1;border-top:1px solid var(--line);padding-top:18px;margin-top:2px}
+#settingsForm .form-row:nth-child(1)::before{content:"工具调度";display:block;color:var(--text);font-size:12px;font-weight:700;letter-spacing:.04em;margin-bottom:14px;text-transform:uppercase}
+#settingsForm .form-row:nth-child(7)::before{content:"重启与运行";display:block;color:var(--text);font-size:12px;font-weight:700;letter-spacing:.04em;margin-bottom:14px;text-transform:uppercase}
+#settingsForm .form-row:nth-child(13)::before{content:"OAuth";display:block;color:var(--text);font-size:12px;font-weight:700;letter-spacing:.04em;margin-bottom:14px;text-transform:uppercase}
+#settingsForm .setting-input{background:#fff}
+#settingsForm + .help{padding:12px 14px;background:#f8f8f8;border-left:3px solid #0f6cbd}
+.auth-box:empty{display:none}
+.empty{font-size:13px}
+.empty::before{content:"○";display:block;color:#a19f9d;font-size:28px;line-height:1;margin-bottom:10px}
+.modal-card .actions{margin-top:18px}
+#keyCreated{border-top:1px solid var(--line);margin-top:20px;padding-top:2px}
+#login{background:rgba(255,255,255,.96)!important}
+#login .form-panel{box-shadow:0 12px 32px rgba(0,0,0,.08);border-top:3px solid #242424}
+#login .logo{border-bottom:1px solid var(--line);margin-bottom:22px}
+@media(max-width:760px){#settingsForm{grid-template-columns:1fr}#settingsForm .form-row:nth-child(1),#settingsForm .form-row:nth-child(7),#settingsForm .form-row:nth-child(10){grid-column:auto}}
+
+.log-filter{width:auto;min-width:120px}
+.log-table td{vertical-align:middle}
+.log-level{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;text-transform:uppercase}
+.log-info{color:#0f6cbd;background:#e8f3fb;border:1px solid #b7d7ed}
+.log-warn{color:#8a4b08;background:#fff4ce;border:1px solid #f1d27a}
+.log-error{color:#a4262c;background:#fde7e9;border:1px solid #efb5b8}
+</style></head><body><div id="login" style="position:fixed;inset:0;background:#f6f7f9;z-index:20;display:flex;align-items:center;justify-content:center"><div class="form-panel" style="width:min(380px,calc(100vw - 32px))"><div class="logo" style="padding:0 0 22px"><div class="logo-mark">M</div><span>M365 Native</span></div><h2 style="margin:0 0 5px">管理员登录</h2><p class="muted">请输入管理员密码以进入控制台。</p><form onsubmit="login(event)"><input id="adminPassword" class="input" type="password" autocomplete="current-password" placeholder="管理员密码" autofocus><button class="btn primary" style="width:100%;margin-top:14px">登录</button></form><div id="loginError" style="color:var(--red);font-size:12px;margin-top:10px"></div></div></div><div class="app" id="app" style="display:none"><aside class="sidebar"><div class="logo"><div class="logo-mark">M</div><span>M365 Native</span></div><div class="nav-label">管理</div><div class="nav"><button class="active" data-page="pool" onclick="showPage('pool')">◉ <span>账号池</span></button><button data-page="add" onclick="showPage('add')">＋ <span>添加账号</span></button><button data-page="keys" onclick="showPage('keys')">▣ <span>访问配置</span></button><button data-page="logs" onclick="showPage('logs')">≡ <span>运行日志</span></button></div><div class="nav-label">系统</div><div class="nav"><button data-page="settings" onclick="showPage('settings')">⚙ <span>设置</span></button></div><div class="sidebar-foot">M365 Native<br><span>v0.1.0</span></div></aside><main class="main"><header class="topbar"><h1 id="topTitle">账号池</h1><div class="topbar-right"><span id="serviceStatus">检查中</span><button class="btn" onclick="loadAccounts()">刷新</button></div></header><div class="content"><section id="page-pool"><div class="page-head"><div><h2>账号池</h2><p>管理已授权的 Microsoft 账号。</p></div><button class="btn primary" onclick="showPage('add')">添加账号</button></div><div class="stats"><div class="stat"><span class="stat-label">账号总数</span><b class="stat-value" id="total">—</b></div><div class="stat"><span class="stat-label">在线账号</span><b class="stat-value" id="online">—</b></div><div class="stat"><span class="stat-label">服务状态</span><b class="stat-value" id="health">—</b></div></div><div class="panel"><div class="panel-head"><span class="panel-title">账号列表</span><span class="panel-sub" id="lastUpdate"></span></div><div class="table-wrap"><table class="table"><thead><tr><th>账号</th><th>状态</th><th>更新时间</th><th></th></tr></thead><tbody id="accountRows"><tr><td colspan="4" class="empty">加载中…</td></tr></tbody></table></div></div></section><section id="page-add" style="display:none"><div class="page-head"><div><h2>添加账号</h2><p>选择一种 Microsoft OAuth 授权方式。</p></div></div><div class="form-panel"><div class="form-row"><label>浏览器授权（PKCE）</label><div class="help">点击后打开 Microsoft 登录。登录完成后，复制浏览器地址栏中的完整回调地址，粘贴到下面提交。</div><button class="btn primary" style="margin-top:10px" onclick="startPKCE()">生成并打开授权页面</button></div><div class="form-row"><label>回调地址 / 授权码</label><input class="input" id="callbackInput" placeholder="粘贴完整回调地址，或输入 code=...&state=..."><div class="help">回调地址通常包含 <code>code</code> 和 <code>state</code> 参数。</div><button class="btn" style="margin-top:10px" onclick="submitCallback()">提交回调并添加账号</button></div><div id="authBox"></div></div></section><section id="page-keys" style="display:none"><div class="page-head"><div><h2>访问配置</h2><p>API Key、接口地址与调用权限集中管理。</p></div><button class="btn primary" onclick="openKeyModal()">新建 API Key</button></div><div class="panel"><div class="panel-head"><span class="panel-title">API Keys</span><span class="panel-sub">仅在创建时显示完整密钥</span></div><div class="table-wrap"><table class="table"><thead><tr><th>名称</th><th>前缀</th><th>创建时间</th><th>最近使用</th><th>状态</th><th></th></tr></thead><tbody id="keyRows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody></table></div></div><div class="form-panel" style="margin-top:16px"><div class="form-row"><label>调用方式</label><div class="help"><code>Authorization: Bearer m365_...</code> 或 <code>X-API-Key: m365_...</code></div></div><div class="form-row"><label>OpenAI Base URL</label><input class="input" id="baseUrl2" readonly></div><div class="actions"><button class="btn danger" onclick="logout()">退出登录</button></div></div></section><section id="page-logs" style="display:none"><div class="page-head"><div><h2>运行日志</h2><p>查看 API 请求、响应状态与耗时。日志内容遵循当前日志等级设置。</p></div><div class="actions"><select id="logLevelFilter" class="input log-filter" onchange="loadLogs()"><option value="">全部等级</option><option value="error">错误</option><option value="warn">警告</option><option value="info">信息</option></select><button class="btn" onclick="loadLogs()">刷新日志</button></div></div><div class="panel"><div class="panel-head"><span class="panel-title">请求记录</span><span class="panel-sub" id="logSummary"></span></div><div class="table-wrap"><table class="table log-table"><thead><tr><th>等级</th><th>时间</th><th>请求</th><th>状态</th><th>耗时</th><th>请求 ID</th></tr></thead><tbody id="logRows"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody></table></div></div></section><section id="page-settings" style="display:none"><div class="page-head"><div><h2>设置</h2><p>工具调度、模型限制与服务运行参数。</p></div><button class="btn primary" onclick="saveSettings()">保存设置</button></div><div class="form-panel"><div class="form-row"><label>接口地址</label><input class="input" id="baseUrl" readonly></div><div id="settingsForm"></div><div class="help" style="margin-top:14px">标记“重启生效”的配置会持久化保存，但需要重启服务。敏感密钥不会在这里明文展示。</div></div></section></div></main></div><div id="keyModal" class="modal" onclick="if(event.target===this)closeKeyModal()"><div class="modal-card"><h3>创建 API Key</h3><p class="muted">为这个密钥设置一个容易识别的名称。密钥只会完整显示一次。</p><form onsubmit="createKey(event)"><div class="form-row"><label>名称</label><input class="input" id="newKeyName" value="default" autocomplete="off" autofocus></div><div class="actions"><button type="button" class="btn" onclick="closeKeyModal()">取消</button><button class="btn primary">创建并复制</button></div></form><div id="keyCreated" style="display:none"><div class="key-output"><code id="newKeyValue"></code><button class="btn copy-btn" onclick="copyCreatedKey()">复制</button></div><div class="help">已尝试写入系统剪贴板。请将此密钥保存到密码管理器中。</div><div class="actions" style="margin-top:16px"><button class="btn primary" onclick="closeKeyModal()">完成</button></div></div></div></div><div id="notice" class="notice"></div><script>
+const $=x=>document.getElementById(x);let timer;const titles={pool:'账号池',add:'添加账号',keys:'访问配置',logs:'运行日志',settings:'设置'};function note(x){$('notice').textContent=x;$('notice').classList.add('show');clearTimeout(timer);timer=setTimeout(()=>$('notice').classList.remove('show'),3500)}function headers(){return {'Content-Type':'application/json'}}async function api(u,o={}){o.headers={...headers(),...(o.headers||{})};const r=await fetch(u,o);let d={};const raw=await r.text();try{d=raw?JSON.parse(raw):{}}catch{d={error:{message:raw}}}if(!r.ok)throw Error(d?.error?.message||raw||`请求失败（${r.status}）`);return d}async function login(e){e.preventDefault();const password=$('adminPassword').value;$('loginError').textContent='';try{await fetch('/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({password})}).then(async r=>{const d=await r.json().catch(()=>({}));if(!r.ok)throw Error(d?.error?.message||'登录失败')});$('login').style.display='none';$('app').style.display='flex';loadAccounts()}catch(e){$('loginError').textContent=e.message}}
+async function logout(){await fetch('/api/admin/logout',{method:'POST',credentials:'same-origin'});location.reload()}
+async function checkSession(){try{const d=await fetch('/api/admin/session',{credentials:'same-origin'}).then(r=>r.json());if(d.authenticated){$('login').style.display='none';$('app').style.display='flex';loadAccounts();showPage(sessionStorage.getItem('m365.currentPage')||'pool')}}catch{}}
+async function loadKeys(){try{const d=await api('/api/admin/keys');const activeKeys=(d.keys||[]).filter(k=>!k.revoked);$('keyRows').innerHTML=activeKeys.map(k=>`<tr data-key-id=\"${esc(k.id)}\"><td><b>${esc(k.name)}</b></td><td><code>${esc(k.prefix)}…</code></td><td class="muted">${new Date(k.createdAt).toLocaleString()}</td><td class="muted">${k.lastUsedAt?new Date(k.lastUsedAt).toLocaleString():'未使用'}</td><td>${k.revoked?'已撤销':'有效'}</td><td>${k.revoked?'':'<button class="btn danger" onclick="revokeKey(\''+k.id+'\')">撤销</button>'}</td></tr>`).join('')||'<tr><td colspan="6" class="empty">暂无 API Key</td></tr>'}catch(e){note(e.message)}}function openKeyModal(){$('keyModal').classList.add('open');$('keyCreated').style.display='none';$('newKeyName').value='default';setTimeout(()=>$('newKeyName').focus(),50)}function closeKeyModal(){$('keyModal').classList.remove('open')}async function copyText(text){try{await navigator.clipboard.writeText(text);note('API Key 已复制到剪贴板');return true}catch(e){const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();const ok=document.execCommand('copy');ta.remove();if(ok)note('API Key 已复制到剪贴板');return ok}}async function createKey(e){e.preventDefault();const name=$('newKeyName').value.trim()||'default';try{const d=await api('/api/admin/keys',{method:'POST',body:JSON.stringify({name})});$('newKeyValue').textContent=d.key;$('keyCreated').style.display='block';await copyText(d.key);loadKeys()}catch(e){note(e.message)}}async function copyCreatedKey(){await copyText($('newKeyValue').textContent)}async function revokeKey(id){if(!confirm('撤销这个 API Key？'))return;try{await api('/api/admin/keys?id='+encodeURIComponent(id),{method:'DELETE'});const row=document.querySelector('[data-key-id=\"'+CSS.escape(id)+'\"]');if(row)row.remove();loadKeys()}catch(e){note(e.message)}}
+function showPage(p){sessionStorage.setItem('m365.currentPage',p);if(p==='keys')loadKeys();if(p==='logs')loadLogs();if(p==='settings')loadSettings();['pool','add','keys','logs','settings'].forEach(x=>{ $('page-'+x).style.display=x===p?'block':'none';document.querySelector(`[data-page="${x}"]`).classList.toggle('active',x===p)});$('topTitle').textContent=titles[p]}
+async function loadAccounts(){try{const d=await api('/api/accounts'),a=d.accounts||[];$('total').textContent=a.length;$('online').textContent=a.filter(x=>x.status==='online').length;$('accountRows').innerHTML=a.length?a.map(x=>`<tr><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0].toUpperCase()}</div><div><b>${esc(x.displayName||x.email||x.id)}</b><div class="muted">${esc(x.email||'')}</div></div></div></td><td><span class="status"><i></i>${x.status==='online'?'在线':'离线'}</span></td><td class="muted">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'—'}</td><td></td></tr>`).join(''):'<tr><td colspan="4" class="empty">暂无账号，点击“添加账号”开始。</td></tr>';$('lastUpdate').textContent='刚刚更新';$('serviceStatus').textContent='服务正常';try{await api('/api/health');$('health').textContent='正常'}catch{$('health').textContent='待验证'}}catch(e){$('accountRows').innerHTML='<tr><td colspan="4" class="empty">'+e.message+'</td></tr>';$('serviceStatus').textContent='需要配置';$('health').textContent='—'}}async function startPKCE(){try{const d=await api('/api/auth/start');if(d.url){window.open(d.url,'_blank','noopener');$('callbackInput').dataset.state=d.state;$('callbackInput').placeholder='登录完成后粘贴完整回调地址（state 已自动记录）';note('授权页面已打开，完成后粘贴回调地址')}else note('授权链接生成失败')}catch(e){note(e.message)}}async function submitCallback(){const raw=$('callbackInput').value.trim();if(!raw)return note('请粘贴回调地址或授权码');try{let u='/api/auth/callback?';if(raw.includes('://')){u+='url='+encodeURIComponent(raw)}else{const q=raw.replace(/^\?/,'');u+=q;if(!q.includes('state=')&&$('callbackInput').dataset.state)u+='&state='+encodeURIComponent($('callbackInput').dataset.state)}const d=await api(u);note('授权成功，账号已加入号池');$('callbackInput').value='';loadAccounts();showPage('pool')}catch(e){note(e.message)}}function esc(x){return String(x).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}const openAIBaseUrl=location.origin.replace(/\/$/,'')+'/v1';$('baseUrl').value=openAIBaseUrl;$('baseUrl2').value=openAIBaseUrl;checkSession();
+
+async function loadLogs(){try{const d=await api('/api/admin/debug/logs');const filter=$('logLevelFilter').value;const rows=(d.records||[]).filter(x=>!filter||x.level===filter);$('logSummary').textContent=`${rows.length} 条记录`;$('logRows').innerHTML=rows.map(x=>`<tr><td><span class="log-level log-${esc(x.level||'info')}">${esc(x.level||'info')}</span></td><td class="muted">${new Date(x.at).toLocaleString()}</td><td><code>${esc(x.method)} ${esc(x.path)}</code></td><td>${esc(x.status)}</td><td>${esc(x.durationMs)} ms</td><td><code>${esc(x.id)}</code></td></tr>`).join('')||'<tr><td colspan="6" class="empty">暂无日志记录</td></tr>'}catch(e){note(e.message)}}
+const settingFields=[['maxToolCallsPerTurn','每轮最大工具调用数','number',false],['maxToolRounds','最大工具轮次','number',false],['contextWindow','上下文窗口','number',false],['maxOutputTokens','最大输出 Token','number',false],['chatTimeoutSeconds','聊天超时（秒）','number',false],['imageTimeoutSeconds','图片超时（秒）','number',false],['logLevel','日志等级','select',false],['debugLogPath','调试日志路径','text',true],['listenAddress','监听地址','text',true],['configPath','账号配置路径','text',true],['tokenCachePath','Token 缓存路径','text',true],['sessionCachePath','会话缓存路径','text',true],['clientId','OAuth Client ID','text',true],['authority','OAuth Authority','text',true],['redirectUri','OAuth 回调地址','text',true],['scope','OAuth Scope','text',true]];
+async function loadSettings(){try{const d=await api('/api/admin/settings');const v=d.settings||{};$('settingsForm').innerHTML=settingFields.map(([k,l,t,restart])=>`<div class="form-row"><label>${l}${restart?' <span class="muted">（重启生效）</span>':''}</label>${t==='select'?`<select class="input setting-input" data-key="${k}"><option value="silent" ${v[k]==='silent'?'selected':''}>静默</option><option value="error" ${v[k]==='error'?'selected':''}>错误</option><option value="warn" ${v[k]==='warn'?'selected':''}>警告</option><option value="info" ${v[k]==='info'?'selected':''}>信息</option><option value="debug" ${v[k]==='debug'?'selected':''}>调试</option></select>`:`<input class="input setting-input" data-key="${k}" type="${t}" value="${esc(v[k]??'')}">`}</div>`).join('')}catch(e){note(e.message)}}
+async function saveSettings(){try{const v={};document.querySelectorAll('.setting-input').forEach(x=>v[x.dataset.key]=x.type==='number'?Number(x.value):x.value);await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(v)});note('设置已保存；重启项将在服务重启后生效')}catch(e){note(e.message)}}
+</script></body></html>

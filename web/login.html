@@ -1,0 +1,160 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>M365 Native 管理员登录</title><style>
+:root {
+	color-scheme: light;
+	--bg: #f3f2f1; /* Fluent light gray background */
+	--surface: #ffffff; /* Stark white card surface */
+	--line: #edebe9; /* Clean light gray borders */
+	--text: #242424; /* Microsoft deep charcoal text */
+	--muted: #616161; /* Medium gray for secondary info */
+	--primary: #242424; /* Black primary buttons */
+	--primary-hover: #000000;
+	--accent-blue: #0f6cbd; /* Microsoft Fluent blue accent */
+	--red: #d13438; /* Warning red */
+}
+* {
+	box-sizing: border-box;
+}
+body {
+	margin: 0;
+	min-height: 100vh;
+	display: grid;
+	place-items: center;
+	background: var(--bg);
+	color: var(--text);
+	font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", sans-serif;
+	font-size: 14px;
+	line-height: 1.4286;
+	-webkit-font-smoothing: antialiased;
+}
+.card {
+	width: min(390px, calc(100vw - 32px));
+	background: var(--surface);
+	border: 1px solid var(--line);
+	padding: 32px;
+	box-shadow: 0 1.6px 3.6px 0 rgba(0,0,0,0.02), 0 0.3px 0.9px 0 rgba(0,0,0,0.01);
+}
+.brand {
+	font-size: 16px;
+	font-weight: 600;
+	margin-bottom: 24px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.brand i {
+	display: inline-block;
+	width: 20px;
+	height: 20px;
+	background: conic-gradient(#f25022 0 25%,#7fba00 0 50%,#00a4ef 0 75%,#ffb900 0);
+	border-radius: 2px;
+}
+h1 {
+	font-size: 20px;
+	font-weight: 600;
+	margin: 0 0 6px;
+	color: var(--text);
+}
+p {
+	color: var(--muted);
+	margin: 0 0 20px;
+	font-size: 13px;
+}
+.warning {
+	padding: 12px;
+	background: #fde7e9;
+	border: 1px solid var(--red);
+	color: var(--red);
+	margin-bottom: 16px;
+	font-size: 13px;
+}
+.field {
+	margin: 16px 0;
+}
+label {
+	display: block;
+	font-weight: 600;
+	font-size: 13px;
+	margin-bottom: 6px;
+}
+input {
+	width: 100%;
+	padding: 8px 10px;
+	border: 1px solid #a19f9d;
+	border-radius: 2px;
+	font: inherit;
+	background: #ffffff;
+	outline: 0;
+	transition: border-color 0.15s ease-in-out;
+}
+input:focus {
+	border-color: var(--accent-blue);
+	box-shadow: 0 0 0 1px var(--accent-blue);
+}
+button {
+	width: 100%;
+	border: 1px solid var(--primary);
+	background: var(--primary);
+	color: white;
+	padding: 8px;
+	margin-top: 12px;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+	border-radius: 2px;
+	transition: background-color 0.1s, border-color 0.1s;
+}
+button:hover {
+	background: var(--primary-hover);
+	border-color: var(--primary-hover);
+}
+.error {
+	color: var(--red);
+	font-size: 12px;
+	margin-top: 10px;
+	min-height: 18px;
+}
+[hidden] {
+	display: none !important;
+}
+
+/* Precision polish: interaction, hierarchy, accessibility, and responsive details. */
+:focus-visible{outline:2px solid var(--accent-blue);outline-offset:2px}
+button,.input{min-height:32px}
+button:disabled{cursor:not-allowed;opacity:.55}
+::selection{background:#cfe4f7;color:#242424}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:#f3f2f1}
+::-webkit-scrollbar-thumb{background:#c8c6c4;border:3px solid #f3f2f1;border-radius:8px}
+::-webkit-scrollbar-thumb:hover{background:#a19f9d}
+.topbar-right #serviceStatus{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600}
+.topbar-right #serviceStatus::before{content:"";width:7px;height:7px;border-radius:50%;background:#107c41;box-shadow:0 0 0 3px #107c4120}
+.table td:first-child{color:#242424}
+.table td:last-child:not(:first-child){text-align:right}
+.table th:last-child{text-align:right}
+.table code,.help code,.key-output code{color:#404040;background:#f3f2f1;border:1px solid #edebe9;padding:2px 5px;border-radius:2px}
+.status{padding:3px 8px;border:1px solid #b7dfc9;background:#f1fbf5;border-radius:999px}
+.status i{width:6px;height:6px}
+.stat{position:relative;overflow:hidden}
+.stat::after{content:"";position:absolute;right:0;top:0;width:3px;height:100%;background:#0f6cbd;opacity:.7}
+.page-head .btn{flex-shrink:0}
+.panel,.form-panel,.stat{border-radius:4px}
+.btn,.input{transition:background-color .12s ease,border-color .12s ease,box-shadow .12s ease,transform .12s ease}
+.btn:active{transform:translateY(1px)}
+.empty{min-height:120px}
+.modal-card{border-radius:4px}
+.notice{border-left:3px solid #0f6cbd}
+@media(max-width:700px){
+ .content{padding:20px 14px}
+ .page-head{gap:14px;align-items:flex-start}
+ .page-head .btn{white-space:nowrap}
+ .table th,.table td{padding:11px 14px}
+ .form-panel{padding:18px}
+ .modal-card{padding:20px}
+}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
+
+/* Precision polish II: focused login surface. */
+.card{border-top:3px solid #242424;border-radius:4px}
+.brand{border-bottom:1px solid var(--line);padding-bottom:18px}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent-blue);outline-offset:2px}
+</style></head><body><main class="card"><div class="brand"><i></i>M365 Native</div><section id="login"><h1>管理员登录</h1><p>请输入管理员密码以进入控制台。</p><form id="loginForm"><div class="field"><label for="password">管理员密码</label><input id="password" type="password" autocomplete="current-password" required autofocus></div><button>登录</button></form><div class="error" id="loginError"></div></section><section id="change" hidden><h1>必须立即修改默认密码</h1><div class="warning">当前仍在使用初始密码。为了保护账号池、OAuth 凭据和 API Key，在设置新密码前不能进入任何管理功能。</div><form id="changeForm"><div class="field"><label for="current">当前密码</label><input id="current" type="password" autocomplete="current-password" required></div><div class="field"><label for="next">新密码（至少 12 个字符）</label><input id="next" type="password" autocomplete="new-password" minlength="12" required></div><div class="field"><label for="confirm">再次输入新密码</label><input id="confirm" type="password" autocomplete="new-password" minlength="12" required></div><button>修改密码并重新登录</button></form><div class="error" id="changeError"></div></section></main><script>const $=id=>document.getElementById(id);async function request(url,body){const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),raw=await r.text();let d={};try{d=JSON.parse(raw)}catch{}if(!r.ok){const e=new Error(d?.error?.message||raw||'请求失败');e.status=r.status;throw e}return d}function requireChange(current=''){$('login').hidden=true;$('change').hidden=false;$('current').value=current;$('next').focus()}$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';const password=$('password').value;try{const d=await request('/api/admin/login',{password});if(d.must_change_password)requireChange(password);else location.replace('/')}catch(x){$('loginError').textContent=x.status===429?'失败次数过多，请稍后再试。':x.message}});$('changeForm').addEventListener('submit',async e=>{e.preventDefault();$('changeError').textContent='';if($('next').value!==$('confirm').value){$('changeError').textContent='两次输入的新密码不一致';return}try{await request('/api/admin/change-password',{current_password:$('current').value,new_password:$('next').value});alert('密码修改成功。所有旧会话已失效，请使用新密码重新登录。');location.replace('/')}catch(x){$('changeError').textContent=x.message}});fetch('/api/admin/session',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{if(d.authenticated&&d.must_change_password)requireChange();else if(d.authenticated)location.replace('/')}).catch(()=>{});</script></body></html>

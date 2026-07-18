@@ -118,7 +118,12 @@ func (d *debugStore) get(id string) (debugRecord, bool) {
 	return debugRecord{}, false
 }
 
-const maxDebugCaptureBytes = 256 << 10
+const (
+	maxDebugCaptureBytes = 256 << 10
+	// Keep debug snapshots bounded without truncating the request forwarded to
+	// the actual handler. Images and audio data URLs commonly exceed 256 KiB.
+	maxDebugRequestBytes = 10 << 20
+)
 
 type limitedBuffer struct {
 	bytes.Buffer
@@ -167,7 +172,13 @@ func (s *Server) debugMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		in, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDebugCaptureBytes))
+		in, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDebugRequestBytes))
+		if err != nil {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		// Forward the complete body; redactBody applies the smaller capture
+		// limit only when writing the debug record.
 		r.Body = io.NopCloser(bytes.NewReader(in))
 		cw := &captureWriter{ResponseWriter: w}
 		start := time.Now()

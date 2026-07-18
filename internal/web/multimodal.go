@@ -23,11 +23,17 @@ func parseContent(c any) (string, []chathub.Attachment) {
 			continue
 		}
 		typ, _ := m["type"].(string)
+		// Responses API uses input_text and may put image_url directly on
+		// the content item rather than nesting it under image_url.
+		if v, ok := m["text"].(string); ok && (typ == "text" || typ == "input_text" || typ == "") {
+			text.WriteString(v)
+		}
+		if direct, ok := m["image_url"].(string); ok && direct != "" {
+			files = append(files, chathub.Attachment{Type: "image", URL: direct, MimeType: "image/*"})
+		}
 		switch typ {
-		case "text":
-			if v, ok := m["text"].(string); ok {
-				text.WriteString(v)
-			}
+		case "text", "input_text":
+			// handled above
 		case "image_url":
 			if u, ok := m["image_url"].(map[string]any); ok {
 				if v, ok := u["url"].(string); ok {

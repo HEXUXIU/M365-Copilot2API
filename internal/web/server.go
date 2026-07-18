@@ -630,7 +630,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	raw, err := io.ReadAll(r.Body)
+	const maxChatRequestBody = 10 << 20
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxChatRequestBody))
 	if err != nil {
 		http.Error(w, "read body", http.StatusBadRequest)
 		return

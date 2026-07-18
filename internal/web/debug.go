@@ -118,10 +118,30 @@ func (d *debugStore) get(id string) (debugRecord, bool) {
 	return debugRecord{}, false
 }
 
+const maxDebugCaptureBytes = 256 << 10
+
+type limitedBuffer struct {
+	bytes.Buffer
+	truncated bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.Len() >= maxDebugCaptureBytes {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > maxDebugCaptureBytes-b.Len() {
+		_, _ = b.Buffer.Write(p[:maxDebugCaptureBytes-b.Len()])
+		b.truncated = true
+		return len(p), nil
+	}
+	return b.Buffer.Write(p)
+}
+
 type captureWriter struct {
 	http.ResponseWriter
 	status int
-	body   bytes.Buffer
+	body   limitedBuffer
 }
 
 func (c *captureWriter) WriteHeader(s int) { c.status = s; c.ResponseWriter.WriteHeader(s) }
@@ -147,7 +167,7 @@ func (s *Server) debugMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		in, _ := io.ReadAll(r.Body)
+		in, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDebugCaptureBytes))
 		r.Body = io.NopCloser(bytes.NewReader(in))
 		cw := &captureWriter{ResponseWriter: w}
 		start := time.Now()

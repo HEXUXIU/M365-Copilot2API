@@ -5,6 +5,7 @@ import (
 	"m365-native/internal/web"
 	"net/http"
 	"os"
+	"time"
 )
 
 func main() {
@@ -18,5 +19,13 @@ func main() {
 		listen = v
 	}
 	log.Printf("m365-native listening on http://%s\\n", listen)
-	log.Fatal(http.ListenAndServe(listen, s.Routes()))
+	server := &http.Server{
+		Addr:              listen,
+		Handler:           s.Routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		WriteTimeout:      0, // streaming endpoints need an open-ended write window.
+	}
+	log.Fatal(server.ListenAndServe())
 }

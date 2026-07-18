@@ -16,8 +16,8 @@ type reasoningConfig struct {
 }
 
 type modelSpec struct {
-	ID, Owner string
-	Tools     bool
+	ID, Owner, DisplayName, DefaultReasoningLevel string
+	Tools                                         bool
 }
 
 type reasoningEffortPreset struct {
@@ -65,6 +65,59 @@ var gatewayModels = []modelSpec{
 	{ID: "claude-sonnet-reasoning", Owner: "anthropic-via-microsoft-365", Tools: true},
 }
 
+func validUpstreamTone(tone string) bool {
+	for _, known := range knownUpstreamTones() {
+		if tone == known {
+			return true
+		}
+	}
+	return false
+}
+
+func knownUpstreamTones() []string {
+	return []string{"Gpt_5_2_Chat", "Gpt_5_2_Reasoning", "Gpt_5_3_Chat", "Gpt_5_4_Chat", "Gpt_5_4_Reasoning", "Gpt_5_5_Chat", "Gpt_5_5_Reasoning", "Gpt_5_6_Reasoning", "Gpt_Quick", "Gpt_Reasoning", "Claude_Sonnet", "Claude_Sonnet_Reasoning"}
+}
+
+func configuredModelMapping(model string, mappings []modelMapping) (modelMapping, bool) {
+	model = strings.ToLower(strings.TrimSpace(model))
+	for _, mapping := range mappings {
+		if strings.EqualFold(strings.TrimSpace(mapping.PublicModel), model) {
+			return mapping, true
+		}
+	}
+	return modelMapping{}, false
+}
+
+func configuredModelTone(model string, mappings []modelMapping) (string, bool) {
+	mapping, ok := configuredModelMapping(model, mappings)
+	if !ok {
+		return "", false
+	}
+	return mapping.UpstreamTone, true
+}
+
+func configuredModelSpecs(mappings []modelMapping) []modelSpec {
+	models := append([]modelSpec(nil), gatewayModels...)
+	for _, mapping := range mappings {
+		spec := modelSpec{
+			ID: strings.TrimSpace(mapping.PublicModel), Owner: "microsoft-365", Tools: true,
+			DisplayName: strings.TrimSpace(mapping.DisplayName), DefaultReasoningLevel: strings.TrimSpace(mapping.DefaultReasoningLevel),
+		}
+		replaced := false
+		for i := range models {
+			if strings.EqualFold(models[i].ID, spec.ID) {
+				models[i] = spec
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			models = append(models, spec)
+		}
+	}
+	return models
+}
+
 func positiveEnvInt(name string, fallback int) int {
 	v, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
 	if err == nil && v > 0 {
@@ -100,6 +153,9 @@ func reasoningTone(model, effort string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if tone, ok := configuredModelTone(model, currentSettings().ModelMappings); ok {
+		return tone, nil
+	}
 	base := modelTone(model)
 	// Explicit reasoning aliases are never silently downgraded by a generic client default.
 	if strings.Contains(strings.ToLower(model), "reasoning") {
@@ -127,8 +183,9 @@ func reasoningTone(model, effort string) (string, error) {
 }
 func modelCatalog() []map[string]any {
 	l := configuredModelLimits()
-	out := make([]map[string]any, 0, len(gatewayModels))
-	for _, m := range gatewayModels {
+	models := configuredModelSpecs(currentSettings().ModelMappings)
+	out := make([]map[string]any, 0, len(models))
+	for _, m := range models {
 		// Keep capability fields both at the top level and under capabilities:
 		// different OpenAI-compatible clients inspect different locations.
 		features := []string{"tools", "function_calling", "streaming", "reasoning", "vision"}
@@ -142,10 +199,18 @@ func modelCatalog() []map[string]any {
 			"vision": true, "modalities": modalities, "input_modalities": modalities,
 			"output_modalities": []string{"text"}, "supported_features": features,
 		}
+		displayName := m.DisplayName
+		if displayName == "" {
+			displayName = m.ID
+		}
+		defaultReasoningLevel := m.DefaultReasoningLevel
+		if defaultReasoningLevel == "" {
+			defaultReasoningLevel = "medium"
+		}
 		out = append(out, map[string]any{
-			"id": m.ID, "slug": m.ID, "display_name": m.ID, "description": "Microsoft 365 gateway model route.",
+			"id": m.ID, "slug": m.ID, "display_name": displayName, "description": "Microsoft 365 gateway model route.",
 			"base_instructions": gatewayCodexBaseInstructions, "model_messages": codexModelMessages(),
-			"default_reasoning_level": "medium", "object": "model", "owned_by": m.Owner,
+			"default_reasoning_level": defaultReasoningLevel, "object": "model", "owned_by": m.Owner,
 			"shell_type": "shell_command", "visibility": "list", "supported_in_api": true, "priority": 1,
 			"additional_speed_tiers": []string{}, "service_tiers": []any{},
 			"availability_nux": nil, "upgrade": nil, "include_skills_usage_instructions": false,

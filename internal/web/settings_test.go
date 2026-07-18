@@ -37,3 +37,24 @@ func TestSettingsPersistAndValidate(t *testing.T) {
 		t.Fatal("expected validation error")
 	}
 }
+
+func TestModelMappingsValidate(t *testing.T) {
+	v := defaultRuntimeSettings()
+	v.ModelMappings = []modelMapping{{PublicModel: "gpt-5.6-sol", UpstreamTone: "Gpt_5_6_Reasoning", DisplayName: "GPT-5.6-Sol", DefaultReasoningLevel: "low"}}
+	if err := validateSettings(v); err != nil {
+		t.Fatal(err)
+	}
+	v.ModelMappings[0].UpstreamTone = "unknown"
+	if err := validateSettings(v); err == nil {
+		t.Fatal("accepted unknown upstream tone")
+	}
+	v.ModelMappings[0].UpstreamTone = "Gpt_5_6_Reasoning"
+	v.ModelMappings = append(v.ModelMappings, v.ModelMappings[0])
+	if err := validateSettings(v); err == nil {
+		t.Fatal("accepted duplicate public model")
+	}
+	v.ModelMappings = []modelMapping{{PublicModel: "custom-codex-route", UpstreamTone: "Gpt_5_6_Reasoning", DisplayName: "Custom Codex Route", DefaultReasoningLevel: "medium"}}
+	if err := validateSettings(v); err != nil {
+		t.Fatalf("rejected custom public model: %v", err)
+	}
+}

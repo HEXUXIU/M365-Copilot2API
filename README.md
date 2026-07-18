@@ -157,6 +157,13 @@ The public model IDs are gateway aliases. The current stable catalog is:
 
 Availability and latency remain controlled by Microsoft 365 ChatHub and the account entitlement.
 
+The administrator Settings page can add or override public model mappings. A
+mapping publishes its public model ID in `/v1/models` and routes requests to a
+known ChatHub tone. It preloads the current Codex GPT-5.6 `Sol`, `Terra`, and
+`Luna` aliases, suggests the bundled Codex model IDs, and also permits a custom
+public ID. The gateway continues to advertise its configured context limit,
+not a bundled Codex model's larger local limit.
+
 ## Configuration
 
 Common environment variables:

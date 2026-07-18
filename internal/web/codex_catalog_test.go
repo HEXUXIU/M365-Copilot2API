@@ -62,8 +62,8 @@ func TestModelsAdvertiseContextAndReasoning(t *testing.T) {
 		if m["slug"] != m["id"] {
 			t.Fatalf("missing or inconsistent slug: %#v", m)
 		}
-		if m["display_name"] != m["id"] {
-			t.Fatalf("missing or inconsistent display_name: %#v", m)
+		if displayName, ok := m["display_name"].(string); !ok || displayName == "" {
+			t.Fatalf("missing display_name: %#v", m)
 		}
 		levels, ok := m["supported_reasoning_levels"].([]any)
 		if !ok || len(levels) == 0 {
@@ -75,7 +75,8 @@ func TestModelsAdvertiseContextAndReasoning(t *testing.T) {
 				t.Fatalf("invalid reasoning preset: %#v", level)
 			}
 		}
-		if m["default_reasoning_level"] != "medium" || m["description"] == "" {
+		defaultReasoningLevel, ok := m["default_reasoning_level"].(string)
+		if effort, err := normalizeReasoningEffort(defaultReasoningLevel); !ok || err != nil || effort == "" || m["description"] == "" {
 			t.Fatalf("missing Codex catalog metadata: %#v", m)
 		}
 		if m["shell_type"] != "shell_command" || m["visibility"] != "list" || m["supported_in_api"] != true || m["priority"] != float64(1) {
@@ -132,6 +133,25 @@ func TestModelsAdvertiseContextAndReasoning(t *testing.T) {
 		if m["base_instructions"] != body.Data[i]["base_instructions"] || m["model_messages"] == nil {
 			t.Fatalf("models alias missing instruction metadata at %d: %#v", i, m)
 		}
+	}
+}
+
+func TestConfiguredModelMappingsDriveCatalogAndRouting(t *testing.T) {
+	mappings := []modelMapping{{PublicModel: "gpt-5.6-sol", UpstreamTone: "Gpt_5_6_Reasoning", DisplayName: "GPT-5.6-Sol", DefaultReasoningLevel: "low"}}
+	models := configuredModelSpecs(mappings)
+	if len(models) != len(gatewayModels)+1 || models[len(models)-1].ID != "gpt-5.6-sol" || models[len(models)-1].DefaultReasoningLevel != "low" {
+		t.Fatalf("configured models=%#v", models)
+	}
+	mapping, ok := configuredModelMapping("GPT-5.6-SOL", mappings)
+	if !ok || mapping.UpstreamTone != "Gpt_5_6_Reasoning" {
+		t.Fatalf("mapping=%#v ok=%t", mapping, ok)
+	}
+	if tone, ok := configuredModelTone("gpt-5.6-sol", mappings); !ok || tone != "Gpt_5_6_Reasoning" {
+		t.Fatalf("tone=%q ok=%t", tone, ok)
+	}
+	override := configuredModelSpecs([]modelMapping{{PublicModel: "gpt-5.5", UpstreamTone: "Gpt_5_5_Reasoning", DisplayName: "GPT-5.5", DefaultReasoningLevel: "high"}})
+	if len(override) != len(gatewayModels) || override[5].DefaultReasoningLevel != "high" {
+		t.Fatalf("built-in override=%#v", override)
 	}
 }
 

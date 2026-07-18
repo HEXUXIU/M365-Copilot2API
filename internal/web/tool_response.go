@@ -56,9 +56,9 @@ func toolPlanFor(name string, arguments []byte) string {
 		if len([]rune(target)) > 180 {
 			target = string([]rune(target)[:180]) + "…"
 		}
-		return fmt.Sprintf("我将执行：%s。\\n\\n目的：%s。\\n\\n预期：返回结果后继续处理。", verb+"："+target, purpose)
+		return fmt.Sprintf("我将执行：%s。\n\n目的：%s。\n\n预期：返回结果后继续处理。", verb+"："+target, purpose)
 	}
-	return fmt.Sprintf("我将执行：%s。\\n\\n目的：%s。\\n\\n预期：返回结果后继续处理。", verb, purpose)
+	return fmt.Sprintf("我将执行：%s。\n\n目的：%s。\n\n预期：返回结果后继续处理。", verb, purpose)
 }
 
 func toolPlanSummaryFromMaps(calls []any) string {

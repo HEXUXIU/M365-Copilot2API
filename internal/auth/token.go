@@ -113,12 +113,6 @@ func requestToken(form url.Values) (TokenSet, error) {
 			set.TenantID = firstNonEmpty(set.TenantID, claims["tid"], claims["tenant_id"])
 		}
 	}
-	if set.TenantID == "" {
-		return TokenSet{}, fmt.Errorf("token rejected: missing tenant ID")
-	}
-	if set.TenantID != DefaultTenantID {
-		return TokenSet{}, fmt.Errorf("token rejected: tenant %s is not allowed", set.TenantID)
-	}
 	return set, nil
 }
 

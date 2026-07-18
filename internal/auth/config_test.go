@@ -6,14 +6,13 @@ import (
 	"testing"
 )
 
-func TestDefaultAuthorityIsSingleTenant(t *testing.T) {
+func TestDefaultAuthorityIsMultitenant(t *testing.T) {
 	t.Setenv("M365_AUTHORITY", "")
-	want := "https://login.microsoftonline.com/" + DefaultTenantID
-	if got := Authority(); got != want {
-		t.Fatalf("Authority() = %q, want %q", got, want)
+	if got := Authority(); got != "https://login.microsoftonline.com/common" {
+		t.Fatalf("Authority() = %q", got)
 	}
-	if strings.Contains(AuthorizeEndpoint(), "/common/") {
-		t.Fatal("default authorize endpoint must not be multitenant")
+	if !strings.Contains(AuthorizeEndpoint(), "/common/") {
+		t.Fatal("default authorize endpoint must be multitenant")
 	}
 }
 

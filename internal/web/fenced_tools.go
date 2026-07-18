@@ -22,7 +22,7 @@ func fencedToolCalls(text string, tools []map[string]any, choice any) []detected
 			continue
 		}
 		b, _ := json.Marshal(v)
-		out = append(out, detectedToolCall{ID: callID(name, string(b), len(out)), Name: name, Arguments: b})
+		out = append(out, detectedToolCall{ID: callID(name, string(b), len(out)), Type: toolType(name, tools), Name: name, Arguments: b})
 	}
 	return out
 }

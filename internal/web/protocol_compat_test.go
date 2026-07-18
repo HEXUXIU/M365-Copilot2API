@@ -10,6 +10,31 @@ func TestResponsesToOpenAI(t *testing.T) {
 	}
 }
 
+func TestResponsesCustomExecToOpenAI(t *testing.T) {
+	r := responsesRequest{Model: "m", Input: "inspect", Tools: []map[string]any{{"type": "custom", "name": "exec", "description": "run a command", "format": map[string]any{"type": "grammar"}}}}
+	o, err := r.openAI()
+	if err != nil || len(o.Tools) != 1 || o.Tools[0].Type != "custom" {
+		t.Fatalf("tools=%+v err=%v", o.Tools, err)
+	}
+	if string(o.Tools[0].Function) == "" || !containsJSON(o.Tools[0].Function, "input") {
+		t.Fatalf("custom exec did not receive an input schema: %s", o.Tools[0].Function)
+	}
+}
+
+func TestResponsesCustomToolOutputToOpenAI(t *testing.T) {
+	r := responsesRequest{Input: []any{
+		map[string]any{"type": "custom_tool_call", "call_id": "call_exec", "name": "exec", "input": "uname -s"},
+		map[string]any{"type": "custom_tool_call_output", "call_id": "call_exec", "output": "Linux"},
+	}}
+	o, err := r.openAI()
+	if err != nil || len(o.Messages) != 2 || o.Messages[0].Role != "assistant" || o.Messages[0].ToolCalls[0]["type"] != "custom" || o.Messages[1].Role != "tool" || o.Messages[1].ToolCallID != "call_exec" {
+		t.Fatalf("messages=%+v err=%v", o.Messages, err)
+	}
+	if err := validateToolConversation(o.Messages); err != nil {
+		t.Fatalf("custom tool continuation rejected: %v", err)
+	}
+}
+
 func TestAnthropicToOpenAI(t *testing.T) {
 	r := anthropicRequest{Model: "m", System: any("be concise"), Messages: []anthropicMessage{{Role: "user", Content: any("weather")}}, Tools: []anthropicTool{{Name: "weather", InputSchema: map[string]any{"type": "object"}}}}
 	o, err := r.openAI()

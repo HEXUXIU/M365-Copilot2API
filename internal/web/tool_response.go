@@ -95,7 +95,11 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, cal
 			emit(base(map[string]any{"role": "assistant", "content": summary, "reasoning_content": summary}, nil))
 		}
 		for i, tc := range calls {
-			emit(base(map[string]any{"tool_calls": []any{map[string]any{"index": i, "id": tc.ID, "type": "function", "function": map[string]any{"name": tc.Name, "arguments": string(tc.Arguments)}}}}, nil))
+			typ := tc.Type
+			if typ == "" {
+				typ = "function"
+			}
+			emit(base(map[string]any{"tool_calls": []any{map[string]any{"index": i, "id": tc.ID, "type": typ, "function": map[string]any{"name": tc.Name, "arguments": string(tc.Arguments)}}}}, nil))
 		}
 		emit(base(map[string]any{}, "tool_calls"))
 		fmt.Fprint(w, "data: [DONE]\n\n")

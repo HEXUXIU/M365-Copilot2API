@@ -52,6 +52,9 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			case "function_call_output":
 				id, _ := m["call_id"].(string)
 				o.Messages = append(o.Messages, oaiMsg{Role: "tool", ToolCallID: id, Content: m["output"]})
+			case "custom_tool_call_output":
+				id, _ := m["call_id"].(string)
+				o.Messages = append(o.Messages, oaiMsg{Role: "tool", ToolCallID: id, Content: m["output"]})
 			case "function_call":
 				id, _ := m["call_id"].(string)
 				name, _ := m["name"].(string)
@@ -63,6 +66,11 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 					}
 				}
 				o.Messages = append(o.Messages, oaiMsg{Role: "assistant", ToolCalls: []map[string]any{{"id": id, "type": "function", "function": map[string]any{"name": name, "arguments": mustJSON(args)}}}})
+			case "custom_tool_call":
+				id, _ := m["call_id"].(string)
+				name, _ := m["name"].(string)
+				input, _ := m["input"].(string)
+				o.Messages = append(o.Messages, oaiMsg{Role: "assistant", ToolCalls: []map[string]any{{"id": id, "type": "custom", "function": map[string]any{"name": name, "arguments": mustJSON(map[string]any{"input": input})}}}})
 			default:
 				role, _ := m["role"].(string)
 				if role == "" {
@@ -82,12 +90,18 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		return o, fmt.Errorf("input must be string or array")
 	}
 	for _, t := range r.Tools {
-		if typ, _ := t["type"].(string); typ != "function" {
+		typ, _ := t["type"].(string)
+		f := map[string]any{"name": t["name"], "description": t["description"], "parameters": t["parameters"]}
+		if typ == "custom" && t["name"] == "exec" {
+			// ChatHub accepts JSON function arguments while Codex exec accepts a
+			// grammar-constrained raw input string. Preserve the distinction in
+			// Tool.Type and bridge the input through a single string field.
+			f["parameters"] = map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}, "required": []string{"input"}, "additionalProperties": false}
+		} else if typ != "function" {
 			continue
 		}
-		f := map[string]any{"name": t["name"], "description": t["description"], "parameters": t["parameters"]}
 		b, _ := json.Marshal(f)
-		o.Tools = append(o.Tools, chathub.Tool{Type: "function", Function: b})
+		o.Tools = append(o.Tools, chathub.Tool{Type: typ, Function: b})
 	}
 	return o, nil
 }

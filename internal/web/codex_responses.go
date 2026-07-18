@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -21,6 +22,10 @@ func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src 
 		for _, raw := range calls {
 			tc, _ := raw.(map[string]any)
 			fn, _ := tc["function"].(map[string]any)
+			if tc["type"] == "custom" {
+				output = append(output, map[string]any{"type": "custom_tool_call", "id": "ctc_" + uuid.NewString(), "call_id": tc["id"], "name": fn["name"], "input": customToolInput(fn["arguments"]), "status": "completed"})
+				continue
+			}
 			output = append(output, map[string]any{"type": "function_call", "id": "fc_" + uuid.NewString(), "call_id": tc["id"], "name": fn["name"], "arguments": fn["arguments"], "status": "completed"})
 		}
 	} else {
@@ -77,8 +82,24 @@ func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src 
 			args, _ := m["arguments"].(string)
 			emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": i, "item_id": m["id"], "delta": args})
 			emit("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "output_index": i, "item_id": m["id"], "arguments": args})
+		} else if m["type"] == "custom_tool_call" {
+			input, _ := m["input"].(string)
+			emit("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "output_index": i, "item_id": m["id"], "delta": input})
+			emit("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "output_index": i, "item_id": m["id"], "input": input})
 		}
 		emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
 	}
 	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
+}
+
+func customToolInput(arguments any) string {
+	if s, ok := arguments.(string); ok {
+		var v struct {
+			Input string `json:"input"`
+		}
+		if json.Unmarshal([]byte(s), &v) == nil {
+			return v.Input
+		}
+	}
+	return ""
 }

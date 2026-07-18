@@ -15,7 +15,11 @@ func xmlToolCalls(text string, tools []map[string]any, choice any) []detectedToo
 func toolCallMaps(calls []detectedToolCall) []any {
 	out := make([]any, 0, len(calls))
 	for _, c := range calls {
-		out = append(out, map[string]any{"id": c.ID, "type": "function", "function": map[string]any{"name": c.Name, "arguments": string(c.Arguments)}})
+		typ := c.Type
+		if typ == "" {
+			typ = "function"
+		}
+		out = append(out, map[string]any{"id": c.ID, "type": typ, "function": map[string]any{"name": c.Name, "arguments": string(c.Arguments)}})
 	}
 	return out
 }

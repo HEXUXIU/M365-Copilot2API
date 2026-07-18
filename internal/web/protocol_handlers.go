@@ -71,8 +71,8 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	contentID := "txt_" + uuid.NewString()
 	textStarted := false
 	type tcState struct {
-		ID, Name, Args string
-		ItemID         string
+		ID, Name, Args, Type string
+		ItemID               string
 	}
 	calls := map[int]*tcState{}
 	scanner := bufio.NewScanner(pr)
@@ -105,10 +105,21 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 				tc, _ := raw.(map[string]any)
 				idx := int(tc["index"].(float64))
 				st := calls[idx]
+				typ := "function"
+				if v, ok := tc["type"].(string); ok && v == "custom" {
+					typ = "custom"
+				}
 				if st == nil {
-					st = &tcState{ItemID: "fc_" + uuid.NewString()}
+					prefix := "fc_"
+					item := map[string]any{"type": "function_call", "call_id": "", "name": "", "arguments": "", "status": "in_progress"}
+					if typ == "custom" {
+						prefix = "ctc_"
+						item = map[string]any{"type": "custom_tool_call", "call_id": "", "name": "", "input": "", "status": "in_progress"}
+					}
+					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ}
 					calls[idx] = st
-					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": idx, "item": map[string]any{"type": "function_call", "id": st.ItemID, "call_id": "", "name": "", "arguments": "", "status": "in_progress"}})
+					item["id"] = st.ItemID
+					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": idx, "item": item})
 				}
 				if v, ok := tc["id"].(string); ok {
 					st.ID = v
@@ -157,6 +168,16 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		for i := 0; i < len(calls); i++ {
 			st := calls[i]
 			if st == nil {
+				continue
+			}
+			if st.Type == "custom" {
+				input := customToolInput(st.Args)
+				item := map[string]any{"type": "custom_tool_call", "id": "ctc_" + uuid.NewString(), "call_id": st.ID, "name": st.Name, "input": input, "status": "completed"}
+				output = append(output, item)
+				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": i, "item": map[string]any{"type": "custom_tool_call", "id": item["id"], "call_id": st.ID, "name": st.Name, "input": "", "status": "in_progress"}})
+				emit("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "output_index": i, "item_id": item["id"], "delta": input})
+				emit("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "output_index": i, "item_id": item["id"], "input": input})
+				emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
 				continue
 			}
 			item := map[string]any{"type": "function_call", "id": "fc_" + uuid.NewString(), "call_id": st.ID, "name": st.Name, "arguments": st.Args, "status": "completed"}

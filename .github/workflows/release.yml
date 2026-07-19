@@ -70,7 +70,11 @@ jobs:
           suffix=""
           if [ "${GOOS}" = "windows" ]; then suffix=".exe"; fi
           output="dist/${BINARY_NAME}-${GOOS}-${GOARCH}${suffix}"
-          go build -trimpath -ldflags="-s -w" -o "${output}" ./cmd/server
+          version="${GITHUB_REF_NAME#stable-v}"
+          commit="$(git rev-parse --short HEAD)"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          ldflags="-s -w -X m365-native/internal/web.Version=${version} -X m365-native/internal/web.Commit=${commit} -X m365-native/internal/web.BuildTime=${build_time}"
+          go build -trimpath -ldflags="${ldflags}" -o "${output}" ./cmd/server
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

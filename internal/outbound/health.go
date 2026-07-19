@@ -70,6 +70,9 @@ func (p *Pool) Check(ctx context.Context, raw string) (time.Duration, error) {
 		return lat, fmt.Errorf("proxy reachable; upstream returned %s", status)
 	}
 	p.setHealth(raw, "reachable")
+	if code >= 400 {
+		return lat, fmt.Errorf("proxy reachable; target returned %s", status)
+	}
 	return lat, nil
 }
 func (p *Pool) CheckAll(ctx context.Context) []map[string]any {

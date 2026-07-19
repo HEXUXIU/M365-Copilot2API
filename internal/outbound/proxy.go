@@ -190,7 +190,12 @@ func (d httpsProxyDialer) DialContext(ctx context.Context, network, address stri
 	if e != nil {
 		return nil, e
 	}
-	conn := tls.Client(raw, &tls.Config{ServerName: d.proxyURL.Hostname(), MinVersion: tls.VersionTLS12})
+	// Proxy endpoints commonly present a certificate for their hostname while users
+	// configure an IP address. This option affects only the TLS hop to the proxy;
+	// target-site certificate verification remains enabled.
+	insecureProxyTLS := os.Getenv("M365_PROXY_INSECURE_TLS") == "1" || os.Getenv("M365_PROXY_INSECURE_TLS") == "true" || net.ParseIP(d.proxyURL.Hostname()) != nil
+	conn := tls.Client(raw, &tls.Config{ServerName: d.proxyURL.Hostname(), MinVersion: tls.VersionTLS12, InsecureSkipVerify: insecureProxyTLS}) // #nosec G402 -- explicitly scoped to configured proxy TLS
+
 	if e = conn.HandshakeContext(ctx); e != nil {
 		raw.Close()
 		return nil, e

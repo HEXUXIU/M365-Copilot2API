@@ -130,7 +130,9 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 				}
 				if v, ok := fn["arguments"].(string); ok {
 					st.Args += v
-					emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": idx, "item_id": st.ItemID, "delta": v})
+					if st.Type != "custom" {
+						emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": idx, "item_id": st.ItemID, "delta": v})
+					}
 				}
 			}
 		}
@@ -172,9 +174,8 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			}
 			if st.Type == "custom" {
 				input := customToolInput(st.Args)
-				item := map[string]any{"type": "custom_tool_call", "id": "ctc_" + uuid.NewString(), "call_id": st.ID, "name": st.Name, "input": input, "status": "completed"}
+				item := map[string]any{"type": "custom_tool_call", "id": st.ItemID, "call_id": st.ID, "name": st.Name, "input": input, "status": "completed"}
 				output = append(output, item)
-				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": i, "item": map[string]any{"type": "custom_tool_call", "id": item["id"], "call_id": st.ID, "name": st.Name, "input": "", "status": "in_progress"}})
 				emit("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "output_index": i, "item_id": item["id"], "delta": input})
 				emit("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "output_index": i, "item_id": item["id"], "input": input})
 				emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})

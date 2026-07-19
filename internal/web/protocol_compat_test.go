@@ -21,6 +21,30 @@ func TestResponsesCustomExecToOpenAI(t *testing.T) {
 	}
 }
 
+func TestResponsesInstructionsAndCustomExecPolicyAreSystemMessages(t *testing.T) {
+	r := responsesRequest{
+		Instructions: "Use the repository selected by the caller.",
+		Input:        "inspect the repository",
+		Tools:        []map[string]any{{"type": "custom", "name": "exec", "description": "run a command"}},
+	}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Messages) != 3 {
+		t.Fatalf("messages=%#v", o.Messages)
+	}
+	if o.Messages[0].Role != "system" || o.Messages[0].Content != customExecWorkspaceInstruction {
+		t.Fatalf("missing custom exec policy: %#v", o.Messages[0])
+	}
+	if o.Messages[1].Role != "system" || o.Messages[1].Content != r.Instructions {
+		t.Fatalf("instructions not preserved: %#v", o.Messages[1])
+	}
+	if o.Messages[2].Role != "user" || o.Messages[2].Content != r.Input {
+		t.Fatalf("input ordering changed: %#v", o.Messages[2])
+	}
+}
+
 func TestResponsesCustomToolOutputToOpenAI(t *testing.T) {
 	r := responsesRequest{Input: []any{
 		map[string]any{"type": "custom_tool_call", "call_id": "call_exec", "name": "exec", "input": "uname -s"},

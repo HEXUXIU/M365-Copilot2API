@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"m365-native/internal/chathub"
 )
@@ -11,6 +12,7 @@ import (
 type responsesRequest struct {
 	Model              string           `json:"model"`
 	AccountID          string           `json:"accountId,omitempty"`
+	Instructions       string           `json:"instructions,omitempty"`
 	Input              any              `json:"input"`
 	Tools              []map[string]any `json:"tools,omitempty"`
 	ToolChoice         any              `json:"tool_choice,omitempty"`
@@ -22,8 +24,13 @@ type responsesRequest struct {
 	NewConversation    bool             `json:"new_conversation,omitempty"`
 }
 
+const customExecWorkspaceInstruction = `The caller's shell executor already starts in the correct workspace. Use relative paths from that workspace; do not guess or cd to an absolute /root path. For repository inspection or changes, invoke the custom exec tool and wait for its result before claiming completion.`
+
 func (r responsesRequest) openAI() (oaiReq, error) {
 	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User}
+	if instructions := strings.TrimSpace(r.Instructions); instructions != "" {
+		o.Messages = append(o.Messages, oaiMsg{Role: "system", Content: instructions})
+	}
 	if r.Reasoning != nil {
 		o.Reasoning = r.Reasoning
 		o.ReasoningEffort = r.Reasoning.Effort
@@ -33,7 +40,7 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		if v == "" {
 			return o, fmt.Errorf("input required")
 		}
-		o.Messages = []oaiMsg{{Role: "user", Content: v}}
+		o.Messages = append(o.Messages, oaiMsg{Role: "user", Content: v})
 	case []any:
 		for _, raw := range v {
 			m, ok := raw.(map[string]any)
@@ -90,6 +97,7 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	default:
 		return o, fmt.Errorf("input must be string or array")
 	}
+	hasCustomExec := false
 	for _, t := range r.Tools {
 		typ, _ := t["type"].(string)
 		f := map[string]any{"name": t["name"], "description": t["description"], "parameters": t["parameters"]}
@@ -98,11 +106,15 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			// grammar-constrained raw input string. Preserve the distinction in
 			// Tool.Type and bridge the input through a single string field.
 			f["parameters"] = map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}, "required": []string{"input"}, "additionalProperties": false}
+			hasCustomExec = true
 		} else if typ != "function" {
 			continue
 		}
 		b, _ := json.Marshal(f)
 		o.Tools = append(o.Tools, chathub.Tool{Type: typ, Function: b})
+	}
+	if hasCustomExec {
+		o.Messages = append([]oaiMsg{{Role: "system", Content: customExecWorkspaceInstruction}}, o.Messages...)
 	}
 	return o, nil
 }

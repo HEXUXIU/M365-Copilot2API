@@ -792,9 +792,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// ChatHub does not reliably return native tool events. Keep ordinary
 	// requests direct, and use the established XML/fenced translation router
 	// only when the caller actually supplied callable tools.
-	planningMode := "router"
-	if len(toolMaps) == 0 || normalizedToolChoiceMode(body.ToolChoice) == "none" {
-		planningMode = "direct"
+	planningMode := "direct"
+	if shouldUseToolRouter(body.Messages, toolMaps, body.ToolChoice) {
+		planningMode = "router"
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)

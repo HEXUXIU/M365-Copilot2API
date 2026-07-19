@@ -42,3 +42,28 @@ func validateToolConversation(messages []oaiMsg) error {
 	}
 	return nil
 }
+
+// shouldUseToolRouter selects the legacy XML translator only for an explicit
+// tool turn. A client may send its default tool catalog on every request; that
+// alone must not turn ordinary text into a planner round-trip.
+func shouldUseToolRouter(messages []oaiMsg, tools []map[string]any, choice any) bool {
+	if len(tools) == 0 {
+		return false
+	}
+	mode := normalizedToolChoiceMode(choice)
+	if mode == "none" {
+		return false
+	}
+	if mode == "required" || len(mode) > len("named:") && mode[:len("named:")] == "named:" {
+		return true
+	}
+	for _, m := range messages {
+		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+			return true
+		}
+		if m.Role == "tool" {
+			return true
+		}
+	}
+	return false
+}

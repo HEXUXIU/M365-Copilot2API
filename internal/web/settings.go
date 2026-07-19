@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"m365-native/internal/outbound"
 )
 
 type modelMapping struct {
@@ -51,6 +53,7 @@ type runtimeSettings struct {
 	ConfigPath          string         `json:"configPath"`
 	TokenCachePath      string         `json:"tokenCachePath"`
 	SessionCachePath    string         `json:"sessionCachePath"`
+	OutboundProxy       string         `json:"outboundProxy"`
 	ClientID            string         `json:"clientId"`
 	Authority           string         `json:"authority"`
 	RedirectURI         string         `json:"redirectUri"`
@@ -78,7 +81,7 @@ func defaultRuntimeSettings() runtimeSettings {
 		ContextWindow: envInt("M365_CONTEXT_WINDOW", 128000), MaxOutputTokens: envInt("M365_MAX_OUTPUT_TOKENS", 16384),
 		ChatTimeoutSeconds: envInt("M365_CHAT_TIMEOUT_SECONDS", 120), ImageTimeoutSeconds: envInt("M365_IMAGE_TIMEOUT_SECONDS", 150), LogLevel: firstNonEmptySetting(os.Getenv("M365_LOG_LEVEL"), "info"),
 		DebugLogPath: os.Getenv("M365_DEBUG_LOG"), ListenAddress: os.Getenv("M365_LISTEN"), ConfigPath: os.Getenv("M365_CONFIG"),
-		TokenCachePath: os.Getenv("M365_TOKEN_CACHE"), SessionCachePath: os.Getenv("M365_SESSION_CACHE"), ClientID: os.Getenv("M365_CLIENT_ID"),
+		TokenCachePath: os.Getenv("M365_TOKEN_CACHE"), SessionCachePath: os.Getenv("M365_SESSION_CACHE"), OutboundProxy: os.Getenv(outbound.EnvProxy), ClientID: os.Getenv("M365_CLIENT_ID"),
 		Authority: os.Getenv("M365_AUTHORITY"), RedirectURI: os.Getenv("M365_REDIRECT_URI"), Scope: os.Getenv("M365_SCOPE"),
 		ModelMappings:    append([]modelMapping(nil), defaultModelMappings...),
 		ToolPlanningMode: toolPlanningMode(os.Getenv("M365_TOOL_PLANNING_MODE")),
@@ -137,6 +140,9 @@ func validateSettings(v runtimeSettings) error {
 	if v.LogLevel != "silent" && v.LogLevel != "error" && v.LogLevel != "warn" && v.LogLevel != "info" && v.LogLevel != "debug" {
 		return fmt.Errorf("日志等级必须为 silent、error、warn、info 或 debug")
 	}
+	if err := outbound.ValidateProxyURL(v.OutboundProxy); err != nil {
+		return err
+	}
 	seen := make(map[string]struct{}, len(v.ModelMappings))
 	for _, mapping := range v.ModelMappings {
 		model := strings.TrimSpace(mapping.PublicModel)
@@ -180,7 +186,7 @@ func (s *settingsStore) save(v runtimeSettings) error {
 func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		jsonOut(w, map[string]any{"settings": s.settings.get(), "codexModels": configurableCodexModels, "upstreamTones": knownUpstreamTones(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
+		jsonOut(w, map[string]any{"settings": s.settings.get(), "codexModels": configurableCodexModels, "upstreamTones": knownUpstreamTones(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "outboundProxy", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
 	case http.MethodPut:
 		var v runtimeSettings
 		if json.NewDecoder(r.Body).Decode(&v) != nil {
@@ -222,7 +228,7 @@ func currentSettings() runtimeSettings { return openSettingsStore().get() }
 // always win over values saved from the web console.
 func ApplyStartupSettingsEnv() {
 	s := openSettingsStore().get()
-	values := map[string]string{"M365_LISTEN": s.ListenAddress, "M365_CONFIG": s.ConfigPath, "M365_TOKEN_CACHE": s.TokenCachePath, "M365_SESSION_CACHE": s.SessionCachePath, "M365_CLIENT_ID": s.ClientID, "M365_AUTHORITY": s.Authority, "M365_REDIRECT_URI": s.RedirectURI, "M365_SCOPE": s.Scope, "M365_DEBUG_LOG": s.DebugLogPath}
+	values := map[string]string{"M365_LISTEN": s.ListenAddress, "M365_CONFIG": s.ConfigPath, "M365_TOKEN_CACHE": s.TokenCachePath, "M365_SESSION_CACHE": s.SessionCachePath, outbound.EnvProxy: s.OutboundProxy, "M365_CLIENT_ID": s.ClientID, "M365_AUTHORITY": s.Authority, "M365_REDIRECT_URI": s.RedirectURI, "M365_SCOPE": s.Scope, "M365_DEBUG_LOG": s.DebugLogPath}
 	for k, v := range values {
 		if _, exists := os.LookupEnv(k); !exists && strings.TrimSpace(v) != "" {
 			_ = os.Setenv(k, v)

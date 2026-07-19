@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"m365-native/internal/outbound"
 	"m365-native/internal/web"
 	"net/http"
 	"os"
@@ -10,6 +11,9 @@ import (
 
 func main() {
 	web.ApplyStartupSettingsEnv()
+	if err := outbound.ConfigureFromEnv(); err != nil {
+		log.Fatalf("configure outbound proxy: %v", err)
+	}
 	s, e := web.New()
 	if e != nil {
 		log.Fatal(e)

@@ -58,3 +58,19 @@ func TestModelMappingsValidate(t *testing.T) {
 		t.Fatalf("rejected custom public model: %v", err)
 	}
 }
+
+func TestOutboundProxySettingValidation(t *testing.T) {
+	v := defaultRuntimeSettings()
+	v.OutboundProxy = "socks5://proxy.example:1080"
+	if err := validateSettings(v); err != nil {
+		t.Fatalf("rejected SOCKS5 proxy: %v", err)
+	}
+	v.OutboundProxy = "https://proxy.example:8443"
+	if err := validateSettings(v); err != nil {
+		t.Fatalf("rejected HTTPS proxy: %v", err)
+	}
+	v.OutboundProxy = "ftp://proxy.example:21"
+	if err := validateSettings(v); err == nil {
+		t.Fatal("accepted unsupported proxy scheme")
+	}
+}

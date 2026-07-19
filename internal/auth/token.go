@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"m365-native/internal/outbound"
 	"net/http"
 	"net/url"
 	"strings"
@@ -66,7 +67,7 @@ func requestToken(form url.Values) (TokenSet, error) {
 		return TokenSet{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := outbound.HTTPClient().Do(req)
 	if err != nil {
 		return TokenSet{}, err
 	}

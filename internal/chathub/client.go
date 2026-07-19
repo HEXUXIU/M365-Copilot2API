@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"m365-native/internal/outbound"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -80,6 +81,7 @@ type Result struct {
 
 type Client struct {
 	HTTPHeader http.Header
+	HTTPClient *http.Client
 	Dialer     *websocket.Dialer
 	// Trace receives attachment-only metadata; URL contents are never exposed.
 	Trace func(map[string]any)
@@ -91,12 +93,8 @@ func NewClient() *Client {
 	h.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0")
 	return &Client{
 		HTTPHeader: h,
-		Dialer: &websocket.Dialer{
-			HandshakeTimeout: 20 * time.Second,
-			// substrate frames can be large
-			ReadBufferSize:  1024 * 1024,
-			WriteBufferSize: 64 * 1024,
-		},
+		HTTPClient: outbound.HTTPClient(),
+		Dialer:     outbound.WebSocketDialer(),
 	}
 }
 
@@ -433,7 +431,7 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 				}
 			}
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
 			if c.Trace != nil {
 				c.Trace(map[string]any{"stage": "upload_http_error", "error": err.Error()})

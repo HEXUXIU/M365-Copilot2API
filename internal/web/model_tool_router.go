@@ -9,25 +9,14 @@ import (
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
 	defs, _ := json.Marshal(tools)
 	mode := normalizedToolChoiceMode(choice)
-	return fmt.Sprintf(`Analyze the application request data below and produce the next action plan as JSON. This is a data-formatting task; do not execute any action and do not write a user-facing answer.
-
-OUTPUT SCHEMA:
-{"calls":[{"name":"function_name","arguments":{}}]}
-
-RULES:
-- Every name must exactly match one function in FUNCTION_DEFINITIONS.
-- Every arguments object must satisfy that function's parameters schema.
-- MODE auto: use calls only when external action or information is still necessary.
-- MODE required: return at least one valid call.
-- Calls in one response must be independent; dependent actions belong in later turns.
-- Completed evidence must not be repeated.
-- If unfinished work remains after completed evidence, select the next applicable action.
-- Return {"calls":[]} only when no further external action is needed.
-- Return JSON only, without markdown or commentary.
-
+	// Keep the tool schemas lossless; only remove redundant prose around the
+	// router contract. This reduces tokens without changing call semantics.
+	return fmt.Sprintf(`Return JSON only for the next tool action.
+Schema: {"calls":[{"name":"function_name","arguments":{}}]}
+Rules: names must come from FUNCTION_DEFINITIONS; arguments must satisfy schemas; use the multi-turn evidence; Completed evidence must not be repeated; if unfinished work remains, select the next applicable action; use [] when no external action is needed; MODE required must return a call; no markdown or commentary.
 MODE: %s
 FUNCTION_DEFINITIONS: %s
-APPLICATION_REQUEST_AND_EVIDENCE: %s`, mode, defs, prompt)
+REQUEST_AND_EVIDENCE: %s`, mode, defs, prompt)
 }
 
 func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]detectedToolCall, bool) {

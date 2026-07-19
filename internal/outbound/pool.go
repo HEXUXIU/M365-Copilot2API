@@ -91,8 +91,16 @@ func (p *Pool) HTTPClient() *http.Client {
 func (p *Pool) WebSocketDialer() *websocket.Dialer {
 	base := directClients().WebSocket
 	baseDialer := &net.Dialer{}
+	var mu sync.Mutex
+	var sticky *poolEntry
 	base.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-		e := p.pick()
+		mu.Lock()
+		e := sticky
+		if e == nil {
+			e = p.pick()
+			sticky = e
+		}
+		mu.Unlock()
 		if e == nil {
 			return baseDialer.DialContext(ctx, network, address)
 		}
@@ -102,6 +110,13 @@ func (p *Pool) WebSocketDialer() *websocket.Dialer {
 		}
 		conn, err := dial(ctx, network, address)
 		p.mark(e.raw, err)
+		if err != nil {
+			mu.Lock()
+			if sticky == e {
+				sticky = nil
+			}
+			mu.Unlock()
+		}
 		return conn, err
 	}
 	return base

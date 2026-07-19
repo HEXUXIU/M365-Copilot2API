@@ -701,7 +701,10 @@ func normalizeLegacyTools(body *oaiReq) {
 }
 
 func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
-	requestID := uuid.NewString()
+	requestID := requestIDFrom(r)
+	if requestID == "" {
+		requestID = uuid.NewString()
+	}
 	startedAt := time.Now()
 	log.Printf("[req-trace] id=%s stage=http_start stream=%t", requestID, r.URL.Query().Get("stream") == "true")
 	defer func() {

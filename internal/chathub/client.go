@@ -338,6 +338,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					return Result{}, fmt.Errorf("chathub completion error: %v", errObj)
 				}
 				// end of stream
+				log.Printf("chathub timing completion_frame_ms=%d streamed_text=%d events=%d", time.Since(payloadSentAt).Milliseconds(), len(streamedText), len(events))
 				text := final
 				if text == "" {
 					text = strings.Join(deltas, "")

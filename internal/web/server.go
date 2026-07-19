@@ -106,7 +106,7 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/v1/messages", s.anthropicMessages)
 	m.HandleFunc("/v1/images/generations", s.imageGenerations)
 	m.HandleFunc("/", s.rootPage)
-	return requestID(securityHeaders(s.adminMiddleware(s.debugMiddleware(m))))
+	return requestID(httpTrace(securityHeaders(s.adminMiddleware(s.debugMiddleware(m)))))
 }
 
 func (s *Server) adminMiddleware(next http.Handler) http.Handler {

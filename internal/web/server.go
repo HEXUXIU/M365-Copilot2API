@@ -1065,6 +1065,30 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		_ = writeToolResponse(w, id, model, body.Stream, calls, res)
 		return
 	}
+	// Recover natural-language tool intent when native mode emits no
+	// structured ChatHub tool event. Plain text remains a zero-call result.
+	if planningMode == "native" && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
+		routePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routeRes, routeErr := s.chat.Chat(ctx, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments})
+		if routeErr == nil {
+			calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
+			if !parsed {
+				repairRes, repairErr := s.chat.Chat(ctx, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed. OUTPUT:\n` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments})
+				if repairErr == nil {
+					calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
+				}
+			}
+			if parsed && len(calls) > 0 {
+				scope := fmt.Sprintf("%d:%v:native-recovery", len(body.Messages), completedCallIDs(ledger))
+				for i := range calls {
+					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
+				}
+				calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes)
+				return
+			}
+		}
+	}
 	if !completionEvidenceAllows(res.Text, ledger) {
 		res.Text = "I cannot confirm completion because no matching tool results were returned. No external action has been verified."
 	}

@@ -224,6 +224,41 @@ func configuredToolCallLimit(s *settingsStore) int {
 	}
 	return s.get().MaxToolCallsPerTurn
 }
+
+// adaptiveToolCallLimit permits parallel calls only when every call is a
+// read-only, independently addressable operation. Any write, execution,
+// mutation, or ambiguous tool is serialized conservatively.
+func adaptiveToolCallLimit(c []detectedToolCall, configured int) int {
+	if len(c) < 2 || configured < 2 {
+		return 1
+	}
+	for _, call := range c {
+		name := strings.ToLower(strings.TrimSpace(call.Name))
+		if name == "" || toolLooksMutating(name) || !toolLooksReadOnly(name) {
+			return 1
+		}
+	}
+	return configured
+}
+
+func toolLooksMutating(name string) bool {
+	for _, word := range []string{"exec", "shell", "command", "write", "edit", "update", "delete", "remove", "move", "rename", "create", "patch", "apply", "install", "run"} {
+		if strings.Contains(name, word) {
+			return true
+		}
+	}
+	return false
+}
+
+func toolLooksReadOnly(name string) bool {
+	for _, word := range []string{"read", "list", "search", "find", "get", "fetch", "browser", "lookup", "inspect", "stat", "status", "describe", "info"} {
+		if strings.Contains(name, word) {
+			return true
+		}
+	}
+	return false
+}
+
 func limitToolCalls(c []detectedToolCall, n int) []detectedToolCall {
 	if n < 1 {
 		n = 1

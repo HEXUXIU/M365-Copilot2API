@@ -840,7 +840,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			for i := range calls {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
-			calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 			if body.SessionKey != "" {
 				s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: routeRes.ConversationID, SessionID: routeRes.SessionID, Title: prompt})
 			}
@@ -929,7 +929,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			calls = fencedToolCalls(text.String(), toolMaps, body.ToolChoice)
 		}
 		if len(calls) > 0 {
-			calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()}, true)
 			return
 		}
@@ -964,7 +964,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			for i := range calls {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
-			calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, routeRes, streamPrimed)
 			return
 		}
@@ -982,7 +982,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					for i := range calls {
 						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 					}
-					calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, retryRes, streamPrimed)
 					return
 				}
@@ -1056,12 +1056,12 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	id := "chatcmpl-" + uuid.NewString()
 	if calls := fencedToolCalls(res.Text, toolMaps, body.ToolChoice); len(calls) > 0 {
-		calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 		_ = writeToolResponse(w, id, model, body.Stream, calls, res)
 		return
 	}
 	if calls := nativeToolCalls(res.Events, body.Tools); len(calls) > 0 {
-		calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 		_ = writeToolResponse(w, id, model, body.Stream, calls, res)
 		return
 	}
@@ -1083,7 +1083,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				for i := range calls {
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
-				calls = limitToolCalls(calls, configuredToolCallLimit(s.settings))
+				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes)
 				return
 			}

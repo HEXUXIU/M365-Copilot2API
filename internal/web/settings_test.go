@@ -74,3 +74,16 @@ func TestOutboundProxySettingValidation(t *testing.T) {
 		t.Fatal("accepted unsupported proxy scheme")
 	}
 }
+
+func TestAdaptiveToolCallLimitSerializesDependentOrMutatingCalls(t *testing.T) {
+	calls := []detectedToolCall{{Name: "read_file"}, {Name: "exec_command"}}
+	if got := adaptiveToolCallLimit(calls, 4); got != 1 {
+		t.Fatalf("got %d, want 1", got)
+	}
+}
+func TestAdaptiveToolCallLimitAllowsIndependentReadOnlyCalls(t *testing.T) {
+	calls := []detectedToolCall{{Name: "read_file"}, {Name: "search_code"}}
+	if got := adaptiveToolCallLimit(calls, 4); got != 4 {
+		t.Fatalf("got %d, want 4", got)
+	}
+}

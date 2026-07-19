@@ -833,7 +833,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
-				calls = filterCompletedCalls(calls, ledger)
 			}
 		}
 		if parsed && len(calls) > 0 {

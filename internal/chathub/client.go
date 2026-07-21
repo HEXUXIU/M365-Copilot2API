@@ -49,6 +49,7 @@ type Request struct {
 	Attachments    []Attachment
 	Tools          []Tool
 	ToolChoice     any
+	MCPServerURL   string // URL of the MCP HTTP SSE server for tool discovery
 	// Started is true only for the first turn of a ChatHub conversation.
 	Started bool
 }
@@ -173,7 +174,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		return Result{}, fmt.Errorf("handshake recv: %w", err)
 	}
 
-	payload := chatPayload(req.Text, req.SessionID, req.ConversationID, requestID, req.Tone, firstTurn, req.Attachments, req.Tools, req.ToolChoice)
+	payload := chatPayload(req.Text, req.SessionID, req.ConversationID, requestID, req.Tone, firstTurn, req.Attachments, req.Tools, req.ToolChoice, req.MCPServerURL)
 	log.Printf("chathub prompt-trace text=%d tools=%d payload=%d", len(req.Text), len(req.Tools), len(payload))
 	if c.Trace != nil {
 		meta := map[string]any{"stage": "chathub_payload", "attachment_count": len(req.Attachments), "payload_has_attachments": strings.Contains(payload, `"attachments"`), "attachments": []map[string]any{}}
@@ -389,15 +390,37 @@ func buildWSURL(acc Account, sessionID, conversationID, requestID string) (strin
 func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversationID string, attachments []Attachment) error {
 	for i := range attachments {
 		a := &attachments[i]
-		if a.Type != "image" || !strings.HasPrefix(a.URL, "data:") {
+		if a.Type != "image" {
 			continue
 		}
-		comma := strings.IndexByte(a.URL, ',')
+		// For non-data URLs, download the image first
+		imageData := a.URL
+		if !strings.HasPrefix(a.URL, "data:") {
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := c.HTTPClient.Do(req)
+			if err != nil {
+				continue
+			}
+			body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+			resp.Body.Close()
+			if err != nil || resp.StatusCode != http.StatusOK {
+				continue
+			}
+			mimeType := resp.Header.Get("Content-Type")
+			if mimeType == "" {
+				mimeType = "image/png"
+			}
+			imageData = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(body)
+		}
+		comma := strings.IndexByte(imageData, ',')
 		if comma < 0 {
 			return fmt.Errorf("invalid image data URL")
 		}
-		encoded := a.URL[comma+1:]
-		if strings.Contains(strings.ToLower(a.URL[:comma]), ";base64") == false {
+		encoded := imageData[comma+1:]
+		if strings.Contains(strings.ToLower(imageData[:comma]), ";base64") == false {
 			return fmt.Errorf("image URL is not base64")
 		}
 		if _, err := base64.StdEncoding.DecodeString(encoded); err != nil {
@@ -409,7 +432,7 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		_ = mw.WriteField("conversationId", conversationID)
 		// The browser sends the complete data URL in FileBase64, including the
 		// media-type prefix. UploadFile accepts this form and returns docId.
-		_ = mw.WriteField("FileBase64", a.URL)
+		_ = mw.WriteField("FileBase64", imageData)
 		if c.Trace != nil {
 			c.Trace(map[string]any{"stage": "upload_start", "index": i, "conversation_id": conversationID, "mime_type": a.MimeType, "base64_length": len(encoded), "token_present": acc.AccessToken != ""})
 		}
@@ -445,21 +468,18 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		}
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
-			if c.Trace != nil {
-				c.Trace(map[string]any{"stage": "upload_http_error", "error": err.Error()})
-			}
-			return err
+			log.Printf("[upload] http error: %v", err)
+			continue
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		resp.Body.Close()
 		if readErr != nil {
-			return readErr
+			log.Printf("[upload] read error: %v", readErr)
+			continue
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			if c.Trace != nil {
-				c.Trace(map[string]any{"stage": "upload_http_status", "status": resp.StatusCode, "response": strings.TrimSpace(string(data[:minInt(len(data), 500)]))})
-			}
-			return fmt.Errorf("upload status %s: %s", resp.Status, strings.TrimSpace(string(data)))
+			log.Printf("[upload] status %s: %s", resp.Status, strings.TrimSpace(string(data[:minInt(len(data), 500)])))
+			continue
 		}
 		var out struct {
 			DocID    string `json:"docId"`
@@ -470,18 +490,12 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 			} `json:"result"`
 		}
 		if err := json.Unmarshal(data, &out); err != nil {
-			return fmt.Errorf("upload response: %w", err)
+			log.Printf("[upload] json error: %v", err)
+			continue
 		}
 		if out.Result.Value != "Success" || out.DocID == "" {
-			if c.Trace != nil {
-				c.Trace(map[string]any{"stage": "upload_failed", "status": resp.StatusCode, "response": string(data[:func() int {
-					if len(data) < 500 {
-						return len(data)
-					}
-					return 500
-				}()])})
-			}
-			return fmt.Errorf("upload failed: %s", strings.TrimSpace(string(data)))
+			log.Printf("[upload] failed: %s", strings.TrimSpace(string(data)))
+			continue
 		}
 		a.DocID = out.DocID
 		a.FileType = strings.TrimPrefix(strings.ToLower(out.FileType), ".")
@@ -499,7 +513,7 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 	return nil
 }
 
-func chatPayload(text, sessionID, conversationID, requestID, tone string, firstTurn bool, attachments []Attachment, tools []Tool, toolChoice any) string {
+func chatPayload(text, sessionID, conversationID, requestID, tone string, firstTurn bool, attachments []Attachment, tools []Tool, toolChoice any, mcpServerURL string) string {
 	text = toolProtocolPrompt(text, tools, toolChoice)
 	message := map[string]any{
 		"author":                "user",
@@ -595,7 +609,7 @@ func chatPayload(text, sessionID, conversationID, requestID, tone string, firstT
 				"optionsSets":         optionsSets,
 				"options":             map[string]any{},
 				"allowedMessageTypes": []string{
-					"Chat", "EndOfRequest",
+					"Chat", "Suggestion", "Disengaged", "Progress", "EndOfRequest", "InternalLoaderMessage",
 				},
 				"sliceIds":          []any{},
 				"threadLevelGptId":  map[string]any{},
@@ -611,7 +625,7 @@ func chatPayload(text, sessionID, conversationID, requestID, tone string, firstT
 				"streamingMode": "ConciseWithPadding",
 				"message":       message,
 
-				"plugins":    clientPlugins(tools),
+				"plugins":    clientPlugins(tools, mcpServerURL),
 				"toolChoice": toolChoice,
 			},
 		},

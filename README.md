@@ -1,207 +1,140 @@
-# m365-native
+# M365 Copilot2API
 
-M365 ChatHub gateway for **authorized Microsoft 365 Copilot sessions**. It exposes OpenAI-compatible and Anthropic-compatible HTTP APIs for chat, streaming, multimodal input, tool calls, session continuity, and upstream image-event parsing.
+<p align="center">
+  <img src="https://img.shields.io/github/license/HEXUXIU/M365-Copilot2API" alt="License">
+  <img src="https://img.shields.io/github/last-commit/HEXUXIU/M365-Copilot2API" alt="Last Commit">
+  <img src="https://img.shields.io/badge/Go-1.22%2B-00ADD8?logo=go" alt="Go Version">
+  <img src="https://img.shields.io/badge/API-OpenAI%20Compatible-412991?logo=openai" alt="OpenAI Compatible">
+  <img src="https://img.shields.io/badge/API-Anthropic%20Compatible-FF6B6B?logo=anthropic" alt="Anthropic Compatible">
+  <img src="https://img.shields.io/badge/MCP-Protocol-FF6B35?logo=internetcomputer" alt="MCP Protocol">
+  <br>
+  <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.github.com%2Frepos%2FHEXUXIU%2FM365-Copilot2API&query=%24.stargazers_count&label=Stars&style=flat&color=yellow" alt="Stars">
+  <img src="https://img.shields.io/badge/PRs-Welcome-brightgreen" alt="PRs Welcome">
+</p>
 
-> This project is an interoperability gateway, not an authentication bypass. You must use a Microsoft account and tenant you are authorized to use. Upstream model availability, quotas, tools, vision, and image generation depend on the account and Microsoft service.
+<p align="center">
+  <strong>M365 Copilot ChatHub 网关</strong><br>
+  将 Microsoft 365 Copilot 转换为 OpenAI / Anthropic 兼容 API
+</p>
 
-## Reference repositories
+---
 
-- **M365-Copilot2API:** <https://github.com/HEXUXIU/M365-Copilot2API>
-- **Microsoft 365 Copilot:** <https://www.microsoft.com/microsoft-365/copilot>
+## 📋 功能特性
 
-## Features
+| 功能 | 状态 |
+|------|------|
+| ✅ OpenAI 兼容 `/v1/chat/completions` | 支持流式、工具调用 |
+| ✅ OpenAI Responses `/v1/responses` | 兼容 |
+| ✅ Anthropic 兼容 `/v1/messages` | 兼容 |
+| ✅ 流式输出 (SSE) | 实时逐字输出 |
+| ✅ 推理模型 | gpt-5.5-reasoning、gpt-5.6-sol 等 |
+| ✅ 联网搜索 | claude-sonnet 内置 web_fetch |
+| ✅ MCP 协议 | `/v1/mcp/sse` + `/v1/mcp/message` + `/v1/mcp/tools` |
+| ✅ 视觉识别 | 支持 base64 图片输入 |
+| ✅ 多账号管理 | PKCE OAuth 授权 |
+| ✅ API Key 管理 | 控制台创建/撤销 |
+| ✅ 代理池 | 轮换、失败冷却 |
+| ✅ Web 管理控制台 | 账号、设置、日志 |
 
-- OpenAI-compatible `/v1/chat/completions`
-- OpenAI Responses-compatible `/v1/responses`
-- Anthropic-compatible `/v1/messages`
-- Streaming responses and multimodal input
-- Gateway-level tool/function calling with protocol conversion
-- Persistent conversation mapping through `session_key`
-- Model catalog with GPT-5.5, GPT-5.5 reasoning, GPT-5.6 reasoning, and Claude Sonnet routes when available upstream
-- Upstream image-event/GraphicArt parsing when enabled for the account
-- Web console for account, API-key, settings, conversations, and debug management
+## 🚀 快速开始
 
-## Requirements
-
-- Go 1.22+ for source builds, or Docker/Compose
-- An authorized Microsoft account and tenant
-- OAuth access obtained through the bundled PKCE flow or an existing account cache
-
-## Quick start: source build
+### 源码编译
 
 ```bash
-git clone https://github.com/uefi2333/m365-native.git
-cd m365-native
-cp .env.example .env
-# Edit .env. Never commit real passwords or tokens.
-set -a; . ./.env; set +a
-go test ./...
-go vet ./...
+git clone https://github.com/HEXUXIU/M365-Copilot2API.git
+cd M365-Copilot2API
+# 配置管理员密码（可选，默认 admin123）
+export M365_ADMIN_PASSWORD=your_password
 go run ./cmd/server
 ```
 
-The default bind address is `127.0.0.1:4141`. Open <http://127.0.0.1:4141/> and complete administrator setup/login. Keep the service on localhost unless you add TLS and an access-control layer.
+默认地址 `http://127.0.0.1:4141`，打开浏览器完成管理员设置和登录。
 
-Build a standalone binary:
-
-```bash
-go build -trimpath -o m365-native ./cmd/server
-./m365-native
-```
-
-## Docker deployment (recommended)
-
-Docker is the recommended deployment method for a reproducible runtime. The image runs as a non-root user and stores mutable credentials/state under `/data`.
-
-### 1. Prepare directories and admin secret
-
-```bash
-mkdir -p data secrets
-printf '%s\n' 'replace-with-a-long-random-admin-password' > secrets/m365_admin_password
-chmod 600 secrets/m365_admin_password
-```
-
-Do not commit `data/` or `secrets/`. The provided `.gitignore` excludes them.
-
-### 2. Build and start
+### Docker 部署
 
 ```bash
 docker compose build
 docker compose up -d
-
-docker compose ps
-docker compose logs -f m365-native
 ```
 
-The default Compose mapping is local-only:
-
-```text
-127.0.0.1:4141 -> container:4141
-```
-
-For a reverse proxy or LAN deployment, change the `ports` mapping deliberately and put TLS/authentication in front of it.
-
-### 3. Persistent data
-
-The Compose file mounts:
-
-```text
-./data/accounts.json       OAuth account cache
-./data/token-cache.json    token cache
-./data/sessions.json       session_key mapping
-./data/api-keys.json       API-key hashes
-./secrets/m365_admin_password administrator password secret
-```
-
-Back up these files securely. `accounts.json` and token caches are credentials. Never paste them into issues, logs, screenshots, or public repositories.
-
-### 4. First login and API key
-
-Open:
-
-```text
-http://127.0.0.1:4141/
-```
-
-Log in to the web console, complete the Microsoft authorization flow, and create an API key from the administration interface. Use that key with `/v1`:
+## 🔑 使用示例
 
 ```bash
-curl http://127.0.0.1:4141/v1/models \
-  -H 'Authorization: Bearer YOUR_M365_NATIVE_API_KEY'
-```
-
-The gateway accepts either `Authorization: Bearer ...` or `X-API-Key: ...`.
-
-## API examples
-
-OpenAI Chat Completions:
-
-```bash
+# 基础聊天
 curl http://127.0.0.1:4141/v1/chat/completions \
-  -H 'Authorization: Bearer YOUR_M365_NATIVE_API_KEY' \
-  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.6-reasoning",
-    "messages": [{"role": "user", "content": "Hello"}],
-    "stream": true,
-    "session_key": "my-conversation-1"
+    "model": "gpt-5.5",
+    "messages": [{"role": "user", "content": "你好"}]
   }'
-```
 
-Keep `session_key` stable for every turn of the same conversation. Use a different key for a different conversation. The gateway stores the corresponding upstream `ConversationID` and `SessionID` in the session cache.
+# 流式输出
+curl http://127.0.0.1:4141/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-5.5-reasoning",
+    "messages": [{"role": "user", "content": "1+1=?"}],
+    "stream": true
+  }'
 
-Anthropic-compatible endpoint:
-
-```bash
-curl http://127.0.0.1:4141/v1/messages \
-  -H 'x-api-key: YOUR_M365_NATIVE_API_KEY' \
-  -H 'Content-Type: application/json' \
+# 联网搜索（claude-sonnet 内置）
+curl http://127.0.0.1:4141/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}]
+    "messages": [{"role": "user", "content": "北京今天天气？"}]
   }'
 ```
 
-## Model routing
+## 🤖 可用模型
 
-The public model IDs are gateway aliases. The current stable catalog is:
+| 模型 | 推荐用途 | 速度 |
+|------|---------|------|
+| `gpt-5.5` | 日常对话 | ⚡ ~5s |
+| `gpt-5.2` | 最轻量快速 | ⚡ ~5s |
+| `claude-sonnet` | 联网搜索、实时信息 | ⚡ ~5-6s |
+| `gpt-5.6-sol` | 复杂推理（默认高推理） | ⏳ ~7s |
+| `gpt-5.5-reasoning` | 数学/逻辑推理 | ⏳ ~9s |
 
-| Public model | Upstream tone |
-|---|---|
-| `gpt-5.5` | `Gpt_5_5_Chat` |
-| `gpt-5.5-reasoning` | `Gpt_5_5_Reasoning` |
-| `gpt-5.6-reasoning` | `Gpt_5_6_Reasoning` |
-| `claude-sonnet` | `Claude_Sonnet` |
-| `claude-sonnet-reasoning` | `Claude_Sonnet_Reasoning` |
+## 🧩 MCP 协议
 
-Availability and latency remain controlled by Microsoft 365 ChatHub and the account entitlement.
+网关内置 MCP (Model Context Protocol) 服务器：
 
-The administrator Settings page can add or override public model mappings. A
-mapping publishes its public model ID in `/v1/models` and routes requests to a
-known ChatHub tone. It preloads the current Codex GPT-5.6 `Sol`, `Terra`, and
-`Luna` aliases, suggests the bundled Codex model IDs, and also permits a custom
-public ID. The gateway continues to advertise its configured context limit,
-not a bundled Codex model's larger local limit.
+| 端点 | 说明 |
+|------|------|
+| `GET /v1/mcp/sse` | SSE 连接 |
+| `POST /v1/mcp/message` | JSON-RPC 消息 |
+| `GET /v1/mcp/tools` | 工具列表 |
+| `tools/list` | 发现工具 |
+| `tools/call` | 调用工具 |
 
-## Configuration
+## 🛠 技术栈
 
-Common environment variables:
+- **语言**: Go 1.22+
+- **协议**: SignalR / WebSocket / SSE / MCP
+- **前端**: 单页 HTML + Inter 字体 + Lucide 图标
+- **部署**: Docker / 裸机
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `M365_LISTEN` | `127.0.0.1:4141` | HTTP bind address |
-| `M365_CONFIG` | `~/.config/m365-native/accounts.json` | OAuth account cache |
-| `M365_ADMIN_PASSWORD` | bootstrap default only | Admin password; prefer a secret file |
-| `M365_ADMIN_PASSWORD_FILE` | unset | File containing admin password |
-| `M365_TOKEN_CACHE` | platform default | Token cache path |
-| `M365_SESSION_CACHE` | temp directory | Persistent `session_key` mapping |
-| `M365_API_KEYS` | `~/.config/m365-native/api-keys.json` | API-key hash store |
-| `M365_CHAT_TIMEOUT_SECONDS` | `120` | Chat timeout |
-| `M365_IMAGE_TIMEOUT_SECONDS` | `150` | Image request timeout |
-| `M365_MAX_TOOL_ROUNDS` | `16` | Maximum tool rounds |
-| `M365_MAX_TOOL_CALLS_PER_TURN` | `1` | Tool-call limit per turn |
-| `M365_CONTEXT_WINDOW` | `128000` | Advertised context window |
-| `M365_MAX_OUTPUT_TOKENS` | `16384` | Advertised output limit |
+## 📄 配置
 
-## Development and verification
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `M365_LISTEN` | `127.0.0.1:4141` | 监听地址 |
+| `M365_ADMIN_PASSWORD` | `admin123` | 管理员密码 |
+| `M365_CHAT_TIMEOUT_SECONDS` | `120` | 聊天超时 |
+| `M365_CONTEXT_WINDOW` | `128000` | 上下文窗口 |
+| `M365_MAX_OUTPUT_TOKENS` | `16384` | 最大输出 Token |
 
-```bash
-gofmt -w cmd internal
-go test ./...
-go vet ./...
-go build ./...
-```
+## 🔒 安全
 
-## Security notes
+- 默认绑定 localhost
+- 首次登录后立即修改管理员密码
+- API Key 仅在创建时显示完整密钥
+- 建议使用 TLS 和反向代理对外暴露
 
-- Bind to localhost by default.
-- Change the administrator password immediately.
-- Keep OAuth caches, token files, API-key files, and Docker secrets private.
-- Use TLS and an additional access-control layer before exposing the service outside localhost.
-- Do not log or publish access tokens, cookies, authorization headers, or raw authenticated WebSocket URLs.
-- This gateway only supports accounts and services you are authorized to access.
+## 📝 许可证
 
-## License
-
-MIT. See [LICENSE](LICENSE).
+MIT License. 详见 [LICENSE](LICENSE)。

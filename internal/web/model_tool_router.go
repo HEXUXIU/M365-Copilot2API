@@ -9,18 +9,50 @@ import (
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
 	defs, _ := json.Marshal(tools)
 	mode := normalizedToolChoiceMode(choice)
-	// Keep the tool schemas lossless; only remove redundant prose around the
-	// router contract. This reduces tokens without changing call semantics.
-	return fmt.Sprintf(`Return JSON only for the next tool action.
-Schema: {"calls":[{"name":"function_name","arguments":{}}]}
-Rules: names must come from FUNCTION_DEFINITIONS; arguments must satisfy schemas; use the multi-turn evidence; Completed evidence must not be repeated; if unfinished work remains, select the next applicable action; use [] when no external action is needed; MODE required must return a call; no markdown or commentary.
-MODE: %s
-FUNCTION_DEFINITIONS: %s
-REQUEST_AND_EVIDENCE: %s`, mode, defs, prompt)
+	return fmt.Sprintf(`You are a tool selection assistant. Based on the user request, decide which tool to call next.
+
+Available tools: %s
+
+Mode: %s
+
+Rules:
+- If a tool is needed, respond with: CALL_TOOL: tool_name({"arg1":"value1"})
+- If no tool is needed, respond with: NO_TOOL_NEEDED
+- Only use tools from the available list above
+- Validate all arguments against the tool's schema
+- Do not invent tools that are not in the list
+
+User request and evidence:
+%s`, defs, mode, prompt)
 }
 
 func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]detectedToolCall, bool) {
 	text = strings.TrimSpace(text)
+	// Try the new natural language format first: CALL_TOOL: name({...})
+	if strings.HasPrefix(text, "CALL_TOOL:") || strings.HasPrefix(text, "call_tool:") {
+		parts := strings.SplitN(text, ":", 2)
+		if len(parts) == 2 {
+			rest := strings.TrimSpace(parts[1])
+			start := strings.Index(rest, "(")
+			end := strings.LastIndex(rest, ")")
+			if start > 0 && end > start {
+				name := strings.TrimSpace(rest[:start])
+				argsStr := rest[start+1 : end]
+				var args map[string]any
+				if json.Unmarshal([]byte(argsStr), &args) == nil && toolChoiceAllows(choice, name) {
+					fn := toolFunction(name, tools)
+					if fn != nil {
+						b, _ := json.Marshal(args)
+						return []detectedToolCall{{ID: callID(name, string(b), 0), Type: toolType(name, tools), Name: name, Arguments: b}}, true
+					}
+				}
+			}
+		}
+	}
+	if strings.Contains(text, "NO_TOOL_NEEDED") || strings.Contains(text, "no_tool_needed") {
+		return nil, true
+	}
+	// Fallback: try the old JSON format
 	if i := strings.Index(text, "```"); i >= 0 {
 		text = strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(text[i+3:], "```"), "json"))
 	}

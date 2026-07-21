@@ -469,7 +469,7 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 	// displaying a raw JSON response. Keep JSON for the manual/API flow.
 	if strings.HasPrefix(auth.RedirectURI(), "http://127.0.0.1:") || strings.HasPrefix(auth.RedirectURI(), "http://localhost:") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, `<!doctype html><meta charset="utf-8"><title>M365 Native 授权完成</title><style>body{font:16px system-ui;text-align:center;padding:15vh 20px;color:#242424}main{max-width:520px;margin:auto}h1{font-size:26px}</style><main><h1>授权完成</h1><p>账号已经自动加入账号池，可以关闭此页面。</p><script>if(window.opener){window.opener.postMessage({type:"m365-auth-complete"},window.location.origin);setTimeout(()=>window.close(),300)}</script></main>`)
+		fmt.Fprint(w, `<!doctype html><meta charset="utf-8"><title>M365 Copilot2API 授权完成</title><style>body{font:16px system-ui;text-align:center;padding:15vh 20px;color:#242424}main{max-width:520px;margin:auto}h1{font-size:26px}</style><main><h1>授权完成</h1><p>账号已经自动加入账号池，可以关闭此页面。</p><script>if(window.opener){window.opener.postMessage({type:"m365-auth-complete"},window.location.origin);setTimeout(()=>window.close(),300)}</script></main>`)
 		return
 	}
 	jsonOut(w, map[string]any{
@@ -882,38 +882,43 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 		res, err := s.chat.ChatWithEvents(ctx, account, answerReq, func(ev chathub.StreamEvent) error {
-			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
-				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
-				return nil
-			}
-			if ev.Kind != "text" || ev.Text == "" {
-				return nil
-			}
-			text.WriteString(ev.Text)
-			pending.WriteString(ev.Text)
-			v := pending.String()
-			if i := strings.Index(v, "```"); i >= 0 {
-				emitText(v[:i])
-				pending.Reset()
-				pending.WriteString(v[i:])
-				return nil
-			}
-			if runeCount := utf8.RuneCountInString(v); runeCount > 8 {
-				cut := 0
-				seen := 0
-				for i := range v {
-					if seen == runeCount-8 {
-						cut = i
-						break
-					}
-					seen++
-				}
-				emitText(v[:cut])
-				pending.Reset()
-				pending.WriteString(v[cut:])
-			}
-			return nil
-		})
+		    if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
+		     streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
+		     return nil
+		    }
+		    if ev.Kind != "text" || ev.Text == "" {
+		     return nil
+		    }
+		    text.WriteString(ev.Text)
+		    pending.WriteString(ev.Text)
+		    v := pending.String()
+		    // If the text contains a bash block or a JSON command, don't emit it as text
+		    // It will be caught by fencedToolCalls after the stream completes
+		    if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
+		     return nil
+		    }
+		    if i := strings.Index(v, "```"); i >= 0 {
+		     emitText(v[:i])
+		     pending.Reset()
+		     pending.WriteString(v[i:])
+		     return nil
+		    }
+		    if runeCount := utf8.RuneCountInString(v); runeCount > 8 {
+		     cut := 0
+		     seen := 0
+		     for i := range v {
+		      if seen == runeCount-8 {
+		       cut = i
+		       break
+		      }
+		      seen++
+		     }
+		     emitText(v[:cut])
+		     pending.Reset()
+		     pending.WriteString(v[cut:])
+		    }
+		    return nil
+		   })
 		if err != nil {
 			return
 		}

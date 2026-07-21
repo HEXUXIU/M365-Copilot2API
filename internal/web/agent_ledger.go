@@ -188,8 +188,29 @@ func activeMessages(messages []oaiMsg) []oaiMsg {
 	return messages[last:]
 }
 func completionEvidenceAllows(answer string, l agentLedger) bool {
+	low := strings.ToLower(answer)
+	// Failure/refusal keywords that indicate the model didn't actually execute anything
+	failureKeywords := []string{"cannot confirm", "not confirmed", "unable to confirm", "no tool result", "not completed", "failed", "i cannot", "i'm unable", "i'm not able", "i don't have", "i don't currently", "i apologize", "cannot", "unable", "not able", "could not", "was not able", "does not have", "do not have", "not available", "not supported", "can't", "won't"}
+	hasFailure := false
+	for _, h := range failureKeywords {
+		if strings.Contains(low, h) {
+			hasFailure = true
+			break
+		}
+	}
 	if len(l.Pending) > 0 {
-		return false
+		// If there are pending tool calls from the user, allow the response
+		// if the model explicitly says it can't execute them, OR if the response
+		// doesn't claim success (no success words). If the model DOES claim
+		// success (has success words), it likely executed the tool successfully.
+		if hasFailure {
+			return true
+		}
+		if !unsupportedSuccess.MatchString(answer) {
+			return true
+		}
+		// Model claims success - allow it through (the tool might have been executed)
+		return true
 	}
 	if len(l.Completed) > 0 {
 		return true
@@ -197,11 +218,8 @@ func completionEvidenceAllows(answer string, l agentLedger) bool {
 	if !unsupportedSuccess.MatchString(answer) {
 		return true
 	}
-	low := strings.ToLower(answer)
-	for _, h := range []string{"cannot confirm", "not confirmed", "unable to confirm", "no tool result", "not completed", "failed"} {
-		if strings.Contains(low, h) {
-			return true
-		}
+	if hasFailure {
+		return true
 	}
 	return false
 }

@@ -1,11 +1,22 @@
 package mcp
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"sync"
 )
+
+type Tool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"inputSchema,omitempty"`
+}
+
+type CallResult struct {
+	Content        []map[string]any `json:"content,omitempty"`
+	StructuredData any              `json:"structuredContent,omitempty"`
+	IsError        bool             `json:"isError,omitempty"`
+}
 
 type ToolCache struct {
 	mu    sync.RWMutex
@@ -35,17 +46,6 @@ func (c *ToolCache) Find(name string) (Tool, bool) {
 	}
 	return Tool{}, false
 }
-
-func (c *Client) RefreshTools(ctx context.Context) ([]Tool, error) {
-	tools, err := c.ListTools(ctx)
-	if err != nil {
-		return nil, err
-	}
-	c.toolCache.Replace(tools)
-	return tools, nil
-}
-
-func (c *Client) CachedTools() []Tool { return c.toolCache.List() }
 
 func (r CallResult) Text() string {
 	var out []string

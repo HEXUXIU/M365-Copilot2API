@@ -20,7 +20,7 @@ func imageURLs(raw []json.RawMessage) []string {
 		case map[string]any:
 			for k, e := range x {
 				lk := strings.ToLower(k)
-				if s, ok := e.(string); ok && (lk == "url" || lk == "imageurl" || lk == "thumbnailurl" || lk == "downloadurl" || lk == "src") {
+				if s, ok := e.(string); ok && (lk == "url" || lk == "imageurl" || lk == "thumbnailurl" || lk == "downloadurl" || lk == "src" || lk == "value" || lk == "data") {
 					if isImageURL(s) && !seen[s] {
 						seen[s] = true
 						out = append(out, s)

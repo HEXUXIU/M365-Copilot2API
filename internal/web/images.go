@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"m365-native/internal/chathub"
 	"net/http"
 	"strings"
@@ -54,12 +56,51 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ImageTimeoutSeconds)*time.Second)
 	defer cancel()
-	res, err := s.chat.Chat(ctx, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, chathub.Request{Text: "Generate an image: " + b.Prompt, Tone: "magic"})
+	size := b.Size
+	if size == "" {
+		size = "1024x1024"
+	}
+	prompt := fmt.Sprintf("Generate an image with the Flux model. Size: %s. Description: %s. Return the image URL directly.", size, b.Prompt)
+	res, err := s.chat.Chat(ctx, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, chathub.Request{Text: prompt, Tone: "magic"})
 	if err != nil {
 		http.Error(w, upstreamError(err), 502)
 		return
 	}
+	log.Printf("[image-gen] conversation=%s images=%d text_len=%d events=%d raw_len=%d", res.ConversationID, len(res.Images), len(res.Text), len(res.Events), len(res.RawResult))
 	if len(res.Images) == 0 {
+		// Fallback: try to find image URLs in the raw result
+		if urls := extractImageURLs(res.RawResult); len(urls) > 0 {
+			res.Images = urls
+		}
+	}
+	if len(res.Images) == 0 {
+		// Fallback: try to find image URLs in the response text
+		if urls := extractImageURLs(res.Text); len(urls) > 0 {
+			res.Images = urls
+		}
+	}
+	if len(res.Images) == 0 {
+		// Debug: log the response to understand what the model returned
+		textPreview := res.Text
+		if len(textPreview) > 500 {
+			textPreview = textPreview[:500]
+		}
+		rawPreview := ""
+		if len(res.RawResult) > 0 {
+			rawPreview = res.RawResult
+			if len(rawPreview) > 500 {
+				rawPreview = rawPreview[:500]
+			}
+		}
+		debug := map[string]any{
+			"text":        textPreview,
+			"raw_len":     len(res.RawResult),
+			"events":      len(res.Events),
+			"images":      res.Images,
+			"raw_preview": rawPreview,
+		}
+		b, _ := json.Marshal(debug)
+		log.Printf("[image-gen-debug] %s", string(b))
 		http.Error(w, `{"error":{"message":"upstream returned no image resource","type":"upstream_error"}}`, 502)
 		return
 	}
@@ -80,4 +121,42 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	jsonOut(w, map[string]any{"created": time.Now().Unix(), "data": data, "m365": map[string]any{"conversationId": res.ConversationID, "sessionId": res.SessionID, "images": images}})
+}
+
+// extractImageURLs finds image URLs in a raw JSON string by searching for URL patterns.
+func extractImageURLs(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil
+	}
+	var walk func(any)
+	walk = func(v any) {
+		switch x := v.(type) {
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		case map[string]any:
+			for k, e := range x {
+				lk := strings.ToLower(k)
+				if s, ok := e.(string); ok && (lk == "url" || lk == "imageurl" || lk == "thumbnailurl" || lk == "downloadurl" || lk == "src" || lk == "value" || lk == "data") {
+					if strings.HasPrefix(s, "https://") && !seen[s] {
+						if strings.Contains(strings.ToLower(s), "image") || strings.HasSuffix(strings.ToLower(s), ".png") || strings.HasSuffix(strings.ToLower(s), ".jpg") || strings.HasSuffix(strings.ToLower(s), ".jpeg") || strings.HasSuffix(strings.ToLower(s), ".webp") || strings.HasSuffix(strings.ToLower(s), ".gif") {
+							seen[s] = true
+							out = append(out, s)
+						}
+					}
+				} else {
+					walk(e)
+				}
+			}
+		}
+	}
+	walk(v)
+	return out
 }

@@ -78,8 +78,8 @@ func validNewAdminPassword(p string) error {
 	if p == defaultAdminPassword {
 		return errors.New("new password must not be the default password")
 	}
-	if len(p) < 12 {
-		return errors.New("new password must be at least 12 characters")
+	if len(p) < 6 {
+		return errors.New("new password must be at least 6 characters")
 	}
 	if len(p) > 256 {
 		return errors.New("new password is too long")

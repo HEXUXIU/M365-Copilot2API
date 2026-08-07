@@ -1147,7 +1147,7 @@ async function loadModelTest(){
     const k=(kd.keys||[]).find(x=>!x.revoked&&x.raw);
     if(!k){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">请先创建 API Key</td></tr>';return;}
     modelTestKey=k.raw;
-    const d=await api('/v1/models');
+    const d=await api('/v1/models',{headers:{Authorization:'Bearer '+modelTestKey}});
     const models=d.data||[];
     if(!models.length){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">暂无可用模型</td></tr>';return;}
     $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>未测试</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">点击"测试全部"</td></tr>`).join('');

@@ -936,7 +936,6 @@ function renderTrend(trend){
   const wrap=$('ugTrendWrap');
   if(!trend||!trend.length){if(wrap)wrap.innerHTML='<div class="chart-empty"><i data-lucide="line-chart"></i>暂无趋势数据，产生请求后自动生成</div>';try{lucide.createIcons();}catch(e){}return;}
   const W=560,H=160,P=8;
-  const W=560,H=160,P=8;
   const max=Math.max(...trend.map(t=>t.tokens),1);
   let path='',area='';
   // 单点数据时取中位坐标，仍渲染折线图（一个圆点 + 日期标签），保持图表风格统一

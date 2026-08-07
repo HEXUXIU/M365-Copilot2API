@@ -94,6 +94,26 @@ func (s *apiKeyStore) revoke(id string) (bool, error) {
 	return false, nil
 }
 
+// delete 物理删除一条 API Key（与 revoke 不同，revoke 仅标记禁用）。
+func (s *apiKeyStore) delete(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Keys {
+		if s.Keys[i].ID == id {
+			removed := s.Keys[i]
+			s.Keys = append(s.Keys[:i], s.Keys[i+1:]...)
+			if err := s.save(); err != nil {
+				// 保存失败：恢复原列表（保留顺序，重新插入）
+				s.Keys = append(s.Keys[:i], append([]apiKeyRecord{removed}, s.Keys[i:]...)...)
+				_ = s.save()
+				return false, err
+			}
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *apiKeyStore) update(id, name string, revoked *bool) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

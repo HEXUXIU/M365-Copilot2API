@@ -181,15 +181,25 @@ func (c *M365CloudClient) ListConversations() ([]map[string]any, error) {
 		return nil, fmt.Errorf("unexpected response format")
 	}
 
-	historyList, ok := store["conversationPageHistoryList"].(map[string]any)
+	// 对话全部删除后，上游 RefreshNavPane 响应中 conversationPageHistoryList
+	// 可能缺失或不再是 object（如空数组 []）。这些都应视为「无对话」，
+	// 返回空列表而不是报错，避免删除全部后页面 502。
+	historyRaw, present := store["conversationPageHistoryList"]
+	if !present || historyRaw == nil {
+		return []map[string]any{}, nil
+	}
+	historyList, ok := historyRaw.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("no conversationPageHistoryList")
+		// 极端情况：字段存在但结构不符（如 []），同样按空列表处理。
+		log.Printf("[m365-cloud] conversationPageHistoryList unexpected type: %T, treating as empty", historyRaw)
+		return []map[string]any{}, nil
 	}
 
 	chatsRaw, ok := historyList["chats"].([]any)
 	if !ok {
-		log.Printf("[m365-cloud] chats type: %T, value: %v", historyList["chats"], historyList["chats"])
-		return nil, fmt.Errorf("no chats")
+		// chats 字段缺失或类型异常：空列表而非报错。
+		log.Printf("[m365-cloud] chats type: %T, value: %v, treating as empty", historyList["chats"], historyList["chats"])
+		return []map[string]any{}, nil
 	}
 
 	chats := make([]map[string]any, 0, len(chatsRaw))

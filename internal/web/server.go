@@ -287,16 +287,16 @@ func (s *Server) adminKeys(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, map[string]any{"key": raw, "record": rec})
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
-		revoked, e := s.apiKeys.revoke(id)
+		deleted, e := s.apiKeys.delete(id)
 		if e != nil {
 			http.Error(w, e.Error(), http.StatusInternalServerError)
 			return
 		}
-		if !revoked {
+		if !deleted {
 			http.Error(w, "key not found", 404)
 			return
 		}
-		jsonOut(w, map[string]string{"status": "revoked"})
+		jsonOut(w, map[string]string{"status": "deleted"})
 	case http.MethodPut:
 		var b struct {
 			ID      string `json:"id"`

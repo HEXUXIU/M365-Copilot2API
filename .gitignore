@@ -42,3 +42,4 @@ test-results.jsonl
 server.log
 server-error.log
 *.pid
+data-live-backup*/

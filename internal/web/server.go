@@ -730,6 +730,15 @@ type oaiReq struct {
 
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 
+// writeStreamFinish emits a terminal OpenAI-compatible chunk with a non-null
+// finish_reason before the stream ends, so strict clients do not treat an
+// otherwise successful response as incomplete.
+func writeStreamFinish(w http.ResponseWriter, flusher http.Flusher, id, model string) {
+	finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}}
+	fmt.Fprintf(w, "data: %s\n\n", mustJSON(finishChunk))
+	flusher.Flush()
+}
+
 func contentToString(c any) string {
 	switch v := c.(type) {
 	case string:
@@ -1038,6 +1047,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		emitText(pending.String())
+		writeStreamFinish(w, flusher, id, model)
 		fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 		if body.User != "" && res.ConversationID != "" {
@@ -1141,6 +1151,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		flusher.Flush()
 		res, err = s.chat.ChatWithDelta(ctx, account, answerReq, emit)
 		if err == nil {
+			writeStreamFinish(w, flusher, id, model)
 			fmt.Fprint(w, "data: [DONE]\n\n")
 			flusher.Flush()
 		} else {
@@ -1248,6 +1259,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		b, _ := json.Marshal(chunk)
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		flusher.Flush()
+		writeStreamFinish(w, flusher, id, model)
 		fmt.Fprintf(w, "data: [DONE]\n\n")
 		flusher.Flush()
 		return

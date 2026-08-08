@@ -15,11 +15,19 @@ func toolProtocolPrompt(text string, tools []Tool, choice any) string {
 	}
 	var defs []string
 	for _, t := range tools {
+		if strings.EqualFold(t.Type, "web_search") {
+			defs = append(defs, webSearchDecl)
+			continue
+		}
 		var f struct {
 			Name, Description string
 			Parameters        json.RawMessage `json:"parameters"`
 		}
 		if json.Unmarshal(t.Function, &f) != nil || f.Name == "" {
+			continue
+		}
+		if strings.EqualFold(f.Name, "web_search") {
+			defs = append(defs, webSearchDecl)
 			continue
 		}
 		params := strings.TrimSpace(string(f.Parameters))
@@ -41,3 +49,7 @@ When the user's request requires a tool, call it by emitting ONLY one fenced blo
 User request:
 %s`, strings.Join(defs, "\n\n"), text)
 }
+
+// webSearchDecl lets the upstream model know web_search exists and how to
+// call it, even when the client sent no JSON schema for it.
+const webSearchDecl = "web_search \u2014 Search the web for current, up-to-date information.\n```web_search\n{\"query\": \"<search text>\"}\n```"

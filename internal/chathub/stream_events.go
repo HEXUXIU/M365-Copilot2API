@@ -1,6 +1,9 @@
 package chathub
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // classifyUpdateMessages converts a ChatHub messages array into protocol-neutral
 // events. It deliberately does not infer tools from ordinary prose.
@@ -17,8 +20,16 @@ func classifyUpdateMessages(messages []any) []StreamEvent {
 		origin, _ := m["contentOrigin"].(string)
 		cot, _ := m["addToChainOfThought"].(bool)
 		kind := "text"
-		if mt == "Progress" || ct == "SearchResults" || ct == "Code" || ct == "ToolCall" {
+		if mt == "Progress" || ct == "Code" || ct == "ToolCall" {
 			kind = "progress"
+		}
+		if ct == "SearchResults" {
+			// Surface search progress as a visible citation instead of a
+			// progress frame that gateway handlers silently drop.
+			kind = "text"
+			if text != "" && !strings.HasPrefix(text, "\U0001F50E ") {
+				text = "\U0001F50E " + text
+			}
 		}
 		// ChatHub marks the multi-step reasoning transcript (ChainOfThought cards)
 		// via contentOrigin and addToChainOfThought. Expose it separately so the
@@ -27,7 +38,7 @@ func classifyUpdateMessages(messages []any) []StreamEvent {
 			kind = "reasoning"
 		}
 		name, args := extractToolFields(m)
-		if name != "" && len(args) > 0 {
+		if name != "" && len(args) > 0 && WebSearchUsable(name, args) {
 			kind = "tool"
 		}
 		if text == "" && kind == "text" {
@@ -76,7 +87,7 @@ func extractToolEvents(v any, seen map[string]bool) []StreamEvent {
 			}
 		case map[string]any:
 			name, args := extractToolFields(z)
-			if name != "" && len(args) > 0 {
+			if name != "" && len(args) > 0 && WebSearchUsable(name, args) {
 				key := name + "|" + string(args)
 				if !seen[key] {
 					seen[key] = true
@@ -90,4 +101,27 @@ func extractToolEvents(v any, seen map[string]bool) []StreamEvent {
 	}
 	walk(v)
 	return out
+}
+
+// WebSearchUsable rejects web_search invocations without a usable query.
+// Copilot occasionally emits {"type":"web_search","name":"web_search",
+// "input":{}} which would surface as a broken empty tool_use to the client.
+// All other tool names are always usable.
+func WebSearchUsable(name string, args json.RawMessage) bool {
+	if name != "web_search" {
+		return true
+	}
+	var m map[string]any
+	if json.Unmarshal(args, &m) != nil {
+		return false
+	}
+	if len(m) == 0 {
+		return false
+	}
+	for _, k := range []string{"query", "q", "search", "searchQuery", "text", "input", "prompt"} {
+		if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+			return true
+		}
+	}
+	return false
 }

@@ -54,6 +54,9 @@ func walkNative(v any, allowed map[string]bool, out *[]detectedToolCall) {
 			}
 			if a != nil {
 				b, _ := json.Marshal(a)
+				if !chathub.WebSearchUsable(name, b) {
+					return
+				}
 				h := sha256.Sum256([]byte(fmt.Sprintf("%s:%s", name, b)))
 				*out = append(*out, detectedToolCall{ID: "call_" + hex.EncodeToString(h[:8]), Name: name, Arguments: b})
 				return

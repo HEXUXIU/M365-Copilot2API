@@ -315,7 +315,9 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 							reasoningBuf.WriteString(ev.Text)
 						}
 						ev.Raw = eventRaw(arg)
-						if ev.Kind != "text" && onEvent != nil {
+						// SearchResults frames carry live citations; surface them to
+						// handlers even though they are classified as text.
+						if (ev.Kind != "text" || ev.ContentType == "SearchResults") && onEvent != nil {
 							if err := onEvent(ev); err != nil {
 								return Result{}, err
 							}

@@ -35,6 +35,7 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		o.Reasoning = r.Reasoning
 		o.ReasoningEffort = r.Reasoning.Effort
 	}
+	var inputTools []map[string]any
 	switch v := r.Input.(type) {
 	case string:
 		if v == "" {
@@ -49,6 +50,12 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			}
 			typ, _ := m["type"].(string)
 			switch typ {
+			case "additional_tools":
+				// Codex Desktop ships its tool catalog as an input item instead of
+				// the top-level tools field. Without this the request reaches
+				// ChatHub with zero tools and the model answers from imagination.
+				inputTools = append(inputTools, flattenAdditionalTools(m)...)
+				continue
 			case "function_call_progress":
 				// Progress is deliberately not converted into an assistant/tool
 				// message. It is transport metadata from a long-running client-side
@@ -97,8 +104,9 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	default:
 		return o, fmt.Errorf("input must be string or array")
 	}
+	tools := append(append([]map[string]any(nil), r.Tools...), inputTools...)
 	hasCustomExec := false
-	for _, t := range r.Tools {
+	for _, t := range tools {
 		typ, _ := t["type"].(string)
 		name, _ := t["name"].(string)
 		if typ == "custom" && name == "exec" {
@@ -106,7 +114,7 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			break
 		}
 	}
-	for _, t := range r.Tools {
+	for _, t := range tools {
 		typ, _ := t["type"].(string)
 		name, _ := t["name"].(string)
 		if hasCustomExec && !(typ == "custom" && name == "exec") {
@@ -129,6 +137,30 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		o.Messages = append([]oaiMsg{{Role: "system", Content: customExecWorkspaceInstruction}}, o.Messages...)
 	}
 	return o, nil
+}
+
+// flattenAdditionalTools unwraps a Codex `additional_tools` input item. Its
+// tools list mixes plain tool definitions with `namespace` groups that nest a
+// further tools array, so collect the leaves from both shapes.
+func flattenAdditionalTools(item map[string]any) []map[string]any {
+	raw, _ := item["tools"].([]any)
+	out := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		t, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if nested, ok := t["tools"].([]any); ok {
+			for _, child := range nested {
+				if c, ok := child.(map[string]any); ok {
+					out = append(out, c)
+				}
+			}
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 type anthropicMessage struct {

@@ -279,14 +279,14 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
   <div style="width:min(400px,calc(100vw - 32px));animation:scaleIn .5s var(--ease-out)">
     <div style="text-align:center;margin-bottom:24px">
       <div class="logo" style="display:flex;align-items:center;gap:10px;justify-content:center;margin:0 auto 12px;padding:0"><div class="logo-mark" style="width:32px;height:32px"><span></span><span></span><span></span><span></span></div><span style="font-size:24px;font-weight:700;letter-spacing:-0.02em">M365 Copilot2API</span></div>
-      <p style="color:var(--muted);font-size:14px;margin-top:4px">管理员登录</p>
+      <p style="color:var(--muted);font-size:14px;margin-top:4px">Administrator Login</p>
     </div>
     <form id="loginForm" style="background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);padding:32px;box-shadow:var(--shadow-lg)">
       <div class="form-group">
-        <label class="form-label">密码</label>
-        <input class="form-input" id="loginPassword" type="password" placeholder="请输入管理员密码" autofocus>
+        <label class="form-label">Password</label>
+        <input class="form-input" id="loginPassword" type="password" placeholder="Enter administrator password" autofocus>
       </div>
-      <button type="submit" class="btn primary" style="width:100%;margin-top:8px">登录</button>
+      <button type="submit" class="btn primary" style="width:100%;margin-top:8px">Log in</button>
     </form>
   </div>
 </div>
@@ -295,32 +295,32 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 <div class="app" id="app" style="display:none">
   <aside class="sidebar">
     <div class="logo"><div class="logo-mark"><span></span><span></span><span></span><span></span></div><span>M365 Copilot2API</span></div>
-    <div class="nav-label">概览</div>
+    <div class="nav-label">Overview</div>
     <nav class="nav">
-      <button class="active" data-page="dashboard" onclick="showPage('dashboard')"><i data-lucide="layout-dashboard" style="width:16px;height:16px;flex-shrink:0"></i><span>仪表盘</span></button>
-      <button data-page="usage" onclick="showPage('usage')"><i data-lucide="chart-line" style="width:16px;height:16px;flex-shrink:0"></i><span>用量</span></button>
+      <button class="active" data-page="dashboard" onclick="showPage('dashboard')"><i data-lucide="layout-dashboard" style="width:16px;height:16px;flex-shrink:0"></i><span>Dashboard</span></button>
+      <button data-page="usage" onclick="showPage('usage')"><i data-lucide="chart-line" style="width:16px;height:16px;flex-shrink:0"></i><span>Usage</span></button>
     </nav>
-    <div class="nav-label">管理</div>
+    <div class="nav-label">Management</div>
     <nav class="nav">
-      <button data-page="accounts" onclick="showPage('accounts')"><i data-lucide="users" style="width:16px;height:16px;flex-shrink:0"></i><span>账号</span></button>
+      <button data-page="accounts" onclick="showPage('accounts')"><i data-lucide="users" style="width:16px;height:16px;flex-shrink:0"></i><span>Accounts</span></button>
       <button data-page="apikeys" onclick="showPage('apikeys')"><i data-lucide="key-round" style="width:16px;height:16px;flex-shrink:0"></i><span>API Keys</span></button>
-      <button data-page="conversations" onclick="showPage('conversations')"><i data-lucide="message-square" style="width:16px;height:16px;flex-shrink:0"></i><span>对话管理</span></button>
+      <button data-page="conversations" onclick="showPage('conversations')"><i data-lucide="message-square" style="width:16px;height:16px;flex-shrink:0"></i><span>Conversations</span></button>
     </nav>
-    <div class="nav-label">系统</div>
+    <div class="nav-label">System</div>
     <nav class="nav">
-      <button data-page="proxies" onclick="showPage('proxies')"><i data-lucide="globe" style="width:16px;height:16px;flex-shrink:0"></i><span>代理池</span></button>
-      <button data-page="modeltest" onclick="showPage('modeltest')"><i data-lucide="flask-conical" style="width:16px;height:16px;flex-shrink:0"></i><span>模型测试</span></button>
-      <button data-page="settings" onclick="showPage('settings')"><i data-lucide="settings" style="width:16px;height:16px;flex-shrink:0"></i><span>设置</span></button>
+      <button data-page="proxies" onclick="showPage('proxies')"><i data-lucide="globe" style="width:16px;height:16px;flex-shrink:0"></i><span>Proxy Pool</span></button>
+      <button data-page="modeltest" onclick="showPage('modeltest')"><i data-lucide="flask-conical" style="width:16px;height:16px;flex-shrink:0"></i><span>Model Test</span></button>
+      <button data-page="settings" onclick="showPage('settings')"><i data-lucide="settings" style="width:16px;height:16px;flex-shrink:0"></i><span>Settings</span></button>
     </nav>
     <div class="sidebar-foot">v0.2.0</div>
   </aside>
 
   <main class="main">
     <header class="topbar">
-      <h1 id="pageTitle">仪表盘</h1>
+      <h1 id="pageTitle">Dashboard</h1>
       <div class="topbar-right">
-        <span style="font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:5px"><span class="status-dot"></span> 运行中</span>
-        <button class="btn" onclick="logout()">退出</button>
+        <span style="font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:5px"><span class="status-dot"></span> Running</span>
+        <button class="btn" onclick="logout()">Log out</button>
       </div>
     </header>
 
@@ -338,12 +338,12 @@ if (response.output_text) {
 }</div>
           <div class="onb-header">
             <div>
-              <div class="onb-kicker"><i data-lucide="list-checks"></i> 开始使用</div>
-              <h2 class="onb-title">几步内开始使用你的 API 网关</h2>
-              <p class="onb-desc">添加 Microsoft 账号、创建 API Key，即可通过 OpenAI 兼容接口对话。</p>
+              <div class="onb-kicker"><i data-lucide="list-checks"></i> Getting Started</div>
+              <h2 class="onb-title">Start using your API gateway in a few steps</h2>
+              <p class="onb-desc">Add a Microsoft account and create an API key to chat through the OpenAI-compatible API.</p>
             </div>
             <div class="onb-head-actions">
-              <button class="btn" onclick="toggleOnboarding()"><i data-lucide="chevron-up" style="width:14px;height:14px"></i> 隐藏入门引导</button>
+              <button class="btn" onclick="toggleOnboarding()"><i data-lucide="chevron-up" style="width:14px;height:14px"></i> Hide guide</button>
             </div>
           </div>
           <div class="onb-grid">
@@ -351,32 +351,32 @@ if (response.output_text) {
               <button class="onb-step" id="onb-s1" onclick="onbStep1()">
                 <span class="onb-step-num" id="onb-n1">1</span>
                 <span class="onb-step-icon"><i data-lucide="user-plus" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>添加可选账号</b><p>授权 Microsoft 账号，加入可用账号池</p></span>
+                <span class="onb-step-text"><b>Add an account</b><p>Authorize a Microsoft account and add it to the available pool</p></span>
                 <svg class="onb-step-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
               </button>
               <button class="onb-step" id="step-s2" onclick="onbStep2()">
                 <span class="onb-step-num" id="onb-n2">2</span>
                 <span class="onb-step-icon"><i data-lucide="key-round" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>创建 API Key</b><p>为你的本应用或服务创建访问密钥</p></span>
+                <span class="onb-step-text"><b>Create an API key</b><p>Create an access key for this application or service</p></span>
                 <svg class="onb-step-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
               </button>
               <button class="onb-step" id="step-s3" onclick="onbStep3()">
                 <span class="onb-step-num" id="onb-n3">3</span>
                 <span class="onb-step-icon"><i data-lucide="terminal" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>发送请求</b><p>用下方 curl 示例验证路由</p></span>
+                <span class="onb-step-text"><b>Send a request</b><p>Verify the route with the curl example below</p></span>
                 <svg class="onb-step-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
               </button>
             </div>
             <div class="onb-code">
               <div class="onb-code-head">
-                <div class="onb-code-title"><i data-lucide="square-terminal"></i> 首个 API 请求<small>OpenAI 兼容接口</small></div>
-                <button class="btn btn-sm" onclick="copyCurl()"><i data-lucide="copy" style="width:13px;height:13px"></i> 复制</button>
+                <div class="onb-code-title"><i data-lucide="square-terminal"></i> First API request<small>OpenAI-compatible API</small></div>
+                <button class="btn btn-sm" onclick="copyCurl()"><i data-lucide="copy" style="width:13px;height:13px"></i> Copy</button>
               </div>
               <div class="onb-mac" aria-hidden="true"><i></i><i></i><i></i></div>
               <pre class="onb-curl" id="onbCurl"></pre>
               <div class="onb-status">
-                <div class="onb-status-row"><span class="onb-status-l"><i data-lucide="radio-tower" style="color:var(--green)"></i> 网关</span><span class="onb-status-r">在线</span></div>
-                <div class="onb-status-row"><span class="onb-status-l"><i data-lucide="users" style="color:var(--accent)"></i> 可用账号</span><span class="onb-status-r" id="onbStatusAcc">0</span></div>
+                <div class="onb-status-row"><span class="onb-status-l"><i data-lucide="radio-tower" style="color:var(--green)"></i> Gateway</span><span class="onb-status-r">Online</span></div>
+                <div class="onb-status-row"><span class="onb-status-l"><i data-lucide="users" style="color:var(--accent)"></i> Available accounts</span><span class="onb-status-r" id="onbStatusAcc">0</span></div>
                 <div class="onb-status-row"><span class="onb-status-l"><i data-lucide="key-round" style="color:var(--purple)"></i> API Key</span><span class="onb-status-r" id="onbStatusKey">0</span></div>
               </div>
             </div>
@@ -384,230 +384,230 @@ if (response.output_text) {
         </div>
         <div class="usage-overview">
           <div class="usage-overview-item">
-            <div class="usage-overview-top"><i data-lucide="flame"></i> 近 24 小时消耗</div>
+            <div class="usage-overview-top"><i data-lucide="flame"></i> Last 24 hours</div>
             <span class="usage-overview-value" id="ov24hTok">0<small>tokens</small></span>
-            <span class="usage-overview-sub" id="ov24hReq">0 次请求</span>
+            <span class="usage-overview-sub" id="ov24hReq">0 requests</span>
           </div>
           <div class="usage-overview-item">
-            <div class="usage-overview-top"><i data-lucide="trending-up"></i> 历史使用情况</div>
+            <div class="usage-overview-top"><i data-lucide="trending-up"></i> All-time usage</div>
             <span class="usage-overview-value" id="ovTotalTok">0<small>tokens</small></span>
-            <span class="usage-overview-sub" id="ovTotalReq">0 次请求</span>
+            <span class="usage-overview-sub" id="ovTotalReq">0 requests</span>
           </div>
           <div class="usage-overview-item">
-            <div class="usage-overview-top"><i data-lucide="activity"></i> 请求计数</div>
+            <div class="usage-overview-top"><i data-lucide="activity"></i> Request count</div>
             <span class="usage-overview-value" id="ovTodayTok">0<small>tokens</small></span>
-            <span class="usage-overview-sub" id="ovTodayReq">今日 0 次请求</span>
+            <span class="usage-overview-sub" id="ovTodayReq">0 requests today</span>
           </div>
           <div class="usage-overview-item">
-            <div class="usage-overview-top"><i data-lucide="piggy-bank"></i> 缓存命中</div>
+            <div class="usage-overview-top"><i data-lucide="piggy-bank"></i> Cache hits</div>
             <span class="usage-overview-value" id="ovCacheHits">0<small>tokens</small></span>
-            <span class="usage-overview-sub" id="ovCacheRate">命中率 0%</span>
+            <span class="usage-overview-sub" id="ovCacheRate">Hit rate 0%</span>
           </div>
         </div>
         <div class="stats">
-          <div class="stat"><span class="stat-label">总会话数</span><span class="stat-value" id="stat-sessions">0</span><span class="stat-unit">个</span></div>
-          <div class="stat"><span class="stat-label">缓存命中</span><span class="stat-value" id="stat-hits">0</span><span class="stat-unit">次</span></div>
-          <div class="stat"><span class="stat-label">命中率</span><span class="stat-value" id="stat-rate">0</span><span class="stat-unit">%</span></div>
-          <div class="stat"><span class="stat-label">节省 Token</span><span class="stat-value" id="stat-saved">0</span><span class="stat-unit" style="font-size:12px">节省</span></div>
+          <div class="stat"><span class="stat-label">Total sessions</span><span class="stat-value" id="stat-sessions">0</span><span class="stat-unit">total</span></div>
+          <div class="stat"><span class="stat-label">Cache hits</span><span class="stat-value" id="stat-hits">0</span><span class="stat-unit">hits</span></div>
+          <div class="stat"><span class="stat-label">Hit rate</span><span class="stat-value" id="stat-rate">0</span><span class="stat-unit">%</span></div>
+          <div class="stat"><span class="stat-label">Tokens saved</span><span class="stat-value" id="stat-saved">0</span><span class="stat-unit" style="font-size:12px">saved</span></div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">快捷操作</span></div>
+          <div class="card-head"><span class="card-title">Quick actions</span></div>
           <div class="card-body">
             <div class="quick-grid">
               <div class="quick-action" onclick="showPage('accounts');setTimeout(startPKCE,200)">
                 <div class="quick-action-icon blue"><i data-lucide="plus" style="width:18px;height:18px"></i></div>
-                <div class="quick-action-text"><h4>添加账号</h4><p>一键授权 Microsoft 账号</p></div>
+                <div class="quick-action-text"><h4>Add account</h4><p>Authorize a Microsoft account</p></div>
               </div>
               <div class="quick-action" onclick="openKeyModal()">
                 <div class="quick-action-icon green"><i data-lucide="key" style="width:18px;height:18px"></i></div>
-                <div class="quick-action-text"><h4>创建 API Key</h4><p>生成新的访问密钥</p></div>
+                <div class="quick-action-text"><h4>Create API key</h4><p>Generate a new access key</p></div>
               </div>
               <div class="quick-action" onclick="showPage('conversations')">
                 <div class="quick-action-icon purple"><i data-lucide="trash-2" style="width:18px;height:18px"></i></div>
-                <div class="quick-action-text"><h4>清理对话</h4><p>删除不需要的对话</p></div>
+                <div class="quick-action-text"><h4>Clean conversations</h4><p>Delete conversations you no longer need</p></div>
               </div>
             </div>
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">最近请求</span><button class="btn btn-sm" onclick="showPage('usage')">查看全部</button></div>
-          <table class="table"><thead><tr><th>时间</th><th>模型</th><th>端点</th><th>Tokens</th><th>状态</th></tr></thead><tbody id="dashRecentRows"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody></table>
+          <div class="card-head"><span class="card-title">Recent requests</span><button class="btn btn-sm" onclick="showPage('usage')">View all</button></div>
+          <table class="table"><thead><tr><th>Time</th><th>Model</th><th>Endpoint</th><th>Tokens</th><th>Status</th></tr></thead><tbody id="dashRecentRows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
       <!-- Usage -->
       <section id="page-usage" style="display:none">
         <div class="page-head">
-          <div><h2 class="page-title">使用情况</h2><p class="page-sub">Token 用量统计与请求明细</p></div>
+          <div><h2 class="page-title">Usage</h2><p class="page-sub">Token usage statistics and request details</p></div>
           <div class="seg" id="usageRange">
             <button data-days="1" onclick="setUsageRange(1)">24h</button>
-            <button data-days="7" class="active" onclick="setUsageRange(7)">7天</button>
-            <button data-days="30" onclick="setUsageRange(30)">30天</button>
-            <button data-days="90" onclick="setUsageRange(90)">90天</button>
+            <button data-days="7" class="active" onclick="setUsageRange(7)">7 days</button>
+            <button data-days="30" onclick="setUsageRange(30)">30 days</button>
+            <button data-days="90" onclick="setUsageRange(90)">90 days</button>
           </div>
         </div>
         <div class="stats">
-          <div class="stat"><span class="stat-label">总请求数</span><span class="stat-value" id="ug-req">0</span><span class="stat-sub" id="ug-req-sub"></span></div>
-          <div class="stat"><span class="stat-label">总 Token</span><span class="stat-value" id="ug-tok">0</span><span class="stat-sub" id="ug-tok-sub"></span></div>
-          <div class="stat"><span class="stat-label">缓存命中</span><span class="stat-value" id="ug-cache">0</span><span class="stat-unit">tokens</span></div>
-          <div class="stat"><span class="stat-label">平均耗时</span><span class="stat-value" id="ug-ms">0</span><span class="stat-unit">ms</span></div>
+          <div class="stat"><span class="stat-label">Total requests</span><span class="stat-value" id="ug-req">0</span><span class="stat-sub" id="ug-req-sub"></span></div>
+          <div class="stat"><span class="stat-label">Total tokens</span><span class="stat-value" id="ug-tok">0</span><span class="stat-sub" id="ug-tok-sub"></span></div>
+          <div class="stat"><span class="stat-label">Cached tokens</span><span class="stat-value" id="ug-cache">0</span><span class="stat-unit">tokens</span></div>
+          <div class="stat"><span class="stat-label">Average latency</span><span class="stat-value" id="ug-ms">0</span><span class="stat-unit">ms</span></div>
         </div>
         <div class="chart-grid">
           <div class="chart">
-            <div class="chart-title">Token 使用趋势</div>
-            <div class="chart-sub">按天汇总的 Token 消耗</div>
+            <div class="chart-title">Token usage trend</div>
+            <div class="chart-sub">Daily token consumption</div>
             <div id="ugTrendWrap"><svg id="ugTrend" viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px"></svg></div>
           </div>
           <div class="chart">
-            <div class="chart-title">模型分布</div>
-            <div class="chart-sub">按模型统计的 Token 用量</div>
+            <div class="chart-title">Model distribution</div>
+            <div class="chart-sub">Token usage by model</div>
             <div id="ugModels"></div>
           </div>
           <div class="chart">
-            <div class="chart-title">端点分布</div>
-            <div class="chart-sub">按接口统计的请求量</div>
+            <div class="chart-title">Endpoint distribution</div>
+            <div class="chart-sub">Requests by endpoint</div>
             <div id="ugEndpoints"></div>
           </div>
           <div class="chart">
-            <div class="chart-title">API Key 用量</div>
-            <div class="chart-sub">按密钥统计的请求量</div>
+            <div class="chart-title">API key usage</div>
+            <div class="chart-sub">Requests by API key</div>
             <div id="ugKeys"></div>
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">请求明细</span><span style="font-size:11px;color:var(--muted)">最近记录</span></div>
-          <table class="table"><thead><tr><th>时间</th><th>密钥</th><th>模型</th><th>端点</th><th>Tokens</th><th>耗时</th></tr></thead><tbody id="ugLogRows"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody></table>
-          <div class="pagination"><span id="ugPageInfo"></span><button class="btn btn-sm" id="ugPrev" onclick="ugPage(-1)">上一页</button><button class="btn btn-sm" id="ugNext" onclick="ugPage(1)">下一页</button></div>
+          <div class="card-head"><span class="card-title">Request details</span><span style="font-size:11px;color:var(--muted)">Recent records</span></div>
+          <table class="table"><thead><tr><th>Time</th><th>Key</th><th>Model</th><th>Endpoint</th><th>Tokens</th><th>Latency</th></tr></thead><tbody id="ugLogRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
+          <div class="pagination"><span id="ugPageInfo"></span><button class="btn btn-sm" id="ugPrev" onclick="ugPage(-1)">Previous</button><button class="btn btn-sm" id="ugNext" onclick="ugPage(1)">Next</button></div>
         </div>
       </section>
 
       <!-- Accounts -->
       <section id="page-accounts" style="display:none">
         <div class="page-head">
-          <div><h2 class="page-title">账号管理</h2><p class="page-sub">授权和管理 Microsoft 账号</p></div>
+          <div><h2 class="page-title">Account management</h2><p class="page-sub">Authorize and manage Microsoft accounts</p></div>
         </div>
         <div class="card" style="margin-bottom:16px">
-          <div class="card-head"><span class="card-title">添加账号</span></div>
+          <div class="card-head"><span class="card-title">Add account</span></div>
           <div class="card-body">
             <div class="onb-steps" style="margin-bottom:16px">
               <div class="onb-step">
                 <span class="onb-step-num">1</span>
                 <span class="onb-step-icon"><i data-lucide="mouse-pointer-click" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>点击下方"开始授权"</b><p>浏览器将打开 Microsoft 登录页面</p></span>
+                <span class="onb-step-text"><b>Click "Start authorization" below</b><p>Your browser will open the Microsoft sign-in page</p></span>
               </div>
               <div class="onb-step">
                 <span class="onb-step-num">2</span>
                 <span class="onb-step-icon"><i data-lucide="clipboard-copy" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>复制完整回调地址</b><p>登录完成后，复制地址栏中以 http 开头的完整网址</p></span>
+                <span class="onb-step-text"><b>Copy the full callback URL</b><p>After signing in, copy the full URL beginning with http from the address bar</p></span>
               </div>
               <div class="onb-step">
                 <span class="onb-step-num">3</span>
                 <span class="onb-step-icon"><i data-lucide="check-check" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>粘贴并确认</b><p>粘贴到下方输入框，点击"确认添加"完成授权</p></span>
+                <span class="onb-step-text"><b>Paste and confirm</b><p>Paste it below and click "Confirm and add" to finish authorization</p></span>
               </div>
             </div>
-            <button class="btn primary" onclick="startPKCE()" style="width:100%;margin-bottom:12px;"><i data-lucide="link" style="width:15px;height:15px"></i> 开始授权</button>
+            <button class="btn primary" onclick="startPKCE()" style="width:100%;margin-bottom:12px;"><i data-lucide="link" style="width:15px;height:15px"></i> Start authorization</button>
             <div class="highlight-box warning" style="margin-top:0;margin-bottom:16px">
-              <div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i> 重要提示</div>
-              <p>授权完成后请<strong>忽略弹出页面的内容</strong>，复制浏览器地址栏中完整的回调地址（包含 <code>code</code> 和 <code>state</code> 参数）。</p>
+              <div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i> Important</div>
+              <p>After authorization, <strong>ignore the content of the popup page</strong> and copy the full callback URL from the browser address bar, including the <code>code</code> and <code>state</code> parameters.</p>
             </div>
-            <label class="form-label">回调地址</label>
+            <label class="form-label">Callback URL</label>
             <div class="copy-field">
-              <input class="form-input" id="callbackInput" placeholder="粘贴完整回调地址，例如 https://app.example.com/api/auth/callback?code=...&state=..." autocomplete="off">
-              <button class="btn primary" onclick="submitCallback()" style="min-width:96px">确认添加</button>
+              <input class="form-input" id="callbackInput" placeholder="Paste the full callback URL, e.g. https://app.example.com/api/auth/callback?code=...&state=..." autocomplete="off">
+              <button class="btn primary" onclick="submitCallback()" style="min-width:96px">Confirm and add</button>
             </div>
             <div id="authStatus" style="margin-top:12px"></div>
           </div>
         </div>
         <div class="card">
           <div class="card-head">
-            <span class="card-title">已授权账号</span>
+            <span class="card-title">Authorized accounts</span>
             <div style="display:flex;gap:8px;align-items:center">
-              <input class="form-input" id="accountSearch" placeholder="搜索账号…" style="width:180px;padding:6px 10px;font-size:12px" oninput="renderAccounts()">
+              <input class="form-input" id="accountSearch" placeholder="Search accounts…" style="width:180px;padding:6px 10px;font-size:12px" oninput="renderAccounts()">
               <div class="seg" id="accountFilter">
-                <button data-f="all" class="active" onclick="setAccountFilter('all')">全部</button>
-                <button data-f="online" onclick="setAccountFilter('online')">在线</button>
-                <button data-f="offline" onclick="setAccountFilter('offline')">离线</button>
+                <button data-f="all" class="active" onclick="setAccountFilter('all')">All</button>
+                <button data-f="online" onclick="setAccountFilter('online')">Online</button>
+                <button data-f="offline" onclick="setAccountFilter('offline')">Offline</button>
               </div>
             </div>
           </div>
-          <table class="table"><thead><tr><th>账号</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody id="accountRows"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody></table>
+          <table class="table"><thead><tr><th>Account</th><th>Status</th><th>Updated</th><th>Actions</th></tr></thead><tbody id="accountRows"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
       <!-- API Keys -->
       <section id="page-apikeys" style="display:none">
         <div class="page-head">
-          <div><h2 class="page-title">API Keys</h2><p class="page-sub">管理访问密钥</p></div>
-          <button class="btn primary" onclick="openKeyModal()">创建 Key</button>
+          <div><h2 class="page-title">API Keys</h2><p class="page-sub">Manage access keys</p></div>
+          <button class="btn primary" onclick="openKeyModal()">Create key</button>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">密钥列表</span><span style="font-size:11px;color:var(--muted)">仅创建时显示完整密钥</span></div>
-          <table class="table"><thead><tr><th>名称</th><th>前缀</th><th>创建时间</th><th>状态</th><th>最近使用</th><th style="text-align:right">操作</th></tr></thead><tbody id="keyRows"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody></table>
+          <div class="card-head"><span class="card-title">Key list</span><span style="font-size:11px;color:var(--muted)">The full key is shown only once after creation</span></div>
+          <table class="table"><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Status</th><th>Last used</th><th style="text-align:right">Actions</th></tr></thead><tbody id="keyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
       <!-- Conversations -->
       <section id="page-conversations" style="display:none">
         <div class="page-head">
-          <div><h2 class="page-title">对话管理</h2><p class="page-sub">查看和清理 M365 对话</p></div>
+          <div><h2 class="page-title">Conversation management</h2><p class="page-sub">View and clean up M365 conversations</p></div>
           <div style="display:flex;gap:8px">
-            <button class="btn danger" onclick="cleanupAll()">清理全部</button>
+            <button class="btn danger" onclick="cleanupAll()">Clean up all</button>
           </div>
         </div>
         <div class="term" id="termBox" style="display:none;margin-bottom:16px">
           <div class="term-head">
             <span class="term-dot red"></span><span class="term-dot yellow"></span><span class="term-dot green"></span>
             <span class="term-title" id="termTitle">cleanup — m365-copilot2api</span>
-            <button class="term-clear" onclick="termClear()">清空</button>
+            <button class="term-clear" onclick="termClear()">Clear</button>
           </div>
           <div class="term-body" id="termBody"></div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">对话列表</span></div>
-          <table class="table"><thead><tr><th>对话 ID</th><th>名称</th><th>创建时间</th><th>操作</th></tr></thead><tbody id="convRows"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody></table>
+          <div class="card-head"><span class="card-title">Conversation list</span></div>
+          <table class="table"><thead><tr><th>Conversation ID</th><th>Name</th><th>Created</th><th>Actions</th></tr></thead><tbody id="convRows"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
       <!-- Proxies -->
       <section id="page-proxies" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <div><h2 style="font-size:18px;font-weight:700">代理池</h2><p style="font-size:12px;color:var(--muted);margin-top:2px">配置出口代理，支持 http / https / socks5，故障自动切换</p></div>
-          <button class="btn" onclick="proxyCheckAll()"><i data-lucide="activity" style="width:14px;height:14px"></i> 全部健康检查</button>
+          <div><h2 style="font-size:18px;font-weight:700">Proxy pool</h2><p style="font-size:12px;color:var(--muted);margin-top:2px">Configure outbound proxies with http / https / socks5 and automatic failover</p></div>
+          <button class="btn" onclick="proxyCheckAll()"><i data-lucide="activity" style="width:14px;height:14px"></i> Check all</button>
         </div>
         <div class="card" style="margin-bottom:16px">
-          <div class="card-head"><span class="card-title">添加代理</span></div>
+          <div class="card-head"><span class="card-title">Add proxy</span></div>
           <div class="card-body">
-            <label class="form-label">代理地址（一行一个，支持批量粘贴）</label>
+            <label class="form-label">Proxy URLs (one per line; bulk paste supported)</label>
             <textarea class="form-input" id="proxyInput" rows="4" placeholder="http://user:pass@host:port&#10;socks5://127.0.0.1:1080&#10;https://proxy.example.com:443"></textarea>
             <div style="margin-top:12px;display:flex;gap:8px">
-              <button class="btn primary" onclick="proxyAdd()"><i data-lucide="plus" style="width:14px;height:14px"></i> 添加</button>
-              <button class="btn" onclick="proxyTest()">测试连通性</button>
+              <button class="btn primary" onclick="proxyAdd()"><i data-lucide="plus" style="width:14px;height:14px"></i> Add</button>
+              <button class="btn" onclick="proxyTest()">Test connectivity</button>
             </div>
-            <p class="form-hint" style="margin-top:8px">已支持的格式：<code>http://</code>、<code>https://</code>、<code>socks5://</code>，可带用户名密码</p>
+            <p class="form-hint" style="margin-top:8px">Supported formats: <code>http://</code>, <code>https://</code>, and <code>socks5://</code>; usernames and passwords are supported</p>
           </div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">代理列表</span></div>
-          <table class="table"><thead><tr><th>地址</th><th>状态</th><th>延迟</th><th>失败次数</th><th>冷却至</th><th>操作</th></tr></thead><tbody id="proxyRows"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody></table>
+          <div class="card-head"><span class="card-title">Proxy list</span></div>
+          <table class="table"><thead><tr><th>URL</th><th>Status</th><th>Latency</th><th>Failures</th><th>Cooldown until</th><th>Actions</th></tr></thead><tbody id="proxyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
       <!-- Model Test -->
       <section id="page-modeltest" style="display:none">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <div><h2 style="font-size:18px;font-weight:700">模型测试</h2><p style="font-size:12px;color:var(--muted);margin-top:2px">对各模型发送最小请求，验证可用性</p></div>
-          <button class="btn primary" onclick="modelTestAll()"><i data-lucide="play" style="width:14px;height:14px"></i> 测试全部</button>
+          <div><h2 style="font-size:18px;font-weight:700">Model test</h2><p style="font-size:12px;color:var(--muted);margin-top:2px">Send a minimal request to each model to verify availability</p></div>
+          <button class="btn primary" onclick="modelTestAll()"><i data-lucide="play" style="width:14px;height:14px"></i> Test all</button>
         </div>
         <div class="card">
-          <table class="table"><thead><tr><th>模型</th><th>状态</th><th>耗时</th><th>回复</th></tr></thead><tbody id="modelTestRows"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody></table>
+          <table class="table"><thead><tr><th>Model</th><th>Status</th><th>Latency</th><th>Reply</th></tr></thead><tbody id="modelTestRows"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
       <!-- Settings -->
       <section id="page-settings" style="display:none">
-        <h2 style="font-size:18px;font-weight:700;margin-bottom:16px">设置</h2>
-        <div class="card"><div class="card-body"><div class="form-group"><label class="form-label">监听地址</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div><div class="form-group"><label class="form-label">聊天超时（秒）</label><input class="form-input" id="setTimeout" type="number" placeholder="120"></div><div style="margin-top:16px"><button class="btn primary" onclick="saveSettings()">保存设置</button></div></div></div>
+        <h2 style="font-size:18px;font-weight:700;margin-bottom:16px">Settings</h2>
+        <div class="card"><div class="card-body"><div class="form-group"><label class="form-label">Listen address</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div><div class="form-group"><label class="form-label">Chat timeout (seconds)</label><input class="form-input" id="setTimeout" type="number" placeholder="120"></div><div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh">中文</option></select><p class="form-hint">Choose the language used by the administration console.</p></div><div style="margin-top:16px"><button class="btn primary" onclick="saveSettings()">Save settings</button></div></div></div>
       </section>
     </div>
   </main>
@@ -616,20 +616,20 @@ if (response.output_text) {
 <!-- Key Modal -->
 <div class="modal-overlay" id="keyModal">
   <div class="modal">
-    <h3>创建 API Key</h3>
-    <p class="subtitle">密钥只显示一次，请妥善保存</p>
+    <h3>Create API key</h3>
+    <p class="subtitle">The key is shown only once. Store it securely.</p>
     <form onsubmit="createKey(event)">
       <div class="form-group">
-        <label class="form-label">名称</label>
+        <label class="form-label">Name</label>
         <input class="form-input" id="keyName" value="default" autofocus>
       </div>
       <div class="modal-actions">
-        <button type="button" class="btn" onclick="closeKeyModal()">取消</button>
-        <button type="submit" class="btn primary">创建</button>
+        <button type="button" class="btn" onclick="closeKeyModal()">Cancel</button>
+        <button type="submit" class="btn primary">Create</button>
       </div>
     </form>
     <div id="keyResult" style="display:none">
-      <div class="highlight-box"><b>请立即复制保存此密钥</b><div class="copy-field"><input class="form-input" id="keyValue" readonly><button class="btn-sm btn" onclick="copyKey()">复制</button></div></div>
+      <div class="highlight-box"><b>Copy and save this key now</b><div class="copy-field"><input class="form-input" id="keyValue" readonly><button class="btn-sm btn" onclick="copyKey()">Copy</button></div></div>
     </div>
   </div>
 </div>
@@ -637,15 +637,15 @@ if (response.output_text) {
 <!-- Edit Key Modal -->
 <div class="modal-overlay" id="editKeyModal">
   <div class="modal">
-    <h3>编辑 API Key</h3>
-    <p class="subtitle">修改密钥名称</p>
+    <h3>Edit API key</h3>
+    <p class="subtitle">Change the key name</p>
     <div class="form-group">
-      <label class="form-label">名称</label>
+      <label class="form-label">Name</label>
       <input class="form-input" id="editKeyName">
     </div>
     <div class="modal-actions">
-      <button class="btn" onclick="closeEditKeyModal()">取消</button>
-      <button class="btn primary" onclick="saveEditKey()">保存</button>
+      <button class="btn" onclick="closeEditKeyModal()">Cancel</button>
+      <button class="btn primary" onclick="saveEditKey()">Save</button>
     </div>
   </div>
 </div>
@@ -655,14 +655,14 @@ if (response.output_text) {
   <div class="modal wide">
     <div class="modal-head">
       <div>
-        <h3>使用 API 密钥</h3>
+        <h3>Use API key</h3>
         <p class="subtitle" id="useKeyName"></p>
       </div>
       <button class="modal-close" onclick="closeUseKey()"><i data-lucide="x" style="width:15px;height:15px"></i></button>
     </div>
     <div class="copy-field">
       <input class="form-input" id="useKeyVal" readonly onclick="this.select()">
-      <button class="btn btn-sm" onclick="copyUseKey()">复制</button>
+      <button class="btn btn-sm" onclick="copyUseKey()">Copy</button>
     </div>
     <div class="uke-tabs" id="useKeyClients"></div>
     <div class="uke-tabs" id="useKeyOs"></div>
@@ -674,7 +674,234 @@ if (response.output_text) {
 
 <script>
 const $=id=>document.getElementById(id);
-const pages={dashboard:'仪表盘',usage:'用量',accounts:'账号',apikeys:'API Keys',conversations:'对话管理',proxies:'代理池',modeltest:'模型测试',settings:'设置'};
+const pages={dashboard:'Dashboard',usage:'Usage',accounts:'Accounts',apikeys:'API Keys',conversations:'Conversations',proxies:'Proxy Pool',modeltest:'Model Test',settings:'Settings'};
+const localeStorageKey='m365_locale';
+const localeText={
+  'Administrator Login':'管理员登录',
+  'Password':'密码',
+  'Enter administrator password':'请输入管理员密码',
+  'Log in':'登录',
+  'Overview':'概览',
+  'Dashboard':'仪表盘',
+  'Usage':'用量',
+  'Management':'管理',
+  'Accounts':'账号',
+  'API Keys':'API Keys',
+  'Conversations':'对话管理',
+  'System':'系统',
+  'Proxy Pool':'代理池',
+  'Model Test':'模型测试',
+  'Settings':'设置',
+  'Running':'运行中',
+  'Log out':'退出',
+  'Getting Started':'开始使用',
+  'Start using your API gateway in a few steps':'几步内开始使用你的 API 网关',
+  'Add a Microsoft account and create an API key to chat through the OpenAI-compatible API.':'添加 Microsoft 账号、创建 API Key，即可通过 OpenAI 兼容接口对话。',
+  'Hide guide':'隐藏入门引导',
+  'Add an account':'添加账号',
+  'Authorize a Microsoft account and add it to the available pool':'授权 Microsoft 账号，加入可用账号池',
+  'Create an API key':'创建 API Key',
+  'Create an access key for this application or service':'为你的本应用或服务创建访问密钥',
+  'Send a request':'发送请求',
+  'Verify the route with the curl example below':'用下方 curl 示例验证路由',
+  'First API request':'首个 API 请求',
+  'OpenAI-compatible API':'OpenAI 兼容接口',
+  'Copy':'复制',
+  'Gateway':'网关',
+  'Online':'在线',
+  'Available accounts':'可用账号',
+  'API Key':'API Key',
+  'Last 24 hours':'近 24 小时消耗',
+  'All-time usage':'历史使用情况',
+  'Request count':'请求计数',
+  'Cache hits':'缓存命中',
+  'Total sessions':'总会话数',
+  'total':'个',
+  'hits':'次',
+  'Hit rate':'命中率',
+  'Tokens saved':'节省 Token',
+  'saved':'节省',
+  'Quick actions':'快捷操作',
+  'Authorize a Microsoft account':'一键授权 Microsoft 账号',
+  'Generate a new access key':'生成新的访问密钥',
+  'Clean conversations':'清理对话',
+  'Delete conversations you no longer need':'删除不需要的对话',
+  'Recent requests':'最近请求',
+  'View all':'查看全部',
+  'Time':'时间',
+  'Model':'模型',
+  'Endpoint':'端点',
+  'Tokens':'Tokens',
+  'Status':'状态',
+  'Loading...':'加载中...',
+  'Token usage statistics and request details':'Token 用量统计与请求明细',
+  '7 days':'7天',
+  '30 days':'30天',
+  '90 days':'90天',
+  'Total requests':'总请求数',
+  'Total tokens':'总 Token',
+  'Cached tokens':'缓存命中',
+  'Average latency':'平均耗时',
+  'Token usage trend':'Token 使用趋势',
+  'Daily token consumption':'按天汇总的 Token 消耗',
+  'Model distribution':'模型分布',
+  'Token usage by model':'按模型统计的 Token 用量',
+  'Endpoint distribution':'端点分布',
+  'Requests by endpoint':'按接口统计的请求量',
+  'API key usage':'API Key 用量',
+  'Requests by API key':'按密钥统计的请求量',
+  'Request details':'请求明细',
+  'Recent records':'最近记录',
+  'Key':'密钥',
+  'Latency':'耗时',
+  'Previous':'上一页',
+  'Next':'下一页',
+  'Account management':'账号管理',
+  'Authorize and manage Microsoft accounts':'授权和管理 Microsoft 账号',
+  'Click "Start authorization" below':'点击下方"开始授权"',
+  'Your browser will open the Microsoft sign-in page':'浏览器将打开 Microsoft 登录页面',
+  'Copy the full callback URL':'复制完整回调地址',
+  'After signing in, copy the full URL beginning with http from the address bar':'登录完成后，复制地址栏中以 http 开头的完整网址',
+  'Paste and confirm':'粘贴并确认',
+  'Paste it below and click "Confirm and add" to finish authorization':'粘贴到下方输入框，点击"确认添加"完成授权',
+  'Start authorization':'开始授权',
+  'Important':'重要提示',
+  'After authorization,':'授权完成后请',
+  'ignore the content of the popup page':'忽略弹出页面的内容',
+  'and copy the full callback URL from the browser address bar, including the':'，复制浏览器地址栏中完整的回调地址（包含',
+  'parameters.':'参数）。',
+  'Callback URL':'回调地址',
+  'Paste the full callback URL, e.g. https://app.example.com/api/auth/callback?code=...&state=...':'粘贴完整回调地址，例如 https://app.example.com/api/auth/callback?code=...&state=...',
+  'Confirm and add':'确认添加',
+  'Authorized accounts':'已授权账号',
+  'Search accounts…':'搜索账号…',
+  'All':'全部',
+  'Offline':'离线',
+  'Updated':'更新时间',
+  'Actions':'操作',
+  'Manage access keys':'管理访问密钥',
+  'Create key':'创建 Key',
+  'Key list':'密钥列表',
+  'The full key is shown only once after creation':'仅创建时显示完整密钥',
+  'Name':'名称',
+  'Prefix':'前缀',
+  'Created':'创建时间',
+  'Last used':'最近使用',
+  'Conversation management':'对话管理',
+  'View and clean up M365 conversations':'查看和清理 M365 对话',
+  'Clean up all':'清理全部',
+  'Clear':'清空',
+  'Conversation list':'对话列表',
+  'Conversation ID':'对话 ID',
+  'Configure outbound proxies with http / https / socks5 and automatic failover':'配置出口代理，支持 http / https / socks5，故障自动切换',
+  'Check all':'全部健康检查',
+  'Add proxy':'添加代理',
+  'Proxy URLs (one per line; bulk paste supported)':'代理地址（一行一个，支持批量粘贴）',
+  'Add':'添加',
+  'Test connectivity':'测试连通性',
+  'Supported formats: ':'已支持的格式：',
+  ', and ':'、',
+  '; usernames and passwords are supported':'，可带用户名密码',
+  'Proxy list':'代理列表',
+  'URL':'地址',
+  'Failures':'失败次数',
+  'Cooldown until':'冷却至',
+  'Send a minimal request to each model to verify availability':'对各模型发送最小请求，验证可用性',
+  'Test all':'测试全部',
+  'Reply':'回复',
+  'Listen address':'监听地址',
+  'Chat timeout (seconds)':'聊天超时（秒）',
+  'Language':'语言',
+  'Save settings':'保存设置',
+  'Choose the language used by the administration console.':'选择管理控制台使用的语言。',
+  'Create API key':'创建 API Key',
+  'The key is shown only once. Store it securely.':'密钥只显示一次，请妥善保存',
+  'Cancel':'取消',
+  'Create':'创建',
+  'Copy and save this key now':'请立即复制保存此密钥',
+  'Edit API key':'编辑 API Key',
+  'Change the key name':'修改密钥名称',
+  'Save':'保存',
+  'Use API key':'使用 API 密钥',
+  'No requests yet':'暂无请求记录',
+  'Success':'成功',
+  'Error':'错误',
+  'No matching accounts':'暂无匹配账号',
+  'Delete':'删除',
+  'No API keys':'暂无 API Key',
+  'Active':'有效',
+  'Disabled':'已禁用',
+  'Enable':'启用',
+  'No conversations':'暂无对话',
+  'No proxies; requests will connect directly':'暂无代理，请求将直连',
+  'No models available':'暂无可用模型',
+  'Not tested':'未测试',
+  'No trend data yet; it will appear after requests are made.':'暂无趋势数据，产生请求后自动生成',
+  'No data':'暂无数据',
+  'Healthy':'正常',
+  'Unreachable':'不可达',
+  'Upstream error':'上游异常',
+  'Not checked':'未检测',
+  'Cooling down':'冷却中',
+  'Testing…':'测试中…',
+  'Failed':'失败'
+};
+let currentLocale='en';
+let localeObserver=null;
+function localeReverse(){const out={};Object.entries(localeText).forEach(([en,zh])=>{if(!out[zh])out[zh]=en;});return out;}
+const localeTextReverse=localeReverse();
+function translateDynamic(value,locale){
+  if(!value)return value;
+  if(locale==='zh'){
+    let m=value.match(/^(\d+) requests today$/);if(m)return '今日 '+m[1]+' 次请求';
+    m=value.match(/^(\d+) requests$/);if(m)return m[1]+' 次请求';
+    m=value.match(/^Hit rate (.+)$/);if(m)return '命中率 '+m[1];
+    m=value.match(/^Today \+(\d+)$/);if(m)return '今日 +'+m[1];
+    m=value.match(/^Input (\d+) · Output (\d+)$/);if(m)return '输入 '+m[1]+' · 输出 '+m[2];
+    m=value.match(/^in(\d+)\/out(\d+)\/cache(\d+)$/);if(m)return '入'+m[1]+'/出'+m[2]+'/缓'+m[3];
+    m=value.match(/^Page (\d+) \/ (\d+) · (\d+) total$/);if(m)return '第 '+m[1]+' / '+m[2]+' 页 · 共 '+m[3]+' 条';
+    m=value.match(/^Added (\d+) proxies$/);if(m)return '已添加 '+m[1]+' 个代理';
+    m=value.match(/^Connection healthy: (.+)$/);if(m)return '连通正常：'+m[1];
+    m=value.match(/^Finished: (\d+) succeeded, (\d+) failed, (\d+) rounds total\.$/);if(m)return '完成：成功 '+m[1]+' 个，失败 '+m[2]+' 个，共 '+m[3]+' 轮。';
+  }else{
+    let m=value.match(/^今日 (\d+) 次请求$/);if(m)return m[1]+' requests today';
+    m=value.match(/^(\d+) 次请求$/);if(m)return m[1]+' requests';
+    m=value.match(/^命中率 (.+)$/);if(m)return 'Hit rate '+m[1];
+    m=value.match(/^今日 \+(\d+)$/);if(m)return 'Today +'+m[1];
+    m=value.match(/^输入 (\d+) · 输出 (\d+)$/);if(m)return 'Input '+m[1]+' · Output '+m[2];
+    m=value.match(/^入(\d+)\/出(\d+)\/缓(\d+)$/);if(m)return 'in'+m[1]+'/out'+m[2]+'/cache'+m[3];
+    m=value.match(/^第 (\d+) \/ (\d+) 页 · 共 (\d+) 条$/);if(m)return 'Page '+m[1]+' / '+m[2]+' · '+m[3]+' total';
+    m=value.match(/^已添加 (\d+) 个代理$/);if(m)return 'Added '+m[1]+' proxies';
+    m=value.match(/^连通正常：(.+)$/);if(m)return 'Connection healthy: '+m[1];
+    m=value.match(/^完成：成功 (\d+) 个，失败 (\d+) 个，共 (\d+) 轮。$/);if(m)return 'Finished: '+m[1]+' succeeded, '+m[2]+' failed, '+m[3]+' rounds total.';
+  }
+  return value;
+}
+function translateText(value){
+  const trimmed=value.trim();
+  if(!trimmed)return value;
+  const translated=currentLocale==='zh'?(localeText[trimmed]||translateDynamic(trimmed,'zh')):(localeTextReverse[trimmed]||translateDynamic(trimmed,'en'));
+  if(translated===trimmed)return value;
+  return value.replace(trimmed,translated);
+}
+function translatePage(){
+  const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+  const nodes=[];let node;
+  while(node=walker.nextNode()){if(!node.parentElement?.closest('script,style,pre,code,textarea'))nodes.push(node);}
+  nodes.forEach(n=>{const translated=translateText(n.nodeValue);if(translated!==n.nodeValue)n.nodeValue=translated;});
+  document.querySelectorAll('[placeholder],[title],[aria-label]').forEach(el=>['placeholder','title','aria-label'].forEach(attr=>{if(el.hasAttribute(attr))el.setAttribute(attr,translateText(el.getAttribute(attr)));}));
+  const selector=$('languageSelect');if(selector)selector.value=currentLocale;
+  document.documentElement.lang=currentLocale==='zh'?'zh-CN':'en';
+}
+function applyLocale(locale){
+  currentLocale=locale==='zh'?'zh':'en';
+  try{localStorage.setItem(localeStorageKey,currentLocale);}catch(e){}
+  translatePage();
+  if(!localeObserver){localeObserver=new MutationObserver(()=>translatePage());localeObserver.observe(document.body,{childList:true,subtree:true,characterData:true});}
+}
+try{currentLocale=localStorage.getItem(localeStorageKey)==='zh'?'zh':'en';}catch(e){}
+applyLocale(currentLocale);
+document.addEventListener('change',e=>{if(e.target?.id==='languageSelect')applyLocale(e.target.value);});
 let pkceTimer=null;
 
 function showNotice(msg,type='info'){
@@ -715,7 +942,7 @@ function buildCurl(keyPrefix){
   return `curl ${base}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${keyPrefix}..." \\\n  -d '{"model":"auto","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`;
 }
 async function copyCurl(){
-  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice('curl 已复制','success');}catch(e){}
+  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice('curl copied','success');}catch(e){}
 }
 async function loadOnboarding(){
   let acc=0,key=0,prefix='sk-';
@@ -738,7 +965,7 @@ async function api(path,opts={}){
   const r=await fetch(path,opts);
   const t=await r.text();
   let d;try{d=t?JSON.parse(t):{}}catch{d={error:{message:t}}};
-  if(!r.ok)throw Error(d?.error?.message||t||'请求失败');
+  if(!r.ok)throw Error(d?.error?.message||t||'Request failed');
   return d;
 }
 
@@ -748,7 +975,7 @@ $('loginForm')?.addEventListener('submit',async e=>{
     await api('/api/admin/login',{method:'POST',body:JSON.stringify({password:$('loginPassword').value})});
     $('login').style.display='none';$('app').style.display='flex';
     showPage('dashboard');loadStats();
-    showNotice('登录成功','success');
+    showNotice('Logged in successfully','success');
   }catch(e){showNotice(e.message,'error');}
 });
 
@@ -766,14 +993,14 @@ async function loadStats(){
     $('stat-rate').textContent=(s.hit_rate||0).toFixed(1);
     $('stat-saved').textContent=(s.tokens_saved||0);
     $('ovCacheHits').textContent=fmtTok(s.cache_hits||0);
-    $('ovCacheRate').textContent='命中率 '+((s.hit_rate||0)).toFixed(1)+'%';
+    $('ovCacheRate').textContent='Hit rate '+((s.hit_rate||0)).toFixed(1)+'%';
     const sum=(u.stats||{}).summary||{};
     $('ov24hTok').textContent=fmtTok(sum.last24h_tokens||0);
-    $('ov24hReq').textContent=(sum.last24h_requests||0)+' 次请求';
+    $('ov24hReq').textContent=(sum.last24h_requests||0)+' requests';
     $('ovTotalTok').textContent=fmtTok(sum.tokens||0);
-    $('ovTotalReq').textContent=(sum.requests||0)+' 次请求';
+    $('ovTotalReq').textContent=(sum.requests||0)+' requests';
     $('ovTodayTok').textContent=fmtTok(sum.today_tokens||0);
-    $('ovTodayReq').textContent='今日 '+(sum.today_requests||0)+' 次请求';
+    $('ovTodayReq').textContent=(sum.today_requests||0)+' requests today';
     loadRecentRequests();
   }catch(e){}
 }
@@ -786,10 +1013,10 @@ async function loadRecentRequests(){
       <td style="font-size:12px">${x.model||'-'}</td>
       <td><span class="usage-status">${(x.endpoint||'-').replace('/v1/','')}</span></td>
       <td><span class="token-stack"><b>${(x.input_tokens||0)+(x.output_tokens||0)+(x.cache_tokens||0)}</b></span></td>
-      <td>${x.error?'<span class="usage-status err">错误</span>':'<span class="usage-status">成功</span>'}</td>
+      <td>${x.error?'<span class="usage-status err">Error</span>':'<span class="usage-status">Success</span>'}</td>
     </tr>`).join('');
-    $('dashRecentRows').innerHTML=rows||'<tr><td colspan="5" class="empty">暂无请求记录</td></tr>';
-  }catch(e){$('dashRecentRows').innerHTML=`<tr><td colspan="5" class="empty">暂无请求记录</td></tr>`;}
+    $('dashRecentRows').innerHTML=rows||'<tr><td colspan="5" class="empty">No requests yet</td></tr>';
+  }catch(e){$('dashRecentRows').innerHTML=`<tr><td colspan="5" class="empty">No requests yet</td></tr>`;}
 }
 
 let _accountsCache=[],_accountFilter='all';
@@ -802,7 +1029,7 @@ function renderAccounts(){
     if(q&&!((x.displayName||'')+' '+(x.email||'')).toLowerCase().includes(q))return false;
     return true;
   });
-  $('accountRows').innerHTML=list.length?list.map(x=>`<tr><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div><b>${x.displayName||x.email}</b><div style="font-size:11px;color:var(--muted)">${x.email||''}</div></div></div></td><td><span class="status ${x.status==='online'?'online':'offline'}"><i></i>${x.status==='online'?'在线':'离线'}</span></td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">删除</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">暂无匹配账号</td></tr>';
+  $('accountRows').innerHTML=list.length?list.map(x=>`<tr><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div><b>${x.displayName||x.email}</b><div style="font-size:11px;color:var(--muted)">${x.email||''}</div></div></div></td><td><span class="status ${x.status==='online'?'online':'offline'}"><i></i>${x.status==='online'?'Online':'Offline'}</span></td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">No matching accounts</td></tr>';
 }
 async function loadAccounts(){
   try{
@@ -813,8 +1040,8 @@ async function loadAccounts(){
 }
 
 async function deleteAccount(id){
-  if(!confirm('确定删除？'))return;
-  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice('已删除','success');loadAccounts();showPage('dashboard');}
+  if(!confirm('Delete this account?'))return;
+  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice('Deleted','success');loadAccounts();showPage('dashboard');}
   catch(e){showNotice(e.message,'error');}
 }
 
@@ -823,16 +1050,16 @@ async function startPKCE(){
     const d=await api('/api/auth/start');
     $('callbackInput').dataset.state=d.state;
     window.open(d.url,'pkce','width=600,height=800');
-    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>授权页面已打开</div><p>请在浏览器中完成登录，然后将地址栏的完整回调地址粘贴到上方输入框。</p></div>';
+    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>Authorization page opened</div><p>Complete the sign-in in your browser, then paste the full callback URL from the address bar into the field above.</p></div>';
     $('callbackInput').focus();
-    $('callbackInput').placeholder='粘贴地址栏完整回调地址…';
+    $('callbackInput').placeholder='Paste the full callback URL from the address bar…';
     if(pkceTimer)clearInterval(pkceTimer);
     const start=Date.now();
     pkceTimer=setInterval(async()=>{
       if(Date.now()-start>600000){clearInterval(pkceTimer);return;}
       try{const s=await api('/api/auth/status?state='+d.state);
-        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>授权成功</div><p>账号已加入账号池。</p></div>';showNotice('授权成功','success');loadAccounts();}
-        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权失败或已过期</b></div>';}
+        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>Authorization successful</div><p>Account added to the account pool.</p></div>';showNotice('Authorization successful','success');loadAccounts();}
+        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>Authorization failed or expired</b></div>';}
       }catch(e){}
     },2000);
   }catch(e){showNotice(e.message,'error');}
@@ -840,12 +1067,12 @@ async function startPKCE(){
 
 async function submitCallback(){
   const raw=$('callbackInput').value.trim();
-  if(!raw)return showNotice('请粘贴回调地址','error');
+  if(!raw)return showNotice('Paste the callback URL','error');
   try{
     let u='/api/auth/callback?';
     if(raw.includes('://')){u+='url='+encodeURIComponent(raw);}
     else{u+=raw.replace(/^\?/,'');if(!raw.includes('state='))$('callbackInput').dataset.state&&(u+='&state='+$('callbackInput').dataset.state);}
-    await api(u);showNotice('授权成功','success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
+    await api(u);showNotice('Authorization successful','success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
   }catch(e){showNotice(e.message,'error');}
 }
 
@@ -853,12 +1080,12 @@ async function loadKeys(){
   try{
     const d=await api('/api/admin/keys');
     const k=d.keys||[];
-    $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>已禁用</span>':'<span class="status online"><i></i>有效</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
-      <button class="btn-sm btn" onclick="openUseKey('${x.id}')">使用密钥</button>
-      <button class="btn-sm btn" onclick="editKey('${x.id}','${x.name.replace(/'/g,"\\'")}')">编辑</button>
-      <button class="btn-sm btn ${x.revoked?'success':'danger'}" onclick="toggleKey('${x.id}',${x.revoked})">${x.revoked?'启用':'禁用'}</button>
-      <button class="btn-sm btn danger" onclick="revokeKey('${x.id}')">删除</button>
-    </td></tr>`).join(''):'<tr><td colspan="6" class="empty">暂无 API Key</td></tr>';
+    $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
+      <button class="btn-sm btn" onclick="openUseKey('${x.id}')">Use key</button>
+      <button class="btn-sm btn" onclick="editKey('${x.id}','${x.name.replace(/'/g,"\\'")}')">Edit</button>
+      <button class="btn-sm btn ${x.revoked?'success':'danger'}" onclick="toggleKey('${x.id}',${x.revoked})">${x.revoked?'Enable':'Disable'}</button>
+      <button class="btn-sm btn danger" onclick="revokeKey('${x.id}')">Delete</button>
+    </td></tr>`).join(''):'<tr><td colspan="6" class="empty">No API keys</td></tr>';
   }catch(e){$('keyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
 }
 
@@ -867,18 +1094,18 @@ function editKey(id,name){editKeyId=id;$('editKeyName').value=name;$('editKeyMod
 function closeEditKeyModal(){$('editKeyModal').classList.remove('open');editKeyId=null;}
 async function saveEditKey(){
   const name=$('editKeyName').value.trim();
-  if(!name)return showNotice('名称不能为空','error');
-  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice('已更新','success');loadKeys();}
+  if(!name)return showNotice('Name cannot be empty','error');
+  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice('Updated','success');loadKeys();}
   catch(e){showNotice(e.message,'error');}
 }
 async function toggleKey(id,revoked){
-  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id,revoked:!revoked})});showNotice(revoked?'已启用':'已禁用','success');loadKeys();}
+  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id,revoked:!revoked})});showNotice(revoked?'Enabled':'Disabled','success');loadKeys();}
   catch(e){showNotice(e.message,'error');}
 }
 
 function openKeyModal(){$('keyModal').classList.add('open');$('keyResult').style.display='none';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
 function closeKeyModal(){$('keyModal').classList.remove('open');}
-async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice('已复制','success');}catch(e){}}
+async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice('Copied','success');}catch(e){}}
 async function createKey(e){
   e.preventDefault();
   try{
@@ -886,7 +1113,7 @@ async function createKey(e){
     $('keyValue').value=d.key;$('keyResult').style.display='block';copyKey();loadKeys();
   }catch(e){showNotice(e.message,'error');}
 }
-async function revokeKey(id){if(!confirm('撤销此 Key？'))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
+async function revokeKey(id){if(!confirm('Delete this key?'))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
 
 // ===== Usage page =====
 let usageDays=7, ugPageNo=0, ugTotal=0;
@@ -917,9 +1144,9 @@ async function loadUsage(){
     const d=await api('/api/usage?days='+usageDays);
     const s=(d.stats||{}).summary||{};
     $('ug-req').textContent=fmtNum(s.requests);
-    $('ug-req-sub').textContent='今日 +'+(s.today_requests||0);
+    $('ug-req-sub').textContent='Today +'+(s.today_requests||0);
     $('ug-tok').textContent=fmtTok(s.tokens);
-    $('ug-tok-sub').textContent='输入 '+(s.input||0)+' · 输出 '+(s.output||0);
+    $('ug-tok-sub').textContent='Input '+(s.input||0)+' · Output '+(s.output||0);
     $('ug-cache').textContent=fmtTok(s.cache);
     $('ug-ms').textContent=(s.avg_ms||0).toLocaleString();
     renderTrend((d.stats||{}).trend||[]);
@@ -934,11 +1161,11 @@ async function loadUsage(){
 
 function renderTrend(trend){
   const wrap=$('ugTrendWrap');
-  if(!trend||!trend.length){if(wrap)wrap.innerHTML='<div class="chart-empty"><i data-lucide="line-chart"></i>暂无趋势数据，产生请求后自动生成</div>';try{lucide.createIcons();}catch(e){}return;}
+  if(!trend||!trend.length){if(wrap)wrap.innerHTML='<div class="chart-empty"><i data-lucide="line-chart"></i>No trend data yet; it will appear after requests are made.</div>';try{lucide.createIcons();}catch(e){}return;}
   const W=560,H=160,P=8;
   const max=Math.max(...trend.map(t=>t.tokens),1);
   let path='',area='';
-  // 单点数据时取中位坐标，仍渲染折线图（一个圆点 + 日期标签），保持图表风格统一
+  // For a single data point, use the center coordinate and keep the chart style consistent.
   if(trend.length===1){
     const t=trend[0];
     const cx=W/2;
@@ -976,7 +1203,7 @@ function renderTrend(trend){
 
 function renderBars(id,items,labelFn,valKey){
   const el=$(id);
-  if(!items.length){el.innerHTML='<div class="chart-empty"><i data-lucide="chart-bar"></i>暂无数据</div>';try{lucide.createIcons();}catch(e){}return;}
+  if(!items.length){el.innerHTML='<div class="chart-empty"><i data-lucide="chart-bar"></i>No data</div>';try{lucide.createIcons();}catch(e){}return;}
   const palettes=['','green','orange','purple','teal','red','pink'];
   const max=Math.max(...items.map(i=>i[valKey]),1);
   const top=items.slice(0,8);
@@ -997,12 +1224,12 @@ async function loadUsageLogs(){
       <td><code style="font-size:11px" title="${x.api_key_prefix||'-'}">${x.api_key_prefix||'-'}</code></td>
       <td style="font-size:12px">${x.model||'-'}</td>
       <td><span class="usage-status">${(x.endpoint||'-').replace('/v1/','')}</span></td>
-      <td><span class="token-stack"><b>${(x.input_tokens||0)+(x.output_tokens||0)+(x.cache_tokens||0)}</b> 入${x.input_tokens||0}/出${x.output_tokens||0}/缓${x.cache_tokens||0}</span></td>
+      <td><span class="token-stack"><b>${(x.input_tokens||0)+(x.output_tokens||0)+(x.cache_tokens||0)}</b> in${x.input_tokens||0}/out${x.output_tokens||0}/cache${x.cache_tokens||0}</span></td>
       <td style="font-size:12px;color:var(--muted)">${(x.duration_ms||0)} ms</td>
     </tr>`).join('');
-    $('ugLogRows').innerHTML=rows||'<tr><td colspan="6" class="empty">暂无请求记录</td></tr>';
+    $('ugLogRows').innerHTML=rows||'<tr><td colspan="6" class="empty">No requests yet</td></tr>';
     const totalPages=Math.max(1,Math.ceil(ugTotal/UG_PAGE));
-    $('ugPageInfo').textContent=`第 ${ugPageNo+1} / ${totalPages} 页 · 共 ${ugTotal} 条`;
+    $('ugPageInfo').textContent=`Page ${ugPageNo+1} / ${totalPages} · ${ugTotal} total`;
     $('ugPrev').disabled=ugPageNo<=0;
     $('ugNext').disabled=ugPageNo>=totalPages-1;
   }catch(e){
@@ -1029,8 +1256,8 @@ async function openUseKey(id){
   useKeyId=id;
   const d=await api('/api/admin/keys');
   const rec=(d.keys||[]).find(x=>x.id===id);
-  if(!rec){showNotice('密钥不存在','error');return;}
-  $('useKeyName').textContent='当前密钥：'+rec.name+' ('+rec.prefix+')';
+  if(!rec){showNotice('Key not found','error');return;}
+  $('useKeyName').textContent='Current key: '+rec.name+' ('+rec.prefix+')';
   $('useKeyVal').value=rec.raw||'';
   $('useKeyModal').classList.add('open');
   renderUkeTabs();
@@ -1045,7 +1272,7 @@ function renderUkeTabs(){
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
 function ukeFile(path,content){
   return `<div class="uke-file">
-    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice('已复制','success')">复制</button></div>
+    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice('Copied','success')">Copy</button></div>
     <pre>${esc(content)}</pre>
   </div>`;
 }
@@ -1115,15 +1342,15 @@ goals = true`;
 }
 async function copyUseKey(){
   const v=$('useKeyVal').value;
-  if(!v){showNotice('暂无完整密钥','error');return;}
-  try{await navigator.clipboard.writeText(v);showNotice('已复制','success');}catch(e){}
+  if(!v){showNotice('Full key is unavailable','error');return;}
+  try{await navigator.clipboard.writeText(v);showNotice('Copied','success');}catch(e){}
 }
 
 async function loadConversations(){
   try{
     const d=await api('/api/m365/conversations');
     const c=d.data||[];
-    $('convRows').innerHTML=c.length?c.map(x=>`<tr><td><code style="font-size:11px">${x.conversationId?.slice(0,16)}...</code></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.chatName||'-'}</td><td style="font-size:12px;color:var(--muted)">${x.createTimeUtc?new Date(x.createTimeUtc).toLocaleString():'-'}</td><td><button class="btn-sm btn danger" onclick="deleteConv('${x.conversationId}')">删除</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">暂无对话</td></tr>';
+    $('convRows').innerHTML=c.length?c.map(x=>`<tr><td><code style="font-size:11px">${x.conversationId?.slice(0,16)}...</code></td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.chatName||'-'}</td><td style="font-size:12px;color:var(--muted)">${x.createTimeUtc?new Date(x.createTimeUtc).toLocaleString():'-'}</td><td><button class="btn-sm btn danger" onclick="deleteConv('${x.conversationId}')">Delete</button></td></tr>`).join(''):'<tr><td colspan="4" class="empty">No conversations</td></tr>';
   }catch(e){$('convRows').innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`;}
 }
 
@@ -1131,50 +1358,50 @@ function termOpen(title){$('termTitle').textContent=title;$('termBody').innerHTM
 function termLine(msg,cls){const d=document.createElement('div');if(cls)d.className=cls;d.textContent='> '+msg;$('termBody').appendChild(d);$('termBody').scrollTop=$('termBody').scrollHeight;}
 function termClear(){$('termBody').innerHTML='';}
 
-async function deleteConv(id){if(!confirm('删除？'))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice('已删除','success');loadConversations();}catch(e){showNotice(e.message,'error');}}
+async function deleteConv(id){if(!confirm('Delete this conversation?'))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice('Deleted','success');loadConversations();}catch(e){showNotice(e.message,'error');}}
 async function cleanupAll(){
-  const total=confirm('清理所有对话？\n将在终端中逐条删除并显示日志。');
+  const total=confirm('Clean up all conversations?\nEach conversation will be deleted one by one and logged in the terminal.');
   if(!total)return;
   termOpen('cleanup — m365-copilot2api');
-  termLine('开始清理全部对话…');
+  termLine('Starting cleanup of all conversations…');
   let ok=0,fail=0,round=0;
   for(round=1;round<=100;round++){
     let d;
-    try{d=await api('/api/m365/conversations');}catch(e){termLine('获取对话列表失败: '+e.message,'err');break;}
+    try{d=await api('/api/m365/conversations');}catch(e){termLine('Failed to get conversation list: '+e.message,'err');break;}
     const c=d.data||[];
     if(!c.length){
-      termLine('第 '+round+' 轮：列表已清空。','dim');
+      termLine('Round '+round+': list is empty.','dim');
       break;
     }
-    termLine('第 '+round+' 轮：获取到 '+c.length+' 个对话（滑动加载，删完再拉下一批）','dim');
+    termLine('Round '+round+': found '+c.length+' conversations (paged loading; fetch the next batch after deletion)','dim');
     for(let i=0;i<c.length;i++){
       const x=c[i];
-      const name=x.chatName||'无名称';
-      termLine('['+(i+1)+'/'+c.length+'] 删除「'+name+'」 '+String(x.conversationId||'').slice(0,8)+'…');
+      const name=x.chatName||'Unnamed';
+      termLine('['+(i+1)+'/'+c.length+'] Deleting "'+name+'" '+String(x.conversationId||'').slice(0,8)+'…');
       try{
         await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:x.conversationId})});
-        termLine('✓ 已删除「'+name+'」','ok');ok++;
-      }catch(e){termLine('✗ 删除失败: '+e.message,'err');fail++;}
+        termLine('✓ Deleted "'+name+'"','ok');ok++;
+      }catch(e){termLine('✗ Delete failed: '+e.message,'err');fail++;}
       if(i< c.length-1)await new Promise(r=>setTimeout(r,150));
     }
     await new Promise(r=>setTimeout(r,500));
   }
-  termLine('完成：成功 '+ok+' 个，失败 '+fail+' 个，共 '+round+' 轮。',fail?'warn':'ok');
-  showNotice('清理完成','success');loadConversations();
+  termLine('Finished: '+ok+' succeeded, '+fail+' failed, '+round+' rounds total.',fail?'warn':'ok');
+  showNotice('Cleanup complete','success');loadConversations();
 }
 
 function proxyRow(x){
   const inCooldown=x.cooldownUntil&&new Date(x.cooldownUntil)>new Date();
-  const badge=x.health==='reachable'?'<span class="status online"><i></i>正常</span>':x.health==='unreachable'?'<span class="status offline"><i></i>不可达</span>':x.health==='upstream_error'?'<span class="status warn"><i></i>上游异常</span>':'<span class="status">未检测</span>';
+  const badge=x.health==='reachable'?'<span class="status online"><i></i>Healthy</span>':x.health==='unreachable'?'<span class="status offline"><i></i>Unreachable</span>':x.health==='upstream_error'?'<span class="status warn"><i></i>Upstream error</span>':'<span class="status">Not checked</span>';
   return `<tr>
-    <td><code style="font-size:12px">${esc(x.url)}</code>${inCooldown?'<div style="font-size:11px;color:var(--muted)">冷却中</div>':''}</td>
+    <td><code style="font-size:12px">${esc(x.url)}</code>${inCooldown?'<div style="font-size:11px;color:var(--muted)">Cooling down</div>':''}</td>
     <td>${badge}</td>
     <td style="font-size:12px;color:var(--muted)">${x.latencyMs>0?x.latencyMs+' ms':'-'}</td>
     <td style="font-size:12px;color:var(--muted)">${x.failures||0}</td>
     <td style="font-size:12px;color:var(--muted)">${x.cooldownUntil?new Date(x.cooldownUntil).toLocaleString():'-'}</td>
     <td style="text-align:right;white-space:nowrap">
-      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">检查</button>
-      <button class="btn-sm btn danger" onclick="proxyRemove('${esc(x.url)}')">删除</button>
+      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">Check</button>
+      <button class="btn-sm btn danger" onclick="proxyRemove('${esc(x.url)}')">Delete</button>
     </td>
   </tr>`;
 }
@@ -1182,34 +1409,34 @@ async function loadProxies(){
   try{
     const d=await api('/api/admin/proxy-pool');
     const p=d.proxies||[];
-    $('proxyRows').innerHTML=p.length?p.map(proxyRow).join(''):'<tr><td colspan="6" class="empty">暂无代理，请求将直连</td></tr>';
+    $('proxyRows').innerHTML=p.length?p.map(proxyRow).join(''):'<tr><td colspan="6" class="empty">No proxies; requests will connect directly</td></tr>';
   }catch(e){$('proxyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
 }
 async function proxyAdd(){
   const raw=$('proxyInput').value.trim();
-  if(!raw)return showNotice('请输入代理地址','error');
+  if(!raw)return showNotice('Enter a proxy URL','error');
   try{
     const d=await api('/api/admin/proxy-pool',{method:'POST',body:JSON.stringify({urls:[raw]})});
-    showNotice('已添加 '+d.added+' 个代理','success');$('proxyInput').value='';loadProxies();
+    showNotice('Added '+d.added+' proxies','success');$('proxyInput').value='';loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyRemove(url){
-  if(!confirm('删除代理 '+url+'？'))return;
-  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice('已删除','success');loadProxies();}
+  if(!confirm('Delete proxy '+url+'?'))return;
+  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice('Deleted','success');loadProxies();}
   catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckOne(url){
   try{
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT',body:JSON.stringify({url})});
     const rec=(d.proxies||[]).find(x=>x.url===url);
-    if(rec&&rec.health==='reachable')showNotice('连通正常：'+rec.latencyMs+' ms','success');
-    else showNotice(rec&&rec.lastError?rec.lastError:'连通失败','error');
+    if(rec&&rec.health==='reachable')showNotice('Connection healthy: '+rec.latencyMs+' ms','success');
+    else showNotice(rec&&rec.lastError?rec.lastError:'Connection failed','error');
     loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckAll(){
   termOpen('proxy check — m365-copilot2api');
-  termLine('开始检查全部代理…');
+  termLine('Checking all proxies…');
   try{
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT'});
     const p=d.proxies||[];
@@ -1218,51 +1445,51 @@ async function proxyCheckAll(){
       if(x.health==='reachable'){termLine('✓ '+x.url+' — '+x.latencyMs+' ms','ok');ok++;}
       else termLine('✗ '+x.url+(x.lastError?' — '+x.lastError:''),'err');
     }
-    termLine('完成：'+ok+'/'+p.length+' 个代理可用。',ok===p.length&&p.length?'ok':'warn');
-    showNotice('健康检查完成','success');loadProxies();
-  }catch(e){termLine('检查失败: '+e.message,'err');}
+    termLine('Finished: '+ok+'/'+p.length+' proxies available.',ok===p.length&&p.length?'ok':'warn');
+    showNotice('Health check complete','success');loadProxies();
+  }catch(e){termLine('Check failed: '+e.message,'err');}
 }
 async function proxyTest(){
   await proxyCheckAll();
 }
 
 async function loadModelTest(){
-  $('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">加载中...</td></tr>';
+  $('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">Loading...</td></tr>';
   try{
     const d=await api('/api/admin/models');
     const models=d.data||[];
-    if(!models.length){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">暂无可用模型</td></tr>';return;}
-    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>未测试</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">点击"测试全部"</td></tr>`).join('');
+    if(!models.length){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">No models available</td></tr>';return;}
+    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">Click "Test all"</td></tr>`).join('');
   }catch(e){$('modelTestRows').innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`;}
 }
 async function modelTestOne(id,row){
   const badge=row.querySelector('td:nth-child(2)');
   const lat=row.querySelector('td:nth-child(3)');
   const reply=row.querySelector('td:nth-child(4)');
-  badge.innerHTML='<span class="status"><i></i>测试中…</span>';
+  badge.innerHTML='<span class="status"><i></i>Testing…</span>';
   lat.textContent='-';reply.textContent='';
   const start=performance.now();
   try{
     const d=await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model:id})});
     const ms=Math.round(performance.now()-start);
-    const content=d.reply||'（空回复）';
-    badge.innerHTML='<span class="status online"><i></i>正常</span>';
+    const content=d.reply||'(Empty reply)';
+    badge.innerHTML='<span class="status online"><i></i>Healthy</span>';
     lat.textContent=ms+' ms';
     reply.textContent=String(content).slice(0,80);
   }catch(e){
-    badge.innerHTML='<span class="status offline"><i></i>失败</span>';
+    badge.innerHTML='<span class="status offline"><i></i>Failed</span>';
     lat.textContent=Math.round(performance.now()-start)+' ms';
     reply.textContent=e.message;
   }
 }
 async function modelTestAll(){
   const rows=[...document.querySelectorAll('#modelTestRows tr[data-model]')];
-  if(!rows.length){showNotice('请先加载模型列表','error');return;}
+  if(!rows.length){showNotice('Load the model list first','error');return;}
   for(let i=0;i<rows.length;i++){
     modelTestOne(rows[i].dataset.model,rows[i]);
     await new Promise(r=>setTimeout(r,250));
   }
-  showNotice('模型测试完成','success');
+  showNotice('Model test complete','success');
 }
 
 async function saveSettings(){  try{
@@ -1272,7 +1499,7 @@ async function saveSettings(){  try{
     if(listen)body.listen=listen;
     if(timeout)body.chatTimeoutSeconds=parseInt(timeout);
     await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
-    showNotice('设置已保存','success');
+    showNotice('Settings saved','success');
   }catch(e){showNotice(e.message,'error');}
 }
 

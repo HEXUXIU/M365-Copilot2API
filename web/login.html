@@ -42,47 +42,47 @@ button.loading::after{content:"";position:absolute;inset:0;margin:auto;width:20p
 <main class="card">
   <div class="brand"><span class="logo-mark"><span></span><span></span><span></span><span></span></span>M365 Copilot2API</div>
   <section id="login">
-    <h1>管理员登录</h1>
-    <p>请输入管理员密码以进入控制台</p>
-    <div class="warning">默认密码 <code>admin123</code><br>首次登录后请立即修改管理员密码</div>
+    <h1>Administrator Login</h1>
+    <p>Enter the administrator password to access the dashboard</p>
+    <div class="warning">Default password: <code>admin123</code><br>Change the administrator password immediately after your first login</div>
     <form id="loginForm">
       <div class="field">
-        <label for="password">管理员密码</label>
+        <label for="password">Administrator password</label>
         <div class="password-wrap">
           <input id="password" type="password" autocomplete="current-password" required autofocus>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="Toggle password visibility"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
-      <button id="loginBtn">登录</button>
+      <button id="loginBtn">Log in</button>
     </form>
     <div class="error" id="loginError"></div>
   </section>
   <section id="change" hidden>
-    <h1>必须立即修改默认密码</h1>
-    <div class="warning">当前仍在使用初始密码。为了保护账号池、OAuth 凭据与 API Key，在设置新密码前不能使用任何管理功能。</div>
+    <h1>Change the default password now</h1>
+    <div class="warning">You are still using the initial password. To protect the account pool, OAuth credentials, and API keys, management features remain unavailable until you set a new password.</div>
     <form id="changeForm">
       <div class="field">
-        <label for="current">当前密码</label>
+        <label for="current">Current password</label>
         <div class="password-wrap">
           <input id="current" type="password" autocomplete="current-password" required>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="Toggle password visibility"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
       <div class="field">
-        <label for="next">新密码（至少 6 个字符）</label>
+        <label for="next">New password (at least 6 characters)</label>
         <div class="password-wrap">
           <input id="next" type="password" autocomplete="new-password" minlength="6" required>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="Toggle password visibility"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
       <div class="field">
-        <label for="confirm">再次输入新密码</label>
+        <label for="confirm">Confirm new password</label>
         <div class="password-wrap">
           <input id="confirm" type="password" autocomplete="new-password" minlength="6" required>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="Toggle password visibility"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
-      <button id="changeBtn">修改密码并重新登录</button>
+      <button id="changeBtn">Change password and log in again</button>
     </form>
     <div class="error" id="changeError"></div>
   </section>
@@ -92,10 +92,10 @@ try{lucide.createIcons();}catch(e){}
 const $=id=>document.getElementById(id);
 function togglePassword(btn){const ico=btn.querySelector('[data-lucide]');const inp=btn.previousElementSibling;const isPassword=inp.type==='password';inp.type=isPassword?'text':'password';if(ico){try{ico.setAttribute('data-lucide',isPassword?'eye-off':'eye');lucide.createIcons()}catch(e){}}}
 function setLoading(btn,loading){if(loading){btn.disabled=true;btn.classList.add('loading')}else{btn.disabled=false;btn.classList.remove('loading')}}
-async function request(url,body){const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const raw=await r.text();let d={};try{d=JSON.parse(raw)}catch{}if(!r.ok){const e=new Error(d?.error?.message||raw||'请求失败');e.status=r.status;throw e}return d}
+async function request(url,body){const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const raw=await r.text();let d={};try{d=JSON.parse(raw)}catch{}if(!r.ok){const e=new Error(d?.error?.message||raw||'Request failed');e.status=r.status;throw e}return d}
 function requireChange(current=''){$('login').hidden=true;$('change').hidden=false;if(current){$('current').value=current;}$('next').focus()}
-$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';const password=$('password').value;if(!password)return;setLoading($('loginBtn'),true);try{const d=await request('/api/admin/login',{password});if(d.must_change_password)requireChange(password);else location.replace('/')}catch(x){$('loginError').textContent=x.status===429?'失败次数过多，请稍后再试':x.message}finally{setLoading($('loginBtn'),false)}});
-$('changeForm').addEventListener('submit',async e=>{e.preventDefault();$('changeError').textContent='';if($('next').value!==$('confirm').value){$('changeError').textContent='两次输入的新密码不一致';return}if($('next').value.length<6){$('changeError').textContent='新密码至少需要 6 个字符';return}setLoading($('changeBtn'),true);try{await request('/api/admin/change-password',{current_password:$('current').value,new_password:$('next').value});alert('密码修改成功。所有旧会话已失效，请使用新密码重新登录。');location.replace('/')}catch(x){$('changeError').textContent=x.message}finally{setLoading($('changeBtn'),false)}});
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';const password=$('password').value;if(!password)return;setLoading($('loginBtn'),true);try{const d=await request('/api/admin/login',{password});if(d.must_change_password)requireChange(password);else location.replace('/')}catch(x){$('loginError').textContent=x.status===429?'Too many failed attempts. Try again later.':x.message}finally{setLoading($('loginBtn'),false)}});
+$('changeForm').addEventListener('submit',async e=>{e.preventDefault();$('changeError').textContent='';if($('next').value!==$('confirm').value){$('changeError').textContent='The new passwords do not match';return}if($('next').value.length<6){$('changeError').textContent='The new password must be at least 6 characters';return}setLoading($('changeBtn'),true);try{await request('/api/admin/change-password',{current_password:$('current').value,new_password:$('next').value});alert('Password changed successfully. All previous sessions have been invalidated. Log in again with your new password.');location.replace('/')}catch(x){$('changeError').textContent=x.message}finally{setLoading($('changeBtn'),false)}});
 fetch('/api/admin/session',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{if(d.authenticated&&d.must_change_password){$('login').hidden=true;$('change').hidden=false;$('next').focus()}else if(d.authenticated)location.replace('/')}).catch(()=>{});
 </script>
 </body>

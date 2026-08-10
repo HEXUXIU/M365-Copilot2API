@@ -843,6 +843,14 @@ type oaiReq struct {
 
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 
+// writeStreamFinish emits a terminal OpenAI-compatible chunk with a non-null
+// finish_reason before the stream ends, so strict clients do not treat an
+// otherwise successful response as incomplete.
+func writeStreamFinish(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, id, model string) {
+	finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}}
+	_ = sseRaw(ctx, w, flusher, "data: "+mustJSON(finishChunk)+"\n\n")
+}
+
 func contentToString(c any) string {
 	switch v := c.(type) {
 	case string:
@@ -1169,10 +1177,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
 			return
 		}
-		if err := emitText(pending.String()); err != nil {
+if err := emitText(pending.String()); err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
+		writeStreamFinish(r.Context(), w, flusher, id, model)
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
@@ -1298,6 +1307,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 		res, err = s.chat.ChatWithReasoning(ctx, account, answerReq, onDelta, onReasoning)
 		if err == nil {
+			writeStreamFinish(r.Context(), w, flusher, id, model)
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
@@ -1402,6 +1412,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 		b, _ := json.Marshal(chunk)
 		_ = sseRaw(r.Context(), w, flusher, "data: "+string(b)+"\n\n")
+		writeStreamFinish(r.Context(), w, flusher, id, model)
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		return
 	}

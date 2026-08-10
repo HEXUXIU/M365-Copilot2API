@@ -53,6 +53,9 @@ func walkNative(v any, allowed map[string]bool, out *[]detectedToolCall) {
 			}
 			if a != nil {
 				b, _ := json.Marshal(a)
+				if !chathub.WebSearchUsable(name, b) {
+					return
+				}
 				*out = append(*out, detectedToolCall{ID: "call_" + uuid.NewString(), Name: name, Arguments: b})
 				return
 			}

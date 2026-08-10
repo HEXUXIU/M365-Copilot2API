@@ -201,6 +201,14 @@ docker compose up -d --build
 | `M365_CLIENT_ID` | 内置 | Azure 应用 Client ID |
 | `M365_AUTHORITY` / `M365_REDIRECT_URI` / `M365_SCOPE` | 内置 | OAuth 端点自定义覆盖 |
 
+### 工具与网络搜索
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `M365_ENABLE_WEB_SEARCH` | 开 | 自动注入 `web_search` 声明（`0` / `false` / `off` 关闭）。开启后每次对话都会像 M365 网页版那样注册 BingWebSearch 内建插件，模型可基于实时搜索结果作答 |
+
+> 说明：`web_search` 是服务端内建工具（`BingWebSearch`），不会出现在下发给客户端的 `tool_calls` 里；搜索结果以 `SearchResults` 引用形式出现在回答流中。客户端若要自行声明 `web_search`（type 或 function name），网关不会重复注入。
+
 ### 数据文件
 
 | 变量 | 说明 |

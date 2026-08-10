@@ -1,6 +1,10 @@
 package chathub
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestClassifyUpdateMessages(t *testing.T) {
 	got := classifyUpdateMessages([]any{
@@ -8,11 +12,63 @@ func TestClassifyUpdateMessages(t *testing.T) {
 		map[string]any{"messageType": "Progress", "contentType": "SearchResults", "text": "正在搜索"},
 		map[string]any{"toolName": "web_search", "arguments": map[string]any{"query": "golang"}},
 	})
-	if len(got) != 3 || got[0].Kind != "text" || got[1].Kind != "progress" || got[2].Kind != "tool" {
+	if len(got) != 3 || got[0].Kind != "text" || got[1].Kind != "text" || got[2].Kind != "tool" {
 		t.Fatalf("unexpected events: %#v", got)
+	}
+	// SearchResults surfaces as a visible citation, not a dropped progress frame.
+	if got[1].ContentType != "SearchResults" || !strings.HasPrefix(got[1].Text, "\U0001F50E ") {
+		t.Fatalf("SearchResults should surface as a citation: %#v", got[1])
 	}
 	if got[2].ToolName != "web_search" || len(got[2].Arguments) == 0 {
 		t.Fatalf("tool fields missing: %#v", got[2])
+	}
+}
+
+func TestClassifyUpdateMessagesDropsEmptyWebSearch(t *testing.T) {
+	got := classifyUpdateMessages([]any{
+		map[string]any{"messageType": "Progress", "contentType": "ToolCall", "toolName": "web_search", "arguments": map[string]any{}},
+		map[string]any{"toolName": "web_search", "arguments": map[string]any{"query": "ok"}},
+	})
+	if len(got) != 2 || got[0].Kind == "tool" || got[1].Kind != "tool" || got[1].ToolName != "web_search" {
+		t.Fatalf("empty web_search must not become a tool call, got %#v", got)
+	}
+}
+
+func TestExtractToolEventsDropsEmptyWebSearch(t *testing.T) {
+	seen := map[string]bool{}
+	got := extractToolEvents([]any{
+		map[string]any{"plugin": map[string]any{"functionName": "web_search", "functionArguments": map[string]any{}}},
+		map[string]any{"plugin": map[string]any{"functionName": "web_search", "functionArguments": map[string]any{"query": "x"}}},
+	}, seen)
+	if len(got) != 1 || got[0].ToolName != "web_search" || len(got[0].Arguments) == 0 {
+		t.Fatalf("empty web_search must be dropped, got %#v", got)
+	}
+}
+
+func TestWebSearchUsable(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		args map[string]any
+		want bool
+	}{
+		{"non web_search always usable", "other_tool", map[string]any{"x": 1}, true},
+		{"web_search with query", "web_search", map[string]any{"query": "golang"}, true},
+		{"web_search with q", "web_search", map[string]any{"q": "golang"}, true},
+		{"web_search empty object", "web_search", map[string]any{}, false},
+		{"web_search blank query", "web_search", map[string]any{"query": "  "}, false},
+		{"web_search null", "web_search", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var b []byte
+			if tc.args != nil {
+				b, _ = json.Marshal(tc.args)
+			}
+			if got := WebSearchUsable(tc.tool, b); got != tc.want {
+				t.Fatalf("WebSearchUsable = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

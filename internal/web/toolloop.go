@@ -15,6 +15,33 @@ type detectedToolCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
+// isWebSearchTool reports whether a tool map is the web_search declaration.
+// Web search is a Copilot built-in (BingWebSearch) performed server-side, so
+// it must not enter the router decision; the answer stream handles it.
+func isWebSearchTool(t map[string]any) bool {
+	if s, _ := t["type"].(string); strings.EqualFold(s, "web_search") {
+		return true
+	}
+	if f, ok := t["function"].(map[string]any); ok {
+		if n, _ := f["name"].(string); strings.EqualFold(n, "web_search") {
+			return true
+		}
+	}
+	return false
+}
+
+// routeableTools drops web_search from the router decision set while keeping
+// every declared tool visible to the streaming JSON guard and prompt.
+func routeableTools(tools []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		if !isWebSearchTool(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 func toolType(name string, tools []map[string]any) string {
 	for _, t := range tools {
 		f, _ := t["function"].(map[string]any)

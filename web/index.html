@@ -1049,14 +1049,15 @@ async function startPKCE(){
   try{
     const d=await api('/api/auth/start');
     $('callbackInput').dataset.state=d.state;
-    window.open(d.url,'pkce','width=600,height=800');
+    const popup=window.open(d.url,'pkce','width=600,height=800');
     $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>Authorization page opened</div><p>Complete the sign-in in your browser, then paste the full callback URL from the address bar into the field above.</p></div>';
     $('callbackInput').focus();
     $('callbackInput').placeholder='Paste the full callback URL from the address bar…';
     if(pkceTimer)clearInterval(pkceTimer);
     const start=Date.now();
     pkceTimer=setInterval(async()=>{
-      if(Date.now()-start>600000){clearInterval(pkceTimer);return;}
+      if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>Authorization timed out. Start authorization again.</b></div>';return;}
+      if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>The authorization window was closed before completion.</b></div>';return;}
       try{const s=await api('/api/auth/status?state='+d.state);
         if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>Authorization successful</div><p>Account added to the account pool.</p></div>';showNotice('Authorization successful','success');loadAccounts();}
         if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>Authorization failed or expired</b></div>';}

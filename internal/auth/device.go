@@ -34,8 +34,8 @@ type deviceCodeResponse struct {
 
 func StartDeviceCode() (DeviceCode, error) {
 	form := url.Values{}
-	form.Set("client_id", ClientID())
-	form.Set("scope", Scope())
+	form.Set("client_id", DeviceClientID())
+	form.Set("scope", DeviceScope())
 	req, err := http.NewRequest(http.MethodPost, DeviceCodeEndpoint(), strings.NewReader(form.Encode()))
 	if err != nil {
 		return DeviceCode{}, err
@@ -77,10 +77,10 @@ func StartDeviceCode() (DeviceCode, error) {
 
 func PollDeviceCode(deviceCode string) (TokenSet, bool, error) {
 	form := url.Values{}
-	form.Set("client_id", ClientID())
+	form.Set("client_id", DeviceClientID())
 	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 	form.Set("device_code", deviceCode)
-	req, err := http.NewRequest(http.MethodPost, TokenEndpoint(), strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, DeviceTokenEndpoint(), strings.NewReader(form.Encode()))
 	if err != nil {
 		return TokenSet{}, false, err
 	}

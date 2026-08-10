@@ -24,16 +24,24 @@ import (
 )
 
 type pendingPKCE struct {
-	Verifier string
-	Created  time.Time
-	Status   string
-	Account  any
-	Error    string
+	Verifier    string
+	Created     time.Time
+	Status      string
+	Account     any
+	Error       string
+	RedirectURI string
 }
+
+// rateLimitCooldown is how long a rate-limited account stays out of rotation.
+const rateLimitCooldown = 2 * time.Minute
+
+// maxAccountProbe bounds the round-robin walk when skipping unhealthy accounts.
+const maxAccountProbe = 16
 
 type Server struct {
 	mu                  sync.Mutex
 	tokens              *auth.Store
+	accountPool         *accountHealth
 	pkce                map[string]pendingPKCE
 	chat                *chathub.Client
 	sessions            *sessionStore
@@ -72,8 +80,9 @@ func New() (*Server, error) {
 		}
 	}
 	return &Server{
-		tokens: store,
-		pkce:   map[string]pendingPKCE{},
+		tokens:      store,
+		accountPool: newAccountHealth(),
+		pkce:        map[string]pendingPKCE{},
 		chat: func() *chathub.Client {
 			c := chathub.NewClient()
 			c.Trace = func(meta map[string]any) { fmt.Printf("[multimodal-trace] %s\\n", mustJSON(meta)) }
@@ -465,7 +474,7 @@ func (s *Server) startPKCE(w http.ResponseWriter, _ *http.Request) {
 	state := hex.EncodeToString(b)
 	redirectURI := auth.RedirectURI()
 	s.mu.Lock()
-	s.pkce[state] = pendingPKCE{Verifier: v, Created: time.Now(), Status: "pending"}
+	s.pkce[state] = pendingPKCE{Verifier: v, Created: time.Now(), Status: "pending", RedirectURI: redirectURI}
 	s.mu.Unlock()
 	jsonOut(w, map[string]string{
 		"status": "pkce_ready",
@@ -513,30 +522,54 @@ func (s *Server) pkceStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
+	oauthError := r.URL.Query().Get("error")
 	// also accept pasted full callback URL
-	if code == "" {
+	if code == "" && oauthError == "" {
 		if u := r.URL.Query().Get("url"); u != "" {
 			if parsed, err := http.NewRequest(http.MethodGet, u, nil); err == nil {
 				code = parsed.URL.Query().Get("code")
+				oauthError = parsed.URL.Query().Get("error")
 				if state == "" {
 					state = parsed.URL.Query().Get("state")
 				}
 			}
 		}
 	}
-	if state == "" || code == "" {
-		http.Error(w, "missing state or code", http.StatusBadRequest)
+	if state == "" || (code == "" && oauthError == "") {
+		http.Error(w, "missing state or authorization result", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
 	p, ok := s.pkce[state]
-	s.mu.Unlock()
 	if !ok || time.Since(p.Created) > 10*time.Minute {
+		if ok {
+			delete(s.pkce, state)
+		}
+		s.mu.Unlock()
 		http.Error(w, "invalid or expired state", http.StatusBadRequest)
 		return
 	}
-	tok, err := auth.ExchangeCode(code, p.Verifier, auth.RedirectURI())
+	if p.Status != "pending" {
+		s.mu.Unlock()
+		http.Error(w, "authorization result already consumed", http.StatusConflict)
+		return
+	}
+	p.Status = "processing"
+	s.pkce[state] = p
+	s.mu.Unlock()
+	if oauthError != "" {
+		log.Printf("oauth_error stage=callback error=%q", oauthError)
+		s.mu.Lock()
+		p.Status = "error"
+		p.Error = oauthError
+		s.pkce[state] = p
+		s.mu.Unlock()
+		http.Error(w, "Microsoft authorization failed: "+oauthError, http.StatusBadRequest)
+		return
+	}
+	tok, err := auth.ExchangeCode(code, p.Verifier, p.RedirectURI)
 	if err != nil {
+		logOAuthError("code_exchange", err)
 		s.mu.Lock()
 		p.Status = "error"
 		p.Error = err.Error()
@@ -562,7 +595,7 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	// Browser loopback callbacks should finish in a friendly page instead of
 	// displaying a raw JSON response. Keep JSON for the manual/API flow.
-	if strings.HasPrefix(auth.RedirectURI(), "http://127.0.0.1:") || strings.HasPrefix(auth.RedirectURI(), "http://localhost:") {
+	if strings.HasPrefix(p.RedirectURI, "http://127.0.0.1:") || strings.HasPrefix(p.RedirectURI, "http://localhost:") {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!doctype html><meta charset="utf-8"><title>M365 Copilot2API 授权完成</title><style>body{font:16px system-ui;text-align:center;padding:15vh 20px;color:#242424}main{max-width:520px;margin:auto}h1{font-size:26px}</style><main><h1>授权完成</h1><p>账号已经自动加入账号池，可以关闭此页面。</p><script>if(window.opener){window.opener.postMessage({type:"m365-auth-complete"},window.location.origin);setTimeout(()=>window.close(),300)}</script></main>`)
 		return
@@ -580,8 +613,41 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
 		}
 		accountID = acc.ID
+		// Round-robin may land on a cooling-down or auth-failed account;
+		// walk the pool for the next healthy one without infinite loops.
+		for i := 0; !s.accountPool.Available(accountID) && i < maxAccountProbe; i++ {
+			acc, ok = s.tokens.Next()
+			if !ok {
+				break
+			}
+			accountID = acc.ID
+		}
+		if !s.accountPool.Available(accountID) {
+			return auth.AccountToken{}, fmt.Errorf("all accounts are cooling down or failing auth; try again later")
+		}
 	}
-	return s.tokens.EnsureValid(accountID)
+	acc, err := s.tokens.EnsureValid(accountID)
+	return acc, err
+}
+
+// nextHealthyAccount returns the next round-robin account that is still
+// healthy, skipping the given id first, and validates its token. Used by the
+// failover path after a rate-limited or auth-failed attempt.
+func (s *Server) nextHealthyAccount(avoidID string) (auth.AccountToken, error) {
+	for i := 0; i < maxAccountProbe; i++ {
+		acc, ok := s.tokens.Next()
+		if !ok {
+			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
+		}
+		if avoidID != "" && acc.ID == avoidID {
+			continue
+		}
+		if !s.accountPool.Available(acc.ID) {
+			continue
+		}
+		return s.tokens.EnsureValid(acc.ID)
+	}
+	return auth.AccountToken{}, fmt.Errorf("no healthy account available for failover")
 }
 
 type chatBody struct {
@@ -708,9 +774,41 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		Attachments:    body.Attachments,
 	})
 	if err != nil {
-		http.Error(w, upstreamError(err), http.StatusBadGateway)
+		// Failover: a rate-limited or auth-failed account must not take down the
+		// request when the pool has other healthy accounts. Only auto-selected
+		// requests fail over; an explicitly chosen account is respected, and a
+		// conversation-bound chat stays on its account.
+		if body.AccountID == "" && body.ConversationID == "" && (IsRateLimited(err) || IsAuthFailure(err)) {
+			next, nerr := s.nextHealthyAccount(acc.ID)
+			if nerr == nil {
+				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
+				defer cancel2()
+				res2, err2 := s.chat.Chat(ctx2, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{
+					Text:           text,
+					Tone:           body.Tone,
+					ConversationID: body.ConversationID,
+					SessionID:      body.SessionID,
+					Attachments:    body.Attachments,
+				})
+				if err2 == nil {
+					s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+					s.accountPool.MarkSuccess(next.ID)
+					jsonOut(w, map[string]any{
+						"status": "ok", "text": res2.Text, "conversationId": res2.ConversationID,
+						"sessionId": res2.SessionID, "requestId": res2.RequestID,
+						"throttling": res2.Throttling, "result": res2.RawResult, "events": res2.Events,
+						"images": res2.Images, "account": map[string]any{"id": next.ID, "email": next.Email},
+					})
+					return
+				}
+				err = err2
+			}
+		}
+		s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+		writeUpstreamError(w, err)
 		return
 	}
+	s.accountPool.MarkSuccess(acc.ID)
 	if body.SessionKey != "" {
 		s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: text})
 	}
@@ -1155,10 +1253,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		})
 		if err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": upstreamError(err)}})+"\n\n")
+			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			msg := upstreamError(err)
+			if IsRateLimited(err) {
+				msg = "upstream is rate limiting; try again shortly"
+			}
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 			return
 		}
+		s.accountPool.MarkSuccess(acc.ID)
 		// Some ChatHub updates contain no text event and place the completed
 		// answer only in the final Result. Recover it before deciding that the
 		// response is empty; this also preserves fenced-tool parsing.
@@ -1179,7 +1283,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
 			return
 		}
-if err := emitText(pending.String()); err != nil {
+		if err := emitText(pending.String()); err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
@@ -1309,18 +1413,41 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 		res, err = s.chat.ChatWithReasoning(ctx, account, answerReq, onDelta, onReasoning)
 		if err == nil {
+			s.accountPool.MarkSuccess(acc.ID)
 			writeStreamFinish(r.Context(), w, flusher, id, model)
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": upstreamError(err)}})+"\n\n")
+			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			msg := upstreamError(err)
+			if IsRateLimited(err) {
+				msg = "upstream is rate limiting; try again shortly"
+			}
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		}
 	} else {
 		res, err = s.chat.Chat(ctx, account, answerReq)
+		if err != nil && body.AccountID == "" && body.ConversationID == "" && (IsRateLimited(err) || IsAuthFailure(err)) {
+			// Failover only when nothing pins the request to a conversation or
+			// account; a fresh chat can safely retry on the next healthy account.
+			next, nerr := s.nextHealthyAccount(acc.ID)
+			if nerr == nil {
+				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
+				defer cancel2()
+				res2, err2 := s.chat.Chat(ctx2, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, answerReq)
+				if err2 == nil {
+					res = res2
+					acc = next
+					err = nil
+					s.accountPool.MarkSuccess(next.ID)
+				}
+			}
+		}
 	}
 	if err != nil {
-		http.Error(w, upstreamError(err), http.StatusBadGateway)
+		s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+		writeUpstreamError(w, err)
 		return
 	}
 	if body.Stream {

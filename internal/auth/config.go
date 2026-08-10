@@ -12,6 +12,9 @@ const DefaultRedirectURI = "https://login.microsoftonline.com/common/oauth2/nati
 const DefaultScope = "openid profile offline_access https://substrate.office.com/sydney/M365Chat.Read https://substrate.office.com/sydney/sydney.readwrite"
 
 func ClientID() string {
+	if v := os.Getenv("M365_BROWSER_CLIENT_ID"); v != "" {
+		return v
+	}
 	if v := os.Getenv("M365_CLIENT_ID"); v != "" {
 		return v
 	}
@@ -19,6 +22,9 @@ func ClientID() string {
 }
 
 func Authority() string {
+	if v := os.Getenv("M365_BROWSER_AUTHORITY"); v != "" {
+		return v
+	}
 	if v := os.Getenv("M365_AUTHORITY"); v != "" {
 		return v
 	}
@@ -26,6 +32,9 @@ func Authority() string {
 }
 
 func RedirectURI() string {
+	if v := os.Getenv("M365_BROWSER_REDIRECT_URI"); v != "" {
+		return v
+	}
 	if v := os.Getenv("M365_REDIRECT_URI"); v != "" {
 		return v
 	}
@@ -33,6 +42,39 @@ func RedirectURI() string {
 }
 
 func Scope() string {
+	if v := os.Getenv("M365_BROWSER_SCOPE"); v != "" {
+		return v
+	}
+	if v := os.Getenv("M365_SCOPE"); v != "" {
+		return v
+	}
+	return DefaultScope
+}
+
+func DeviceClientID() string {
+	if v := os.Getenv("M365_DEVICE_CLIENT_ID"); v != "" {
+		return v
+	}
+	if v := os.Getenv("M365_CLIENT_ID"); v != "" {
+		return v
+	}
+	return FOCIClientID
+}
+
+func DeviceAuthority() string {
+	if v := os.Getenv("M365_DEVICE_AUTHORITY"); v != "" {
+		return v
+	}
+	if v := os.Getenv("M365_AUTHORITY"); v != "" {
+		return v
+	}
+	return DefaultAuthority
+}
+
+func DeviceScope() string {
+	if v := os.Getenv("M365_DEVICE_SCOPE"); v != "" {
+		return v
+	}
 	if v := os.Getenv("M365_SCOPE"); v != "" {
 		return v
 	}
@@ -57,5 +99,12 @@ func DeviceCodeEndpoint() string {
 	if v := os.Getenv("M365_DEVICE_ENDPOINT"); v != "" {
 		return v
 	}
-	return Authority() + "/oauth2/v2.0/devicecode"
+	return DeviceAuthority() + "/oauth2/v2.0/devicecode"
+}
+
+func DeviceTokenEndpoint() string {
+	if v := os.Getenv("M365_DEVICE_TOKEN_ENDPOINT"); v != "" {
+		return v
+	}
+	return DeviceAuthority() + "/oauth2/v2.0/token"
 }

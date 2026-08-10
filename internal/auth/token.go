@@ -27,14 +27,35 @@ type TokenSet struct {
 }
 
 type tokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	IDToken      string `json:"id_token"`
-	TokenType    string `json:"token_type"`
-	Scope        string `json:"scope"`
-	ExpiresIn    int    `json:"expires_in"`
-	Error        string `json:"error"`
-	ErrorDesc    string `json:"error_description"`
+	AccessToken   string `json:"access_token"`
+	RefreshToken  string `json:"refresh_token"`
+	IDToken       string `json:"id_token"`
+	TokenType     string `json:"token_type"`
+	Scope         string `json:"scope"`
+	ExpiresIn     int    `json:"expires_in"`
+	Error         string `json:"error"`
+	ErrorDesc     string `json:"error_description"`
+	CorrelationID string `json:"correlation_id"`
+	TraceID       string `json:"trace_id"`
+}
+
+type OAuthError struct {
+	Code          string
+	AADSTS        string
+	HTTPStatus    int
+	CorrelationID string
+	TraceID       string
+}
+
+func (e *OAuthError) Error() string {
+	parts := []string{e.Code}
+	if e.AADSTS != "" {
+		parts = append(parts, e.AADSTS)
+	}
+	if e.HTTPStatus != 0 {
+		parts = append(parts, fmt.Sprintf("HTTP %d", e.HTTPStatus))
+	}
+	return strings.Join(parts, ": ")
 }
 
 func (t TokenSet) Valid() bool {
@@ -81,7 +102,13 @@ func requestToken(form url.Values) (TokenSet, error) {
 		return TokenSet{}, fmt.Errorf("decode token response: %w", err)
 	}
 	if tr.Error != "" {
-		return TokenSet{}, fmt.Errorf("token endpoint HTTP %d: %s: %s", resp.StatusCode, tr.Error, tr.ErrorDesc)
+		return TokenSet{}, &OAuthError{
+			Code:          tr.Error,
+			AADSTS:        aadstsCode(tr.ErrorDesc),
+			HTTPStatus:    resp.StatusCode,
+			CorrelationID: firstNonEmpty(tr.CorrelationID, resp.Header.Get("client-request-id")),
+			TraceID:       firstNonEmpty(tr.TraceID, resp.Header.Get("x-ms-request-id")),
+		}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return TokenSet{}, fmt.Errorf("token endpoint HTTP %d", resp.StatusCode)
@@ -115,6 +142,22 @@ func requestToken(form url.Values) (TokenSet, error) {
 		}
 	}
 	return set, nil
+}
+
+func aadstsCode(description string) string {
+	const prefix = "AADSTS"
+	start := strings.Index(description, prefix)
+	if start < 0 {
+		return ""
+	}
+	end := start + len(prefix)
+	for end < len(description) && description[end] >= '0' && description[end] <= '9' {
+		end++
+	}
+	if end == start+len(prefix) {
+		return ""
+	}
+	return description[start:end]
 }
 
 func decodeJWTClaims(token string) (map[string]string, error) {

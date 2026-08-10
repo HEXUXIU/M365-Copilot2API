@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -137,6 +138,19 @@ func (c *M365CloudClient) doAPI(action string, payload map[string]any) (map[stri
 		return nil, fmt.Errorf("do request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		retryAfter, _ := strconv.Atoi(resp.Header.Get("Retry-After"))
+		bodySnippet := ""
+		if b, rerr := io.ReadAll(io.LimitReader(resp.Body, 512)); rerr == nil {
+			bodySnippet = string(b)
+		}
+		return nil, &UpstreamHTTPError{
+			Status:     resp.StatusCode,
+			RetryAfter: retryAfter,
+			Body:       bodySnippet,
+		}
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

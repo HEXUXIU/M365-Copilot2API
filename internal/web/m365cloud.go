@@ -181,15 +181,20 @@ func (c *M365CloudClient) ListConversations() ([]map[string]any, error) {
 		return nil, fmt.Errorf("unexpected response format")
 	}
 
-	historyList, ok := store["conversationPageHistoryList"].(map[string]any)
+	historyRaw, present := store["conversationPageHistoryList"]
+	if !present || historyRaw == nil {
+		return []map[string]any{}, nil
+	}
+	historyList, ok := historyRaw.(map[string]any)
 	if !ok {
-		return nil, fmt.Errorf("no conversationPageHistoryList")
+		log.Printf("[m365-cloud] conversationPageHistoryList unexpected type: %T, treating as empty", historyRaw)
+		return []map[string]any{}, nil
 	}
 
 	chatsRaw, ok := historyList["chats"].([]any)
 	if !ok {
-		log.Printf("[m365-cloud] chats type: %T, value: %v", historyList["chats"], historyList["chats"])
-		return nil, fmt.Errorf("no chats")
+		log.Printf("[m365-cloud] chats type: %T, value: %v, treating as empty", historyList["chats"], historyList["chats"])
+		return []map[string]any{}, nil
 	}
 
 	chats := make([]map[string]any, 0, len(chatsRaw))

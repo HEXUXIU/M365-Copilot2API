@@ -1,4 +1,17 @@
 services:
+  redis:
+    image: redis:7.4-alpine
+    container_name: m365-copilot2api-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-lru"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   m365-copilot2api:
     build: .
     image: m365-copilot2api:latest
@@ -17,6 +30,21 @@ services:
       M365_ADMIN_PASSWORD_BOOTSTRAP_FILE: /run/secrets/m365_admin_password
       M365_CHAT_TIMEOUT_SECONDS: "120"
       M365_IMAGE_TIMEOUT_SECONDS: "150"
+      M365_AFFINITY_MODE: observe
+      M365_REDIS_URL: redis://redis:6379/0
+      M365_AFFINITY_TTL_MINUTES: "120"
+      M365_AFFINITY_MAX_SESSIONS: "10000"
+      M365_REDIS_POOL_SIZE: "32"
+      M365_SESSION_LOCK_TTL_SECONDS: "180"
+      M365_SESSION_LOCK_WAIT_SECONDS: "120"
+      M365_STICKY_RETRY_AFTER_SECONDS: "5"
+      M365_ACCOUNT_DEFAULT_CONCURRENCY: "8"
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - ./data:/data
       - ./secrets/m365_admin_password:/run/secrets/m365_admin_password:ro
+
+volumes:
+  redis-data:

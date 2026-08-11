@@ -6,11 +6,12 @@ import (
 	"time"
 )
 
-func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, calls []detectedToolCall, res chathub.Result) error {
+func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, calls []detectedToolCall, res chathub.Result, usage ...map[string]any) error {
 	toolCalls := toolCallMaps(calls)
 	msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": toolCalls}
-	if res.Reasoning != "" {
-		msg["reasoning_content"] = res.Reasoning
+	reasoning := sanitizePublicAssistantText(res.Reasoning)
+	if reasoning != "" {
+		msg["reasoning_content"] = reasoning
 	}
 	if stream {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -26,8 +27,8 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, cal
 			return map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}}
 		}
 		firstDelta := map[string]any{"role": "assistant", "content": nil}
-		if res.Reasoning != "" {
-			firstDelta["reasoning_content"] = res.Reasoning
+		if reasoning != "" {
+			firstDelta["reasoning_content"] = reasoning
 		}
 		emit(base(firstDelta, nil))
 		for i, tc := range calls {
@@ -37,10 +38,18 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, cal
 			}
 			emit(base(map[string]any{"tool_calls": []any{map[string]any{"index": i, "id": tc.ID, "type": typ, "function": map[string]any{"name": tc.Name, "arguments": string(tc.Arguments)}}}}, nil))
 		}
-		emit(base(map[string]any{}, "tool_calls"))
+		terminal := base(map[string]any{}, "tool_calls")
+		if len(usage) > 0 && usage[0] != nil {
+			terminal["usage"] = usage[0]
+		}
+		emit(terminal)
 		_ = sseSafeRaw(w, flusher, "data: [DONE]\n\n")
 		return nil
 	}
-	jsonOut(w, map[string]any{"id": id, "object": "chat.completion", "model": model, "choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": "tool_calls"}}, "m365": compatM365Metadata(res)})
+	out := map[string]any{"id": id, "object": "chat.completion", "model": model, "choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": "tool_calls"}}, "m365": compatM365Metadata(res)}
+	if len(usage) > 0 && usage[0] != nil {
+		out["usage"] = usage[0]
+	}
+	jsonOut(w, out)
 	return nil
 }

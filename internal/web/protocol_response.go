@@ -20,9 +20,18 @@ func openAIChoice(v map[string]any) (map[string]any, string) {
 	return m, finish
 }
 
-func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src map[string]any) {
+func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src map[string]any, usageArgs ...any) {
+	var usage map[string]any
+	var usageSource string
+	if len(usageArgs) > 0 {
+		usage, _ = usageArgs[0].(map[string]any)
+	}
+	if len(usageArgs) > 1 {
+		usageSource, _ = usageArgs[1].(string)
+	}
 	id := "msg_" + uuid.NewString()
 	msg, finish := openAIChoice(src)
+	sanitizePublicAssistantMessage(msg)
 	blocks := []any{}
 	stop := "end_turn"
 	if reasoning, _ := msg["reasoning_content"].(string); reasoning != "" {
@@ -64,7 +73,13 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 		}
 	}
 	_ = finish
-	out := map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": blocks, "stop_reason": stop, "stop_sequence": nil, "usage": map[string]any{"input_tokens": 0, "output_tokens": 0}, "m365": map[string]any{"usage_source": "unavailable_from_chathub", "usage_values_are_placeholders": true}}
+	if usage == nil {
+		usage = anthropicUsage(reuseUsage{})
+	}
+	if usageSource == "" {
+		usageSource = "none"
+	}
+	out := map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": blocks, "stop_reason": stop, "stop_sequence": nil, "usage": usage, "m365": localUsageMetadata(usageSource)}
 	if !stream {
 		jsonOut(w, out)
 		return
@@ -108,7 +123,7 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 		}
 		emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": i})
 	}
-	emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": map[string]any{"output_tokens": 0}})
+	emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": usage})
 	emit("message_stop", map[string]any{"type": "message_stop"})
 }
 

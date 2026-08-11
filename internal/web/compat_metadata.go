@@ -22,7 +22,7 @@ func compatM365Metadata(res chathub.Result) map[string]any {
 		"usage_source":   "unavailable_from_chathub",
 	}
 	if envTrue("M365_INCLUDE_UPSTREAM_EVENTS") {
-		m["events"] = res.Events
+		m["events"] = sanitizePublicPayload(res.Events)
 	}
 	return m
 }

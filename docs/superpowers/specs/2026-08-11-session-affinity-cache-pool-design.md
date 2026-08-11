@@ -1,6 +1,6 @@
 # M365 Session Affinity and Context Reuse Pool
 
-Status: ready for written-spec review
+Status: implemented; rollout starts in observe mode
 
 ## Objective
 

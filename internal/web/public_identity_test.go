@@ -13,20 +13,11 @@ func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 	prompt := "[user]\nWhat model are you?"
 
 	got := applyPublicIdentityPolicy(prompt)
-	if !strings.Contains(got, prompt) {
-		t.Fatalf("policy removed original prompt: %q", got)
-	}
-	if !strings.Contains(got, "GPT-5-series AI assistant") {
-		t.Fatalf("policy does not define the public identity: %q", got)
-	}
-	if !strings.Contains(got, "gpt-5.6-sol") || !strings.Contains(got, "preserve their proper names") {
-		t.Fatalf("policy does not distinguish public identity from product discussion: %q", got)
-	}
-	if strings.Contains(got, "Never identify yourself") {
-		t.Fatalf("policy contains a negative identity conflict: %q", got)
+	if got != prompt {
+		t.Fatalf("ordinary prompt was rewritten: %q", got)
 	}
 	if twice := applyPublicIdentityPolicy(got); twice != got {
-		t.Fatalf("policy application is not idempotent:\nfirst:  %q\nsecond: %q", got, twice)
+		t.Fatalf("prompt normalization is not idempotent:\nfirst:  %q\nsecond: %q", got, twice)
 	}
 }
 

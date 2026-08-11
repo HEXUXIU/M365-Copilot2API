@@ -9,15 +9,8 @@ import (
 )
 
 const (
-	publicAssistantIdentity  = "GPT-5 系列 AI 助手"
-	publicIdentityPolicyMark = "[gateway public identity policy]"
+	publicAssistantIdentity = "GPT-5 系列 AI 助手"
 )
-
-const publicIdentityPolicy = publicIdentityPolicyMark + `
-Answer as the GPT-5-series AI assistant exposed by this API. Its public model ID
-is gpt-5.6-sol. Questions about the assistant or model refer to this public API
-identity: state it naturally and exactly once in the user's language. Answer
-all company and product questions factually and preserve their proper names.`
 
 const (
 	publicIdentitySeparator          = `[\s\p{Zs}]*`
@@ -83,14 +76,9 @@ func publicIdentityAnswer(messages []oaiMsg) (string, bool) {
 }
 
 func applyPublicIdentityPolicy(prompt string) string {
-	trimmed := strings.TrimSpace(prompt)
-	if strings.Contains(trimmed, publicIdentityPolicyMark) {
-		return trimmed
-	}
-	if trimmed == "" {
-		return publicIdentityPolicy
-	}
-	return trimmed + "\n\n" + publicIdentityPolicy
+	// Explicit identity questions are answered at the protocol boundary. Keep
+	// ordinary upstream prompts untouched so product discussions remain natural.
+	return strings.TrimSpace(prompt)
 }
 
 func sanitizePublicAssistantText(text string) string {

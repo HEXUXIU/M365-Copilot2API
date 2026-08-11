@@ -258,17 +258,17 @@ func (sr *sessionResolver) Resolve(r *http.Request, body *oaiReq) ResolveResult 
 	if explicitID != "" {
 		if sessID, ok := sr.byExplicit[explicitID]; ok {
 			if sess, ok := sr.sessions[sessID]; ok {
-			sess.LastUsedAt = time.Now().UTC()
-			sr.sessions[sessID] = sess
-			sr.persist.markDirty()
-			return ResolveResult{
-				SessionID:      sess.SessionID,
-				ConversationID: sess.ConversationID,
-				AccountID:      sess.AccountID,
-				MatchedBy:      "explicit",
-				IsNew:          false,
-				HistoryLen:     len(sess.ContextHistory),
-			}
+				sess.LastUsedAt = time.Now().UTC()
+				sr.sessions[sessID] = sess
+				sr.persist.markDirty()
+				return ResolveResult{
+					SessionID:      sess.SessionID,
+					ConversationID: sess.ConversationID,
+					AccountID:      sess.AccountID,
+					MatchedBy:      "explicit",
+					IsNew:          false,
+					HistoryLen:     len(sess.ContextHistory),
+				}
 			}
 		}
 		if sess, ok := sr.sessions[explicitID]; ok {
@@ -452,7 +452,7 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 			sess.UserField = body.User
 			sess.IPFingerprint = clientIPFingerprint(r)
 			sess.ContextFinger = contextFingerprint(body.Messages)
-			sess.ContextHistory = cloneMessages(body.Messages)
+			sess.ContextHistory = mergeMessageHistory(sess.ContextHistory, body.Messages)
 			sr.sessions[sessionID] = sess
 			sr.reindexLocked(sess)
 			sr.persist.markDirty()
@@ -467,7 +467,7 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 				sess.UserField = body.User
 				sess.IPFingerprint = clientIPFingerprint(r)
 				sess.ContextFinger = contextFingerprint(body.Messages)
-				sess.ContextHistory = cloneMessages(body.Messages)
+				sess.ContextHistory = mergeMessageHistory(sess.ContextHistory, body.Messages)
 				sr.sessions[sid] = sess
 				sr.reindexLocked(sess)
 				sr.persist.markDirty()
@@ -498,6 +498,18 @@ func (sr *sessionResolver) GetSession(sessionID string) (sessionBinding, bool) {
 	defer sr.mu.Unlock()
 	s, ok := sr.sessions[sessionID]
 	return s, ok
+}
+
+func (sr *sessionResolver) GetConversation(conversationID string) (sessionBinding, bool) {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	for _, session := range sr.sessions {
+		if session.ConversationID == conversationID {
+			session.ContextHistory = cloneMessages(session.ContextHistory)
+			return session, true
+		}
+	}
+	return sessionBinding{}, false
 }
 
 func (sr *sessionResolver) ListSessions() []sessionBinding {
@@ -569,4 +581,34 @@ func cloneMessages(msgs []oaiMsg) []oaiMsg {
 	out := make([]oaiMsg, len(msgs))
 	copy(out, msgs)
 	return out
+}
+
+func mergeMessageHistory(existing, incoming []oaiMsg) []oaiMsg {
+	if len(existing) == 0 {
+		return cloneMessages(incoming)
+	}
+	if len(incoming) == 0 {
+		return cloneMessages(existing)
+	}
+
+	maxOverlap := len(existing)
+	if len(incoming) < maxOverlap {
+		maxOverlap = len(incoming)
+	}
+	for overlap := maxOverlap; overlap > 0; overlap-- {
+		matched := true
+		for i := 0; i < overlap; i++ {
+			if !messagesEqual(existing[len(existing)-overlap+i], incoming[i]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			merged := cloneMessages(existing)
+			return append(merged, cloneMessages(incoming[overlap:])...)
+		}
+	}
+
+	merged := cloneMessages(existing)
+	return append(merged, cloneMessages(incoming)...)
 }

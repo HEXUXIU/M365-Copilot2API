@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -120,16 +121,127 @@ func (s *Server) handleM365Conversations(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if m365CloudClient == nil {
+	if m365CloudClient == nil && len(s.sessionResolver.ListSessions()) == 0 {
 		writeOpenAIError(w, http.StatusServiceUnavailable, "m365_not_configured", "M365 cloud client not configured. Please add an M365 account first via PKCE authorization.")
 		return
 	}
-	chats, err := m365CloudClient.ListConversations()
-	if err != nil {
+	rows := make(map[string]map[string]any)
+	var cloudErr error
+	if m365CloudClient != nil {
+		var chats []map[string]any
+		chats, cloudErr = m365CloudClient.ListConversations()
+		for _, chat := range chats {
+			conversationID, _ := chat["conversationId"].(string)
+			if conversationID != "" {
+				rows[conversationID] = chat
+			}
+		}
+	}
+	if cloudErr != nil && len(s.sessionResolver.ListSessions()) == 0 {
+		err := cloudErr
 		writeOpenAIError(w, http.StatusBadGateway, "m365_error", err.Error())
 		return
 	}
-	jsonOut(w, map[string]any{"object": "list", "data": chats, "count": len(chats)})
+	for _, session := range s.sessionResolver.ListSessions() {
+		row, ok := rows[session.ConversationID]
+		if !ok {
+			row = map[string]any{}
+			rows[session.ConversationID] = row
+		}
+		row["conversationId"] = session.ConversationID
+		row["sessionId"] = session.SessionID
+		row["accountId"] = session.AccountID
+		row["createTimeUtc"] = session.CreatedAt.UnixMilli()
+		row["updateTimeUtc"] = session.LastUsedAt.UnixMilli()
+		row["messageCount"] = len(session.ContextHistory)
+		row["historyAvailable"] = len(session.ContextHistory) > 0
+		row["source"] = "gateway"
+		if account, found := s.tokens.Get(session.AccountID); found {
+			row["accountEmail"] = account.Email
+		}
+		if name, _ := row["chatName"].(string); strings.TrimSpace(name) == "" {
+			row["chatName"] = conversationTitle(session.ContextHistory)
+		}
+	}
+
+	data := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		data = append(data, row)
+	}
+	sort.Slice(data, func(i, j int) bool {
+		return conversationTimestamp(data[i]) > conversationTimestamp(data[j])
+	})
+	response := map[string]any{"object": "list", "data": data, "count": len(data)}
+	if cloudErr != nil {
+		response["warning"] = cloudErr.Error()
+	}
+	jsonOut(w, response)
+}
+
+func (s *Server) handleM365ConversationDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	conversationID := strings.TrimSpace(r.URL.Query().Get("id"))
+	if conversationID == "" {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "conversation id is required")
+		return
+	}
+	session, found := s.sessionResolver.GetConversation(conversationID)
+	if !found {
+		writeOpenAIError(w, http.StatusNotFound, "conversation_not_found", "conversation history is not available")
+		return
+	}
+	accountEmail := ""
+	if account, ok := s.tokens.Get(session.AccountID); ok {
+		accountEmail = account.Email
+	}
+	jsonOut(w, map[string]any{
+		"object":         "conversation",
+		"conversationId": session.ConversationID,
+		"sessionId":      session.SessionID,
+		"accountId":      session.AccountID,
+		"accountEmail":   accountEmail,
+		"chatName":       conversationTitle(session.ContextHistory),
+		"createdAt":      session.CreatedAt,
+		"updatedAt":      session.LastUsedAt,
+		"messageCount":   len(session.ContextHistory),
+		"messages":       session.ContextHistory,
+	})
+}
+
+func conversationTitle(messages []oaiMsg) string {
+	for _, message := range messages {
+		if message.Role != "user" {
+			continue
+		}
+		text := strings.TrimSpace(contentToString(message.Content))
+		text = strings.Join(strings.Fields(text), " ")
+		if text == "" {
+			continue
+		}
+		runes := []rune(text)
+		if len(runes) > 120 {
+			return string(runes[:120]) + "..."
+		}
+		return text
+	}
+	return "Untitled conversation"
+}
+
+func conversationTimestamp(row map[string]any) int64 {
+	for _, key := range []string{"updateTimeUtc", "createTimeUtc"} {
+		switch value := row[key].(type) {
+		case float64:
+			return int64(value)
+		case int64:
+			return value
+		case int:
+			return int64(value)
+		}
+	}
+	return 0
 }
 
 func (s *Server) handleM365Delete(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +264,7 @@ func (s *Server) handleM365Delete(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadGateway, "m365_error", err.Error())
 		return
 	}
+	s.dropConversation(body.ConversationID)
 	jsonOut(w, map[string]any{"status": "deleted", "conversation_id": body.ConversationID})
 }
 

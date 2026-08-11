@@ -158,6 +158,7 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/v1/sessions", s.handleSessions)
 	m.HandleFunc("/v1/sessions/", s.handleSessionDelete)
 	m.HandleFunc("/api/m365/conversations", s.handleM365Conversations)
+	m.HandleFunc("/api/m365/conversations/detail", s.handleM365ConversationDetail)
 	m.HandleFunc("/api/m365/conversations/delete", s.handleM365Delete)
 	m.HandleFunc("/api/m365/conversations/cleanup", s.handleM365Cleanup)
 	m.HandleFunc("/api/stats", s.handleCacheStats)
@@ -926,11 +927,12 @@ func (s *Server) openaiModels(w http.ResponseWriter, r *http.Request) {
 }
 
 type oaiMsg struct {
-	Role       string           `json:"role"`
-	Content    any              `json:"content"`
-	Name       string           `json:"name,omitempty"`
-	ToolCallID string           `json:"tool_call_id,omitempty"`
-	ToolCalls  []map[string]any `json:"tool_calls,omitempty"`
+	Role             string           `json:"role"`
+	Content          any              `json:"content"`
+	Name             string           `json:"name,omitempty"`
+	ToolCallID       string           `json:"tool_call_id,omitempty"`
+	ToolCalls        []map[string]any `json:"tool_calls,omitempty"`
+	ReasoningContent string           `json:"reasoning_content,omitempty"`
 }
 
 type oaiReq struct {
@@ -1330,7 +1332,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if body.User != "" && res.ConversationID != "" {
 				s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 			}
-			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantTextForModel(text.String(), body.Model)}, answerPrompt, startedAt, affinityState)
+			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", ToolCalls: toolCallMaps(calls)}, answerPrompt, startedAt, affinityState)
 			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()}, chatUsage(usage))
 			return
 		}
@@ -1576,25 +1578,30 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		log.Printf("[user-session] put user=%s conversation=%s session=%s", body.User, res.ConversationID, res.SessionID)
 	}
-	usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantTextForModel(res.Text, body.Model)}, prompt, startedAt, affinityState)
-	if res.ConversationID != "" {
-		resolved := s.sessionResolver.Resolve(r, &body)
-		if !resolved.IsNew {
-			w.Header().Set(sessionHeaderName, resolved.SessionID)
-		}
-	}
 	model := body.Model
 	if model == "" {
 		model = defaultPublicModelName
 	}
 	id := "chatcmpl-" + uuid.NewString()
+	bindResult := func(assistant oaiMsg) reuseUsage {
+		usage := s.bindConversation(acc, &body, r, res, assistant, prompt, startedAt, affinityState)
+		if res.ConversationID != "" {
+			resolved := s.sessionResolver.Resolve(r, &body)
+			if !resolved.IsNew {
+				w.Header().Set(sessionHeaderName, resolved.SessionID)
+			}
+		}
+		return usage
+	}
 	if calls := fencedToolCalls(res.Text, toolMaps, body.ToolChoice); len(calls) > 0 {
 		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+		usage := bindResult(oaiMsg{Role: "assistant", ToolCalls: toolCallMaps(calls)})
 		_ = writeToolResponse(w, id, model, body.Stream, calls, res, chatUsage(usage))
 		return
 	}
 	if calls := nativeToolCalls(res.Events, body.Tools); len(calls) > 0 {
 		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+		usage := bindResult(oaiMsg{Role: "assistant", ToolCalls: toolCallMaps(calls)})
 		_ = writeToolResponse(w, id, model, body.Stream, calls, res, chatUsage(usage))
 		return
 	}
@@ -1617,6 +1624,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+				usage := bindResult(oaiMsg{Role: "assistant", ToolCalls: toolCallMaps(calls)})
 				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes, chatUsage(usage))
 				return
 			}
@@ -1627,6 +1635,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
 	res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
+	usage := bindResult(oaiMsg{Role: "assistant", Content: res.Text})
 	log.Printf("[debug] res.Text bytes=%d content=%q", len(res.Text), res.Text)
 	created := time.Now().Unix()
 
@@ -1765,7 +1774,10 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	if res.ConversationID == "" {
 		return usage
 	}
-	s.sessionResolver.Bind("", res.ConversationID, acc.ID, body, r)
+	assistantMsg.ReasoningContent = res.Reasoning
+	historyBody := *body
+	historyBody.Messages = append(cloneMessages(body.Messages), assistantMsg)
+	s.sessionResolver.Bind("", res.ConversationID, acc.ID, &historyBody, r)
 	usage = affinityState.complete(r.Context(), body, acc.ID, res.ConversationID, res.SessionID, assistantMsg, promptTokens, completionTokens)
 	s.conversationManager.Record(res.ConversationID, acc.ID, prompt)
 	if s.conversationManager.ShouldCleanup() {

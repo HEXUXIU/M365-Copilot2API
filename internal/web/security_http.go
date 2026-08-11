@@ -20,7 +20,7 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func (s *Server) rootPage(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" && r.URL.Path != "/login" {
+	if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/conversation" {
 		http.NotFound(w, r)
 		return
 	}
@@ -29,6 +29,9 @@ func (s *Server) rootPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := "web/index.html"
+	if r.URL.Path == "/conversation" {
+		name = "web/conversation.html"
+	}
 	f, err := os.Open(name)
 	if err != nil {
 		http.Error(w, "web interface unavailable", http.StatusInternalServerError)

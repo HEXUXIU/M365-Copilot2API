@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>对话详情 - M365 Copilot2API</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+<style>
+:root{color-scheme:light dark;--bg:#f6f7f9;--surface:#fff;--surface-2:#f1f3f6;--line:#e4e7ec;--text:#17191c;--muted:#69707a;--accent:#0969da;--green:#197a45;--orange:#a45400;--red:#c9352b;--shadow:0 8px 26px rgba(20,28,38,.07)}
+@media(prefers-color-scheme:dark){:root{--bg:#181a1d;--surface:#23262a;--surface-2:#2b2f34;--line:#3a3f45;--text:#f3f4f5;--muted:#a2a9b2;--accent:#58a6ff;--green:#56d38b;--orange:#ffb65c;--red:#ff756d;--shadow:0 8px 26px rgba(0,0,0,.24)}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:Inter,"Noto Sans SC",system-ui,sans-serif;font-size:14px;line-height:1.65;letter-spacing:0}
+button{font:inherit;letter-spacing:0}
+.topbar{position:sticky;top:0;z-index:20;height:56px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:space-between;padding:0 max(18px,calc((100vw - 1120px)/2));gap:16px}
+.top-left,.top-actions,.segmented{display:flex;align-items:center;gap:8px}
+.brand{font-size:13px;font-weight:700;white-space:nowrap}
+.divider{width:1px;height:18px;background:var(--line)}
+.icon-btn{width:34px;height:34px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--text);display:grid;place-items:center;cursor:pointer}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent)}
+.icon-btn svg{width:16px;height:16px}
+.segmented{padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2)}
+.segmented button{height:28px;padding:0 12px;border:0;border-radius:5px;background:transparent;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
+.segmented button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 4px rgba(0,0,0,.08)}
+main{width:min(1120px,calc(100% - 36px));margin:0 auto;padding:34px 0 64px}
+.heading{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;padding-bottom:24px;border-bottom:1px solid var(--line)}
+.heading-copy{min-width:0}
+.eyebrow{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase}
+h1{margin:5px 0 0;font-size:24px;line-height:1.35;font-weight:700;overflow-wrap:anywhere;letter-spacing:0}
+.identity{margin-top:9px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;overflow-wrap:anywhere}
+.meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-bottom:1px solid var(--line)}
+.meta-item{padding:18px 20px;border-right:1px solid var(--line);min-width:0}
+.meta-item:first-child{padding-left:0}.meta-item:last-child{border-right:0}
+.meta-label{font-size:11px;color:var(--muted);font-weight:600}
+.meta-value{margin-top:3px;font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.timeline{margin-top:8px}
+.message{display:grid;grid-template-columns:44px minmax(0,1fr);gap:14px;padding:24px 0;border-bottom:1px solid var(--line)}
+.role-icon{width:36px;height:36px;border-radius:8px;display:grid;place-items:center;background:var(--surface-2);color:var(--muted);border:1px solid var(--line)}
+.message.user .role-icon{color:var(--accent)}.message.assistant .role-icon{color:var(--green)}.message.tool .role-icon{color:var(--orange)}
+.role-icon svg{width:17px;height:17px}
+.message-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}
+.role-name{font-size:12px;font-weight:700}
+.message-index{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;color:var(--muted)}
+.message-content{font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}
+.empty-content{color:var(--muted);font-style:italic}
+details{margin-top:14px;border-left:3px solid var(--accent);background:var(--surface-2);border-radius:0 7px 7px 0;padding:10px 14px}
+summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:700}
+.reasoning{margin-top:8px;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
+.tool-call{margin-top:12px;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--surface)}
+.tool-call-head{display:flex;align-items:center;gap:8px;padding:8px 11px;background:var(--surface-2);border-bottom:1px solid var(--line);font-size:12px;font-weight:700}
+.tool-call-head svg{width:14px;height:14px;color:var(--orange)}
+pre{margin:0;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;line-height:1.65;color:var(--text)}
+.raw{margin-top:24px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden;box-shadow:var(--shadow)}
+.raw-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface-2);border-bottom:1px solid var(--line);font-size:12px;font-weight:700}
+.loading,.error,.empty{padding:64px 20px;text-align:center;color:var(--muted)}
+.error{color:var(--red)}
+[hidden]{display:none!important}
+@media(max-width:700px){.topbar{padding:0 12px}.brand,.divider{display:none}main{width:min(100% - 24px,1120px);padding-top:22px}.heading{display:block}.meta{grid-template-columns:repeat(2,minmax(0,1fr))}.meta-item{padding:14px 10px;border-bottom:1px solid var(--line)}.meta-item:nth-child(2){border-right:0}.meta-item:first-child{padding-left:10px}.message{grid-template-columns:34px minmax(0,1fr);gap:10px;padding:20px 0}.role-icon{width:32px;height:32px}}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="top-left">
+    <button class="icon-btn" type="button" title="返回" aria-label="返回" onclick="goBack()"><i data-lucide="arrow-left"></i></button>
+    <span class="divider"></span>
+    <span class="brand">M365 Copilot2API</span>
+  </div>
+  <div class="top-actions">
+    <div class="segmented" role="tablist" aria-label="视图">
+      <button id="conversationTab" class="active" type="button" onclick="setView('conversation')">对话</button>
+      <button id="jsonTab" type="button" onclick="setView('json')">JSON</button>
+    </div>
+    <button class="icon-btn" type="button" title="复制 JSON" aria-label="复制 JSON" onclick="copyJSON()"><i data-lucide="copy"></i></button>
+    <button class="icon-btn" type="button" title="刷新" aria-label="刷新" onclick="loadConversation()"><i data-lucide="refresh-cw"></i></button>
+  </div>
+</header>
+<main>
+  <div id="loading" class="loading">加载中...</div>
+  <div id="error" class="error" hidden></div>
+  <div id="conversationView" hidden>
+    <section class="heading">
+      <div class="heading-copy">
+        <div class="eyebrow">Conversation detail</div>
+        <h1 id="title">-</h1>
+        <div class="identity" id="conversationId">-</div>
+      </div>
+    </section>
+    <section class="meta" aria-label="会话元数据">
+      <div class="meta-item"><div class="meta-label">消息数</div><div class="meta-value" id="messageCount">0</div></div>
+      <div class="meta-item"><div class="meta-label">账号</div><div class="meta-value" id="account">-</div></div>
+      <div class="meta-item"><div class="meta-label">创建时间</div><div class="meta-value" id="createdAt">-</div></div>
+      <div class="meta-item"><div class="meta-label">最近更新</div><div class="meta-value" id="updatedAt">-</div></div>
+    </section>
+    <section class="timeline" id="timeline"></section>
+  </div>
+  <section id="jsonView" class="raw" hidden>
+    <div class="raw-head"><span>原始 JSON</span><span id="jsonSize"></span></div>
+    <pre id="rawJSON"></pre>
+  </section>
+</main>
+<script>
+const state={data:null,view:'conversation'};
+const $=id=>document.getElementById(id);
+
+function escapeHTML(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function formatDate(value){if(!value)return '-';const date=new Date(value);return Number.isNaN(date.getTime())?'-':date.toLocaleString();}
+function pretty(value){if(typeof value==='string'){try{return JSON.stringify(JSON.parse(value),null,2)}catch(_){return value}}return JSON.stringify(value,null,2);}
+function roleMeta(role){
+  if(role==='user')return{name:'用户',icon:'user'};
+  if(role==='assistant')return{name:'助手',icon:'sparkles'};
+  if(role==='tool')return{name:'工具结果',icon:'wrench'};
+  if(role==='system'||role==='developer')return{name:role==='system'?'系统':'开发者',icon:'settings'};
+  return{name:role||'消息',icon:'message-square'};
+}
+function contentHTML(content){
+  if(typeof content==='string')return content?`<div class="message-content">${escapeHTML(content)}</div>`:'<div class="empty-content">空内容</div>';
+  if(Array.isArray(content)){
+    const parts=content.map(part=>{
+      if(typeof part==='string')return `<div class="message-content">${escapeHTML(part)}</div>`;
+      if(part&&typeof part==='object'&&(part.type==='text'||part.type==='input_text'||part.type==='output_text'))return `<div class="message-content">${escapeHTML(part.text||'')}</div>`;
+      if(part&&typeof part==='object'&&part.type==='image_url'){
+        const url=typeof part.image_url==='string'?part.image_url:part.image_url?.url;
+        return `<div class="tool-call"><div class="tool-call-head"><i data-lucide="image"></i>图片</div><pre>${escapeHTML(url||pretty(part))}</pre></div>`;
+      }
+      return `<div class="tool-call"><div class="tool-call-head"><i data-lucide="braces"></i>${escapeHTML(part?.type||'content')}</div><pre>${escapeHTML(pretty(part))}</pre></div>`;
+    });
+    return parts.join('')||'<div class="empty-content">空内容</div>';
+  }
+  if(content==null)return '<div class="empty-content">空内容</div>';
+  return `<pre>${escapeHTML(pretty(content))}</pre>`;
+}
+function toolCallsHTML(calls){
+  if(!Array.isArray(calls)||!calls.length)return '';
+  return calls.map(call=>{
+    const fn=call?.function||{};
+    return `<div class="tool-call"><div class="tool-call-head"><i data-lucide="square-function"></i>${escapeHTML(fn.name||call.name||'tool')}</div><pre>${escapeHTML(pretty(fn.arguments??call.arguments??call))}</pre></div>`;
+  }).join('');
+}
+function messageHTML(message,index){
+  const role=String(message?.role||'message').toLowerCase();
+  const meta=roleMeta(role);
+  const reasoning=message?.reasoning_content;
+  return `<article class="message ${escapeHTML(role)}">
+    <div class="role-icon"><i data-lucide="${meta.icon}"></i></div>
+    <div>
+      <div class="message-head"><span class="role-name">${escapeHTML(meta.name)}</span><span class="message-index">#${index+1}</span></div>
+      ${contentHTML(message?.content)}
+      ${toolCallsHTML(message?.tool_calls)}
+      ${reasoning?`<details><summary>Reasoning</summary><div class="reasoning">${escapeHTML(reasoning)}</div></details>`:''}
+    </div>
+  </article>`;
+}
+function render(data){
+  $('title').textContent=data.chatName||'未命名对话';
+  $('conversationId').textContent=data.conversationId||'-';
+  $('messageCount').textContent=String(data.messageCount??data.messages?.length??0);
+  $('account').textContent=data.accountEmail||data.accountId||'-';
+  $('createdAt').textContent=formatDate(data.createdAt);
+  $('updatedAt').textContent=formatDate(data.updatedAt);
+  const messages=Array.isArray(data.messages)?data.messages:[];
+  $('timeline').innerHTML=messages.length?messages.map(messageHTML).join(''):'<div class="empty">暂无消息</div>';
+  const raw=JSON.stringify(data,null,2);
+  $('rawJSON').textContent=raw;
+  $('jsonSize').textContent=new Intl.NumberFormat().format(new Blob([raw]).size)+' bytes';
+  $('loading').hidden=true;
+  $('error').hidden=true;
+  setView(state.view);
+  lucide.createIcons();
+}
+async function loadConversation(){
+  const id=new URLSearchParams(location.search).get('id');
+  if(!id){showError('缺少会话 ID');return;}
+  $('loading').hidden=false;$('error').hidden=true;$('conversationView').hidden=true;$('jsonView').hidden=true;
+  try{
+    const response=await fetch('/api/m365/conversations/detail?id='+encodeURIComponent(id),{credentials:'same-origin'});
+    if(response.status===401){location.replace('/');return;}
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw new Error(data?.error?.message||'加载失败');
+    state.data=data;render(data);
+  }catch(error){showError(error.message||'加载失败');}
+}
+function showError(message){$('loading').hidden=true;$('conversationView').hidden=true;$('jsonView').hidden=true;$('error').textContent=message;$('error').hidden=false;}
+function setView(view){state.view=view==='json'?'json':'conversation';$('conversationTab').classList.toggle('active',state.view==='conversation');$('jsonTab').classList.toggle('active',state.view==='json');if(state.data){$('conversationView').hidden=state.view!=='conversation';$('jsonView').hidden=state.view!=='json';}}
+async function copyJSON(){if(!state.data)return;try{await navigator.clipboard.writeText(JSON.stringify(state.data,null,2));}catch(_){}}
+function goBack(){if(history.length>1)history.back();else location.href='/?page=conversations';}
+lucide.createIcons();
+loadConversation();
+</script>
+</body>
+</html>

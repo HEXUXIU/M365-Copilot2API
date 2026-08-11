@@ -12,8 +12,8 @@ func xmlToolCalls(text string, tools []map[string]any, choice any) []detectedToo
 
 // Keep this conversion isolated so XML and native ChatHub events share the same
 // OpenAI response shape. The event payload remains available under m365.
-func toolCallMaps(calls []detectedToolCall) []any {
-	out := make([]any, 0, len(calls))
+func toolCallMaps(calls []detectedToolCall) []map[string]any {
+	out := make([]map[string]any, 0, len(calls))
 	for _, c := range calls {
 		typ := c.Type
 		if typ == "" {

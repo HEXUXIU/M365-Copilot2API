@@ -64,6 +64,41 @@ func TestResponsesUsageIncludesToolSchemaAndChoice(t *testing.T) {
 	}
 }
 
+func TestResponsesUsageForReusedPrefixIncludesCachedTokens(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "system", Content: "stable system context"},
+		{Role: "user", Content: "first question"},
+		{Role: "user", Content: "new question"},
+	}
+	estimate := estimateResponsesUsageWithCache("gpt-5.5", messages, nil, nil, "answer", 2)
+	details, ok := estimate.Values["input_tokens_details"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing input_tokens_details: %#v", estimate.Values)
+	}
+	cached, ok := details["cached_tokens"].(int)
+	if !ok || cached <= 0 {
+		t.Fatalf("cached_tokens=%#v", details["cached_tokens"])
+	}
+	input := estimate.Values["input_tokens"].(int)
+	if cached > input {
+		t.Fatalf("cached=%d input=%d", cached, input)
+	}
+}
+
+func TestResponsesUsageWithoutReuseOmitsCachedTokens(t *testing.T) {
+	estimate := estimateResponsesUsageWithCache(
+		"gpt-5.5",
+		[]oaiMsg{{Role: "user", Content: "hello"}},
+		nil,
+		nil,
+		"world",
+		0,
+	)
+	if _, ok := estimate.Values["input_tokens_details"]; ok {
+		t.Fatalf("unexpected cache details: %#v", estimate.Values)
+	}
+}
+
 func TestResponsesResultIncludesUsage(t *testing.T) {
 	rr := httptest.NewRecorder()
 	writeResponsesResult(rr, "gpt-5.5", false, map[string]any{

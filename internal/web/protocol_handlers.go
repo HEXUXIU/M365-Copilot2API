@@ -204,7 +204,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	for _, call := range calls {
 		usageOutput += call.Name + call.Args
 	}
-	estimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, usageOutput)
+	estimate := requestResponsesUsage(r, model, o.Messages, o.Tools, o.ToolChoice, usageOutput)
 	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": estimate.Values, "m365": localUsageMetadata(estimate.Source)}
 	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
 }
@@ -224,6 +224,7 @@ func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []
 }
 
 func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
+	r, _ = ensureRequestUsageCapture(r)
 	startedAt := time.Now()
 	if r.Method != http.MethodPost {
 		writeResponsesError(w, 405, "invalid_request_error", "method not allowed")
@@ -276,16 +277,19 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			outputForUsage += fmt.Sprint(calls)
 		}
 	}
-	estimate := estimateResponsesUsage(firstNonEmpty(body.Model, "m365-copilot"), o.Messages, o.Tools, o.ToolChoice, outputForUsage)
+	estimate := requestResponsesUsage(r, firstNonEmpty(body.Model, "m365-copilot"), o.Messages, o.Tools, o.ToolChoice, outputForUsage)
 	out["usage"] = estimate.Values
 	out["m365_usage_source"] = estimate.Source
+	inputTokens := estimate.Values["input_tokens"].(int)
+	cacheTokens := responsesCachedTokens(estimate.Values)
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
 		APIKeyPrefix: extractAPIKey(r),
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
 		Endpoint:     "/v1/responses",
-		InputTokens:  int64(estimate.Values["input_tokens"].(int)),
+		InputTokens:  int64(max(inputTokens-cacheTokens, 0)),
 		OutputTokens: int64(estimate.Values["output_tokens"].(int)),
+		CacheTokens:  int64(cacheTokens),
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})

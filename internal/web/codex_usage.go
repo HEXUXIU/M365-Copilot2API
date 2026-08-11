@@ -89,19 +89,24 @@ func serializedTokenCount(v any, count func(string) int) int {
 	return count(string(b))
 }
 
+func responsesMessageTokenCount(message oaiMsg, count func(string) int) int {
+	total := messageProtocolTokens
+	total += count(message.Role)
+	total += serializedTokenCount(message.Content, count)
+	total += count(message.Name)
+	total += count(message.ToolCallID)
+	for _, call := range message.ToolCalls {
+		total += serializedTokenCount(call, count)
+	}
+	return total
+}
+
 // estimateResponsesUsage is a local Codex context estimate, never billing data.
 func estimateResponsesUsage(model string, input []oaiMsg, tools []chathub.Tool, toolChoice any, output string) responsesUsageEstimate {
 	count, source := tokenEstimator(model)
 	in := requestProtocolTokens + replyPrimingTokens
 	for _, message := range input {
-		in += messageProtocolTokens
-		in += count(message.Role)
-		in += serializedTokenCount(message.Content, count)
-		in += count(message.Name)
-		in += count(message.ToolCallID)
-		for _, call := range message.ToolCalls {
-			in += serializedTokenCount(call, count)
-		}
+		in += responsesMessageTokenCount(message, count)
 	}
 	for _, tool := range tools {
 		in += toolProtocolTokens + serializedTokenCount(tool, count)
@@ -114,6 +119,27 @@ func estimateResponsesUsage(model string, input []oaiMsg, tools []chathub.Tool, 
 		out += outputProtocolTokens
 	}
 	return responsesUsageEstimate{Values: map[string]any{"input_tokens": in, "output_tokens": out, "total_tokens": in + out}, Source: source}
+}
+
+func estimateResponsesUsageWithCache(model string, input []oaiMsg, tools []chathub.Tool, toolChoice any, output string, reusedMessages int) responsesUsageEstimate {
+	estimate := estimateResponsesUsage(model, input, tools, toolChoice, output)
+	if reusedMessages <= 0 {
+		return estimate
+	}
+	if reusedMessages > len(input) {
+		reusedMessages = len(input)
+	}
+	count, _ := tokenEstimator(model)
+	cachedTokens := 0
+	for _, message := range input[:reusedMessages] {
+		cachedTokens += responsesMessageTokenCount(message, count)
+	}
+	inputTokens, _ := estimate.Values["input_tokens"].(int)
+	cachedTokens = min(cachedTokens, inputTokens)
+	if cachedTokens > 0 {
+		estimate.Values["input_tokens_details"] = map[string]any{"cached_tokens": cachedTokens}
+	}
+	return estimate
 }
 
 func localUsageMetadata(source string) map[string]any {

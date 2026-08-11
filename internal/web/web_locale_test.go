@@ -15,6 +15,7 @@ func TestWebIndexHasChineseLoginLocaleBootstrap(t *testing.T) {
 	for _, needle := range []string{
 		`id="loginLanguageSelect"`,
 		"function preferredLocale()",
+		"m365_locale_selected",
 		"return 'zh';",
 		"loginLanguageSelect",
 	} {

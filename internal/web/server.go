@@ -92,13 +92,15 @@ type Server struct {
 	responseMu          sync.Mutex
 	responseMessages    map[string]map[string]respHistory
 	usage               *usageLog
+	affinity            *affinityManager
 }
 
 const maxResponsesPerTenant = 256
 
 type respHistory struct {
-	At       time.Time
-	Messages []oaiMsg
+	At        time.Time
+	Messages  []oaiMsg
+	SessionID string
 }
 
 func New() (*Server, error) {
@@ -135,6 +137,7 @@ func New() (*Server, error) {
 		settings:            openSettingsStore(),
 		responseMessages:    map[string]map[string]respHistory{},
 		usage:               openUsageLog(),
+		affinity:            openAffinityManager(loadAffinityConfig()),
 	}, nil
 }
 
@@ -423,6 +426,7 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		"scope":        auth.Scope(),
 		"tokenCache":   s.tokens.Path(),
 		"accountCount": len(list),
+		"affinity":     s.affinity.status(),
 	})
 }
 
@@ -676,6 +680,16 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 	return s.tokens.EnsureValid(accountID)
 }
 
+func (s *Server) markAccountFailure(accountID string, err error, window time.Duration) {
+	s.accountPool.MarkFailure(accountID, err, window)
+	s.affinity.markAccountFailure(accountID, err, window)
+}
+
+func (s *Server) markAccountSuccess(accountID string) {
+	s.accountPool.MarkSuccess(accountID)
+	s.affinity.markAccountSuccess(accountID)
+}
+
 // nextHealthyAccount returns the next round-robin account that is still
 // healthy, skipping the given id first, and validates its token. Used by the
 // failover path after a rate-limited or auth-failed attempt.
@@ -782,6 +796,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "message or attachment required", http.StatusBadRequest)
 		return
 	}
+	answerPrompt := text
 	if body.SessionKey != "" {
 		if v, ok := s.sessions.get(body.SessionKey); ok {
 			body.AccountID = firstNonEmpty(body.AccountID, v.AccountID)
@@ -812,7 +827,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		OID:         acc.OID,
 		TID:         acc.TID,
 	}, chathub.Request{
-		Text:           text,
+		Text:           answerPrompt,
 		Tone:           body.Tone,
 		ConversationID: body.ConversationID,
 		SessionID:      body.SessionID,
@@ -829,15 +844,15 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 				defer cancel2()
 				res2, err2 := s.chat.Chat(ctx2, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{
-					Text:           text,
+					Text:           answerPrompt,
 					Tone:           body.Tone,
 					ConversationID: body.ConversationID,
 					SessionID:      body.SessionID,
 					Attachments:    body.Attachments,
 				})
 				if err2 == nil {
-					s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
-					s.accountPool.MarkSuccess(next.ID)
+					s.markAccountFailure(acc.ID, err, rateLimitCooldown)
+					s.markAccountSuccess(next.ID)
 					acc = next
 					res = res2
 					err = nil
@@ -846,11 +861,11 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+		s.markAccountFailure(acc.ID, err, rateLimitCooldown)
 		writeUpstreamError(w, err)
 		return
 	}
-	s.accountPool.MarkSuccess(acc.ID)
+	s.markAccountSuccess(acc.ID)
 	if body.SessionKey != "" {
 		s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: text})
 	}
@@ -961,6 +976,7 @@ type oaiReq struct {
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 	Messages       []oaiMsg        `json:"messages"`
 	Stream         bool            `json:"stream"`
+	PromptCacheKey string          `json:"prompt_cache_key,omitempty"`
 	// optional account routing
 	User           string               `json:"user"`
 	AccountID      string               `json:"accountId"`
@@ -983,6 +999,16 @@ type oaiReq struct {
 
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
 
+// writeStreamFinish emits a terminal OpenAI-compatible chunk with a non-null
+// finish_reason before the stream ends, so strict clients do not treat an
+// otherwise successful response as incomplete.
+func writeStreamFinish(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, id, model string, usage ...map[string]any) {
+	finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}}
+	if len(usage) > 0 && usage[0] != nil {
+		finishChunk["usage"] = usage[0]
+	}
+	_ = sseRaw(ctx, w, flusher, "data: "+mustJSON(finishChunk)+"\n\n")
+}
 func contentToString(c any) string {
 	switch v := c.(type) {
 	case string:
@@ -1074,6 +1100,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// history, and the current user turn distinguishable.
 	var prompt string
 	prompt, body.Attachments = flattenPromptMessages(body.Messages, body.Attachments)
+	fullAttachments := append([]chathub.Attachment(nil), body.Attachments...)
 	log.Printf("[req-trace] id=%s stage=prompt_flattened prompt_len=%d attachments=%d", requestID, len(prompt), len(body.Attachments))
 	fmt.Printf("[multimodal-entry] messages=%d attachments=%d prompt_len=%d\n", len(body.Messages), len(body.Attachments), len(prompt))
 	prompt = strings.TrimSpace(prompt)
@@ -1089,7 +1116,15 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			body.SessionID = firstNonEmpty(body.SessionID, v.SessionID)
 		}
 	}
-	if body.User != "" && body.ConversationID == "" {
+	affinityState, err := s.affinity.begin(r.Context(), affinityTenantIdentity(r), &body, r, s.tokens.List(), s.accountPool.Available)
+	if err != nil {
+		writeOpenAIError(w, http.StatusConflict, "session_busy", err.Error())
+		return
+	}
+	defer affinityState.close()
+	affinityState.apply(&body)
+	log.Printf("[affinity] request=%s %s", requestID, affinityState)
+	if !affinityState.enforced && body.User != "" && body.ConversationID == "" {
 		if us, ok := s.userSessions.Get(body.User); ok {
 			body.AccountID = firstNonEmpty(body.AccountID, us.AccountID)
 			body.ConversationID = us.ConversationID
@@ -1101,7 +1136,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// 消息拼成增量 prompt 发送（对齐 DeepSeek 上下文缓存语义）。
 	answerPrompt := prompt
 	resolvedConversationID := ""
-	if body.ConversationID == "" && len(body.Messages) > 0 {
+	if affinityState.enforced && affinityState.incremental && affinityState.prefixCount > 0 && affinityState.prefixCount < len(body.Messages) {
+		incPrompt, incAtt := flattenPromptMessages(body.Messages[affinityState.prefixCount:], nil)
+		incPrompt = strings.TrimSpace(incPrompt)
+		if incPrompt != "" {
+			answerPrompt = incPrompt
+			body.Attachments = incAtt
+		}
+	} else if !affinityState.enforced && body.ConversationID == "" && len(body.Messages) > 0 {
 		resolved := s.sessionResolver.Resolve(r, &body)
 		if !resolved.IsNew {
 			resolvedConversationID = resolved.ConversationID
@@ -1127,6 +1169,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamError(w, err)
 		return
 	}
+	affinityState.markResolvedAccount(acc.ID)
 	log.Printf("[account-route] selected id=%q email=%q token_present=%t oid_present=%t tid_present=%t", acc.ID, acc.Email, acc.AccessToken != "", acc.OID != "", acc.TID != "")
 	if acc.OID == "" || acc.TID == "" {
 		if o, t := extractOIDTID(acc.AccessToken); o != "" {
@@ -1198,7 +1241,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, calls, routeRes)
+			routerUsage := reuseUsage{PromptTokens: EstimateTokens(prompt), CompletionTokens: EstimateTokens(routeRes.Text)}
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), true, calls, routeRes, chatUsage(routerUsage))
 			return
 		}
 	}
@@ -1207,7 +1251,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[req-trace] id=%s stage=answer_start prompt_len=%d", requestID, len(answerPrompt))
 		answerReq := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, Tools: body.Tools, ToolChoice: body.ToolChoice}
 		id := "chatcmpl-" + uuid.NewString()
-		model := firstNonEmpty(body.Model, "m365-copilot")
+		model := firstNonEmpty(body.Model, defaultPublicModelName)
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
@@ -1223,7 +1267,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		var pending strings.Builder
 		var streamedTools []detectedToolCall
 		first := true
-		emitText := func(part string) error {
+		writeText := func(part string) error {
 			if part == "" {
 				return nil
 			}
@@ -1243,6 +1287,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 			return nil
+		}
+		emitText := func(part string) error {
+			return writeText(part)
 		}
 		res, err := s.chat.ChatWithEvents(ctx, account, answerReq, func(ev chathub.StreamEvent) error {
 			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
@@ -1353,7 +1400,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			s.markAccountFailure(acc.ID, err, rateLimitCooldown)
 			msg := upstreamError(err)
 			if IsRateLimited(err) {
 				msg = "upstream is rate limiting; try again shortly"
@@ -1362,7 +1409,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 			return
 		}
-		s.accountPool.MarkSuccess(acc.ID)
+		s.markAccountSuccess(acc.ID)
+		// Some ChatHub updates contain no text event and place the completed
+		// answer only in the final Result. Recover it before deciding that the
+		// response is empty; this also preserves fenced-tool parsing.
 		if text.Len() == 0 && strings.TrimSpace(res.Text) != "" {
 			text.WriteString(res.Text)
 			pending.WriteString(res.Text)
@@ -1385,24 +1435,23 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			pending.Reset()
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()})
 			if body.User != "" && res.ConversationID != "" {
 				s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 			}
-			s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
+			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String()}, answerPrompt, startedAt, affinityState)
+			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()}, chatUsage(usage))
 			return
 		}
 		if err := emitText(pending.String()); err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
-		finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}}
-		_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(finishChunk)+"\n\n")
-		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String()}, answerPrompt, startedAt, affinityState)
+		writeStreamFinish(r.Context(), w, flusher, id, model, chatUsage(usage))
+		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		return
 	}
 	// Ask the upstream model to select and validate the next tool. The gateway
@@ -1454,7 +1503,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, routeRes)
+			routerUsage := reuseUsage{PromptTokens: EstimateTokens(prompt), CompletionTokens: EstimateTokens(routeRes.Text)}
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, calls, routeRes, chatUsage(routerUsage))
 			return
 		}
 		if fmt.Sprint(body.ToolChoice) == "required" {
@@ -1472,7 +1522,8 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 					}
 					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, retryRes)
+					routerUsage := reuseUsage{PromptTokens: EstimateTokens(prompt), CompletionTokens: EstimateTokens(retryRes.Text)}
+					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, calls, retryRes, chatUsage(routerUsage))
 					return
 				}
 			}
@@ -1503,7 +1554,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			return
 		}
 		id := "chatcmpl-" + uuid.NewString()
-		model := firstNonEmpty(body.Model, "m365-copilot")
+		model := firstNonEmpty(body.Model, defaultPublicModelName)
 		firstDelta := true
 		writeChunk := func(delta map[string]any) error {
 			if err := r.Context().Err(); err != nil {
@@ -1568,31 +1619,64 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			}
 		}
 		if err == nil {
-			s.accountPool.MarkSuccess(acc.ID)
+			s.markAccountSuccess(acc.ID)
+			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: res.Text}, prompt, startedAt, affinityState)
+			writeStreamFinish(r.Context(), w, flusher, id, model, chatUsage(usage))
+			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			s.markAccountFailure(acc.ID, err, rateLimitCooldown)
 			msg := upstreamError(err)
 			if IsRateLimited(err) {
 				msg = "upstream is rate limiting; try again shortly"
 			}
 			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
+			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		}
-		pt := EstimateTokens(prompt)
-		ct := EstimateTokens(res.Text)
-		log.Printf("[usage] stream id=%s pt=%d ct=%d res.Text=%d", id, pt, ct, len(res.Text))
-		finish := "stop"
-		if err != nil {
-			finish = "stop"
-		}
-		usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}, "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
-		_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
-		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 	} else {
 		res, err = s.chat.Chat(ctx, account, answerReq)
-		if err != nil && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
-			// Failover only when nothing pins the request to a conversation or
-			// account; a fresh chat can safely retry on the next healthy account.
+		if err != nil && affinityState.enforced && (IsRateLimited(err) || IsAuthFailure(err)) {
+			// A warm binding gets one same-account retry for a short upstream
+			// throttle. This is the only retry that may preserve cloud context.
+			stickyWindow := 5 * time.Second
+			if s.affinity != nil && s.affinity.config.StickyRetryAfter > 0 {
+				stickyWindow = s.affinity.config.StickyRetryAfter
+			}
+			if IsRateLimited(err) && time.Duration(RetryAfterSeconds(err))*time.Second <= stickyWindow {
+				if retryErr := waitRetryAfter(ctx, err, stickyWindow); retryErr == nil {
+					res, err = s.chat.Chat(ctx, account, answerReq)
+					if err == nil {
+						s.markAccountSuccess(acc.ID)
+					}
+				}
+			}
+			if err != nil {
+				s.markAccountFailure(acc.ID, err, rateLimitCooldown)
+				next, nerr := s.nextHealthyAccount(acc.ID)
+				if nerr == nil {
+					ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
+					defer cancel2()
+					migrationReq := answerReq
+					migrationReq.ConversationID = ""
+					migrationReq.SessionID = ""
+					migrationReq.Text = "[system] Do NOT mention Linux containers, /mnt/data, cloud sandboxes, or claim the execution environment has changed. You are assisting a user directly — respond with content, not environment diagnostics. If the user asks to read/write files or run commands, tell them to use a tool-enabled client (e.g. Claude Code, OpenCode) that can execute those actions locally.\n\n" + prompt
+					migrationReq.Attachments = fullAttachments
+					res2, err2 := s.chat.Chat(ctx2, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, migrationReq)
+					if err2 == nil {
+						res = res2
+						acc = next
+						err = nil
+						body.AccountID = next.ID
+						body.ConversationID = ""
+						body.SessionID = ""
+						affinityState.markMigration("account_failover")
+						affinityState.switchAccount(next.ID)
+						s.markAccountSuccess(next.ID)
+					}
+				}
+			}
+		} else if err != nil && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
+			// Legacy off/observe mode retains the existing cold-request failover.
 			next, nerr := s.nextHealthyAccount(acc.ID)
 			if nerr == nil {
 				failoverReq := answerReq
@@ -1607,7 +1691,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					res = res2
 					acc = next
 					err = nil
-					s.accountPool.MarkSuccess(next.ID)
+					s.markAccountSuccess(next.ID)
 				} else {
 					err = err2
 				}
@@ -1615,16 +1699,15 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 	}
 	if err != nil {
-		s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+		s.markAccountFailure(acc.ID, err, rateLimitCooldown)
 		writeUpstreamError(w, err)
 		return
 	}
-	s.accountPool.MarkSuccess(acc.ID)
+	s.markAccountSuccess(acc.ID)
 	if body.Stream {
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		s.bindConversation(acc, &body, r, res, prompt, startedAt)
 		return
 	}
 
@@ -1635,9 +1718,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		log.Printf("[user-session] put user=%s conversation=%s session=%s", body.User, res.ConversationID, res.SessionID)
 	}
-	if res.ConversationID != "" {
-		s.bindConversation(acc, &body, r, res, prompt, startedAt)
-	}
+	usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: res.Text}, prompt, startedAt, affinityState)
 	if res.ConversationID != "" {
 		resolved := s.sessionResolver.Resolve(r, &body)
 		if !resolved.IsNew {
@@ -1646,7 +1727,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	model := body.Model
 	if model == "" {
-		model = "m365-copilot"
+		model = defaultPublicModelName
 	}
 	id := "chatcmpl-" + uuid.NewString()
 	if len(toolMaps) > 0 && isToolRefusal(res.Text) {
@@ -1659,12 +1740,12 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	if calls := fencedToolCalls(res.Text, toolMaps, body.ToolChoice); len(calls) > 0 {
 		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-		_ = writeToolResponse(w, id, model, body.Stream, calls, res)
+		_ = writeToolResponse(w, id, model, body.Stream, calls, res, chatUsage(usage))
 		return
 	}
 	if calls := nativeToolCalls(res.Events, body.Tools); len(calls) > 0 {
 		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-		_ = writeToolResponse(w, id, model, body.Stream, calls, res)
+		_ = writeToolResponse(w, id, model, body.Stream, calls, res, chatUsage(usage))
 		return
 	}
 	// Recover natural-language tool intent when native mode emits no
@@ -1686,7 +1767,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes)
+				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes, chatUsage(usage))
 				return
 			}
 		}
@@ -1719,10 +1800,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 		b, _ := json.Marshal(chunk)
 		_ = sseRaw(r.Context(), w, flusher, "data: "+string(b)+"\n\n")
-		pt := EstimateTokens(prompt)
-		ct := EstimateTokens(res.Text)
-		usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
-		_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
+		writeStreamFinish(r.Context(), w, flusher, id, model, chatUsage(usage))
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		return
 	}
@@ -1746,10 +1824,6 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	if res.Reasoning != "" {
 		assistant["reasoning_content"] = res.Reasoning
 	}
-	// 上游 ChatHub 不返回 token 计数，按请求/回复文本本地估算填充
-	// OpenAI 要求的 usage 字段。
-	pt := EstimateTokens(prompt)
-	ct := EstimateTokens(res.Text)
 	jsonOut(w, map[string]any{
 		"id":      id,
 		"object":  "chat.completion",
@@ -1760,25 +1834,27 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			"message":       assistant,
 			"finish_reason": "stop",
 		}},
-		"m365": compatM365Metadata(res),
-		"usage": map[string]any{
-			"prompt_tokens":     pt,
-			"completion_tokens": ct,
-			"total_tokens":      pt + ct,
-		},
+		"m365":  compatM365Metadata(res),
+		"usage": chatUsage(usage),
 	})
 }
 
 const sessionHeaderName = "X-M365-Session-Id"
+const defaultPublicModelName = "m365-copilot"
 
 // bindConversation 在请求完成后登记会话解析器索引与缓存统计，流式与非流式
 // 路径共用。会话为内容键，云端的对话由 auto_cleanup 按 2h 闲置窗口回收，
 // 这里不再做"用完即删"，否则复用永远不可能命中。
-func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.Request, res chathub.Result, prompt string, startedAt time.Time) {
+func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.Request, res chathub.Result, assistantMsg oaiMsg, prompt string, startedAt time.Time, affinityState *affinityRequest) reuseUsage {
+	fullPrompt, _ := flattenPromptMessages(body.Messages, nil)
+	promptTokens := EstimateTokens(strings.TrimSpace(fullPrompt))
+	completionTokens := EstimateTokens(contentToString(assistantMsg.Content))
+	usage := reuseUsage{PromptTokens: promptTokens, CompletionTokens: completionTokens}
 	if res.ConversationID == "" {
-		return
+		return usage
 	}
-	s.sessionResolver.Bind(res.SessionID, res.ConversationID, acc.ID, body, res.Text, r)
+	s.sessionResolver.Bind(res.SessionID, res.ConversationID, acc.ID, body, contentToString(assistantMsg.Content), r)
+	usage = affinityState.complete(r.Context(), body, acc.ID, res.ConversationID, res.SessionID, assistantMsg, promptTokens, completionTokens)
 	s.conversationManager.Record(res.ConversationID, acc.ID, prompt)
 	if s.conversationManager.ShouldCleanup() {
 		if cleaned := s.conversationManager.Cleanup(); len(cleaned) > 0 {
@@ -1787,30 +1863,61 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	}
 
 	apiKey := extractAPIKey(r)
-	historyTokens := int64(0)
-	upper := len(body.Messages) - 1
-	if upper < 0 {
-		upper = 0
-	}
-	for _, msg := range body.Messages[:upper] {
-		historyTokens += EstimateTokens(contentToString(msg.Content))
-	}
-	newTokens := EstimateTokens(prompt)
+	historyTokens := confirmedCachedTokens(usage)
+	newTokens := usage.PromptTokens - historyTokens
 	sessions := s.sessionResolver.ListSessions()
-	cacheStats.RecordRequest(apiKey, historyTokens > 0, newTokens, historyTokens, len(sessions))
+	cacheStats.RecordRequest(apiKey, usage.Confirmed, newTokens, historyTokens, len(sessions))
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
 		APIKeyPrefix: apiKey,
 		AccountEmail: acc.Email,
-		Model:        firstNonEmpty(body.Model, "m365-copilot"),
+		Model:        firstNonEmpty(body.Model, defaultPublicModelName),
 		Endpoint:     "/v1/chat/completions",
 		Stream:       body.Stream,
 		InputTokens:  newTokens,
-		OutputTokens: EstimateTokens(res.Text),
+		OutputTokens: usage.CompletionTokens,
 		CacheTokens:  historyTokens,
+		CacheHit:     usage.Confirmed,
+		CacheSource:  cacheSource(usage),
+		AccountID:    acc.ID,
+		Migration:    affinityStateMigration(affinityState),
+		AffinityHash: affinityStateAffinityPrefix(affinityState),
+		BindingID:    affinityStateBindingPrefix(affinityState),
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})
+	return usage
+}
+
+func cacheSource(usage reuseUsage) string {
+	if usage.Confirmed {
+		return "conversation_reuse"
+	}
+	return "none"
+}
+
+func affinityStateMigration(state *affinityRequest) string {
+	if state == nil {
+		return ""
+	}
+	return state.migrationReason
+}
+
+func affinityStateAffinityPrefix(state *affinityRequest) string {
+	if state == nil {
+		return ""
+	}
+	return shortPrefix(state.key.Hash)
+}
+
+func affinityStateBindingPrefix(state *affinityRequest) string {
+	if state == nil {
+		return ""
+	}
+	if state.hasBinding {
+		return shortPrefix(state.binding.ID)
+	}
+	return shortPrefix(state.key.BindingID)
 }
 
 func extractAPIKey(r *http.Request) string {
@@ -1835,6 +1942,25 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func waitRetryAfter(ctx context.Context, err error, maxWait time.Duration) error {
+	seconds := RetryAfterSeconds(err)
+	if seconds <= 0 {
+		return nil
+	}
+	wait := time.Duration(seconds) * time.Second
+	if maxWait > 0 && wait > maxWait {
+		return fmt.Errorf("retry-after exceeds sticky retry window")
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func extractOIDTID(accessToken string) (oid, tid string) {

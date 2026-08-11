@@ -1071,10 +1071,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// 内容键会话复用：命中后云端对话已存全量历史，只需把客户端新增的
 	// 消息拼成增量 prompt 发送（对齐 DeepSeek 上下文缓存语义）。
 	answerPrompt := prompt
+	var cacheResolved ResolveResult
+	var cacheSentPrompt string
 	if body.ConversationID == "" && len(body.Messages) > 0 {
 		resolved := s.sessionResolver.Resolve(r, &body)
 		if !resolved.IsNew {
-			recordResolvedCacheUsage(r, resolved, len(body.Messages))
 			body.ConversationID = resolved.ConversationID
 			body.SessionID = resolved.SessionID
 			body.AccountID = firstNonEmpty(body.AccountID, resolved.AccountID)
@@ -1085,6 +1086,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				if incPrompt != "" {
 					answerPrompt = incPrompt
 					body.Attachments = incAtt
+					cacheResolved = resolved
+					cacheSentPrompt = incPrompt
 				}
 			}
 		}
@@ -1168,7 +1171,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, calls, routeRes, requestChatCompletionUsage(r, body.Messages, prompt, routeRes.Text))
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, calls, routeRes, requestChatCompletionUsage(r, firstNonEmpty(body.Model, "m365-copilot"), prompt, routeRes.Text))
 			return
 		}
 	}
@@ -1176,6 +1179,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		answerPrompt = answerPrompt + "\n" + ledger.RouterContext() + "\nFINAL ANSWER RULE: Answer the user directly. If a tool is explicitly required, emit its structured call; otherwise return ordinary text."
 		log.Printf("[req-trace] id=%s stage=answer_start prompt_len=%d", requestID, len(answerPrompt))
 		answerReq := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, Tools: body.Tools, ToolChoice: body.ToolChoice}
+		recordResolvedCacheUsage(r, cacheResolved, len(body.Messages), prompt, cacheSentPrompt)
 		id := "chatcmpl-" + uuid.NewString()
 		model := firstNonEmpty(body.Model, "m365-copilot")
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -1281,7 +1285,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()}, requestChatCompletionUsage(r, body.Messages, prompt, text.String()))
+			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()}, requestChatCompletionUsage(r, model, prompt, text.String()))
 			if body.User != "" && res.ConversationID != "" {
 				s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 			}
@@ -1292,7 +1296,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
-		writeStreamFinish(r.Context(), w, flusher, id, model, requestChatCompletionUsage(r, body.Messages, prompt, text.String()))
+		writeStreamFinish(r.Context(), w, flusher, id, model, requestChatCompletionUsage(r, model, prompt, text.String()))
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
@@ -1327,7 +1331,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, routeRes, requestChatCompletionUsage(r, body.Messages, prompt, routeRes.Text))
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, routeRes, requestChatCompletionUsage(r, firstNonEmpty(body.Model, "m365-copilot"), prompt, routeRes.Text))
 			return
 		}
 		if fmt.Sprint(body.ToolChoice) == "required" {
@@ -1345,7 +1349,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 					}
 					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, retryRes, requestChatCompletionUsage(r, body.Messages, prompt, retryRes.Text))
+					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, retryRes, requestChatCompletionUsage(r, firstNonEmpty(body.Model, "m365-copilot"), prompt, retryRes.Text))
 					return
 				}
 			}
@@ -1364,6 +1368,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		answerReq.Tools = body.Tools
 		answerReq.ToolChoice = body.ToolChoice
 	}
+	recordResolvedCacheUsage(r, cacheResolved, len(body.Messages), prompt, cacheSentPrompt)
 	var res chathub.Result
 	if body.Stream {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -1419,7 +1424,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		res, err = s.chat.ChatWithReasoning(ctx, account, answerReq, onDelta, onReasoning)
 		if err == nil {
 			s.accountPool.MarkSuccess(acc.ID)
-			writeStreamFinish(r.Context(), w, flusher, id, model, requestChatCompletionUsage(r, body.Messages, prompt, res.Text))
+			writeStreamFinish(r.Context(), w, flusher, id, model, requestChatCompletionUsage(r, model, prompt, res.Text))
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
@@ -1486,12 +1491,12 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	id := "chatcmpl-" + uuid.NewString()
 	if calls := fencedToolCalls(res.Text, toolMaps, body.ToolChoice); len(calls) > 0 {
 		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-		_ = writeToolResponse(w, id, model, body.Stream, calls, res, requestChatCompletionUsage(r, body.Messages, prompt, res.Text))
+		_ = writeToolResponse(w, id, model, body.Stream, calls, res, requestChatCompletionUsage(r, model, prompt, res.Text))
 		return
 	}
 	if calls := nativeToolCalls(res.Events, body.Tools); len(calls) > 0 {
 		calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-		_ = writeToolResponse(w, id, model, body.Stream, calls, res, requestChatCompletionUsage(r, body.Messages, prompt, res.Text))
+		_ = writeToolResponse(w, id, model, body.Stream, calls, res, requestChatCompletionUsage(r, model, prompt, res.Text))
 		return
 	}
 	// Recover natural-language tool intent when native mode emits no
@@ -1513,7 +1518,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes, requestChatCompletionUsage(r, body.Messages, prompt, routeRes.Text))
+				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes, requestChatCompletionUsage(r, model, prompt, routeRes.Text))
 				return
 			}
 		}
@@ -1546,7 +1551,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 		b, _ := json.Marshal(chunk)
 		_ = sseRaw(r.Context(), w, flusher, "data: "+string(b)+"\n\n")
-		writeStreamFinish(r.Context(), w, flusher, id, model, requestChatCompletionUsage(r, body.Messages, prompt, res.Text))
+		writeStreamFinish(r.Context(), w, flusher, id, model, requestChatCompletionUsage(r, model, prompt, res.Text))
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		return
 	}
@@ -1571,7 +1576,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	// ChatHub does not return billing token counts. Preserve the existing local
 	// estimate while exposing any request prefix that was actually reused.
-	usage := requestChatCompletionUsage(r, body.Messages, prompt, res.Text)
+	usage := requestChatCompletionUsage(r, model, prompt, res.Text)
 	jsonOut(w, map[string]any{
 		"id":      id,
 		"object":  "chat.completion",
@@ -1609,7 +1614,7 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	if flattened, _ := flattenPromptMessages(body.Messages, nil); strings.TrimSpace(flattened) != "" {
 		fullPrompt = flattened
 	}
-	usage := requestChatCompletionUsage(r, body.Messages, fullPrompt, res.Text)
+	usage := requestChatCompletionUsage(r, firstNonEmpty(body.Model, "m365-copilot"), fullPrompt, res.Text)
 	totalInputTokens, _ := usage["prompt_tokens"].(int64)
 	cacheTokens := chatCachedTokens(usage)
 	newTokens := max(totalInputTokens-cacheTokens, 0)

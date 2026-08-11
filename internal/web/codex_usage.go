@@ -121,21 +121,13 @@ func estimateResponsesUsage(model string, input []oaiMsg, tools []chathub.Tool, 
 	return responsesUsageEstimate{Values: map[string]any{"input_tokens": in, "output_tokens": out, "total_tokens": in + out}, Source: source}
 }
 
-func estimateResponsesUsageWithCache(model string, input []oaiMsg, tools []chathub.Tool, toolChoice any, output string, reusedMessages int) responsesUsageEstimate {
+func estimateResponsesUsageWithCache(model string, input []oaiMsg, tools []chathub.Tool, toolChoice any, output string, cachedTokens int) responsesUsageEstimate {
 	estimate := estimateResponsesUsage(model, input, tools, toolChoice, output)
-	if reusedMessages <= 0 {
+	if cachedTokens <= 0 {
 		return estimate
 	}
-	if reusedMessages > len(input) {
-		reusedMessages = len(input)
-	}
-	count, _ := tokenEstimator(model)
-	cachedTokens := 0
-	for _, message := range input[:reusedMessages] {
-		cachedTokens += responsesMessageTokenCount(message, count)
-	}
 	inputTokens, _ := estimate.Values["input_tokens"].(int)
-	cachedTokens = min(cachedTokens, inputTokens)
+	cachedTokens = min(max(cachedTokens, 0), inputTokens)
 	if cachedTokens > 0 {
 		estimate.Values["input_tokens_details"] = map[string]any{"cached_tokens": cachedTokens}
 	}

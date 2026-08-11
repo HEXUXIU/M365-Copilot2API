@@ -4,84 +4,113 @@ import (
 	"context"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"m365-copilot2api/internal/chathub"
 )
 
-func TestRequestUsageCaptureRecordsOnlyIncrementalPrefixReuse(t *testing.T) {
+func TestRequestUsageCaptureMeasuresPromptDelta(t *testing.T) {
 	r := httptest.NewRequest("POST", "/v1/responses", nil)
 	r, capture := ensureRequestUsageCapture(r)
 	if requestUsageCaptureFrom(r) != capture {
 		t.Fatal("request context did not preserve the usage capture")
 	}
 
-	capture.RecordReusedPrefix(0, 3)
-	capture.RecordReusedPrefix(3, 3)
-	if got := capture.ReusedMessages(); got != 0 {
-		t.Fatalf("full-prompt requests must not report cache reuse, got %d", got)
-	}
-
-	capture.RecordReusedPrefix(2, 3)
-	if got := capture.ReusedMessages(); got != 2 {
-		t.Fatalf("reused messages=%d want=2", got)
+	fullPrompt := "[system]\n你是精确的助手。\n\n[user]\nExplain cache behavior 123.\n\n[user]\n继续"
+	sentPrompt := "[user]\n继续"
+	capture.RecordPromptDelta(fullPrompt, sentPrompt)
+	count, _ := tokenEstimator("gpt-5.6-sol")
+	want := count(fullPrompt) - count(sentPrompt)
+	if got := capture.CachedTokens("gpt-5.6-sol"); got != want {
+		t.Fatalf("cached tokens=%d want=%d", got, want)
 	}
 }
 
-func TestChatCompletionUsageIncludesCachedPrefix(t *testing.T) {
-	messages := []oaiMsg{
-		{Role: "system", Content: "stable system context"},
-		{Role: "user", Content: "first question"},
-		{Role: "user", Content: "new question"},
+func TestRequestUsageCaptureConcurrentAccess(t *testing.T) {
+	var capture requestUsageCapture
+	fullPrompt := strings.Repeat("稳定 cache context 123 ", 64)
+	sentPrompt := "继续"
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			capture.RecordPromptDelta(fullPrompt, sentPrompt)
+		}()
+		go func() {
+			defer wg.Done()
+			_ = capture.CachedTokens("gpt-5.6-sol")
+		}()
 	}
-	usage := estimateChatCompletionUsage(messages, "stable system context first question new question", "answer", 2)
+	wg.Wait()
+	if got := capture.CachedTokens("gpt-5.6-sol"); got <= 0 {
+		t.Fatalf("cached tokens=%d want positive", got)
+	}
+}
 
-	details, ok := usage["prompt_tokens_details"].(map[string]any)
-	if !ok {
-		t.Fatalf("missing prompt_tokens_details: %#v", usage)
+func TestChatCompletionUsageUsesPromptDelta(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "system", Content: "稳定 system context"},
+		{Role: "user", Content: "first question 123"},
+		{Role: "user", Content: "继续"},
 	}
-	cached, ok := details["cached_tokens"].(int64)
-	if !ok || cached <= 0 {
-		t.Fatalf("cached_tokens=%#v", details["cached_tokens"])
+	fullPrompt, _ := flattenPromptMessages(messages, nil)
+	sentPrompt, _ := flattenPromptMessages(messages[2:], nil)
+	r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	r, capture := ensureRequestUsageCapture(r)
+	capture.RecordPromptDelta(fullPrompt, sentPrompt)
+	usage := requestChatCompletionUsage(r, "gpt-5.6-sol", fullPrompt, "完成")
+
+	count, _ := tokenEstimator("gpt-5.6-sol")
+	if got, want := usage["prompt_tokens"], int64(count(fullPrompt)); got != want {
+		t.Fatalf("prompt_tokens=%#v want=%d", got, want)
 	}
-	prompt, ok := usage["prompt_tokens"].(int64)
-	if !ok || cached > prompt {
-		t.Fatalf("cached=%d prompt=%#v", cached, usage["prompt_tokens"])
+	wantCached := int64(count(fullPrompt) - count(sentPrompt))
+	if got := chatCachedTokens(usage); got != wantCached {
+		t.Fatalf("cached_tokens=%d want=%d", got, wantCached)
+	}
+	if got, want := usage["completion_tokens"], int64(count("完成")); got != want {
+		t.Fatalf("completion_tokens=%#v want=%d", got, want)
 	}
 }
 
 func TestChatCompletionUsageOmitsCacheWithoutReuse(t *testing.T) {
-	usage := estimateChatCompletionUsage(
-		[]oaiMsg{{Role: "user", Content: "hello"}},
-		"hello",
-		"world",
-		0,
-	)
+	r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	usage := requestChatCompletionUsage(r, "gpt-5.6-sol", "hello", "world")
 	if _, ok := usage["prompt_tokens_details"]; ok {
 		t.Fatalf("unexpected cache details: %#v", usage)
 	}
 }
 
-func TestRecordResolvedCacheUsageRequiresIncrementalReuse(t *testing.T) {
+func TestRecordResolvedCacheUsageRequiresSentIncrementalPrompt(t *testing.T) {
+	fullPrompt := "[system]\nstable context\n\n[user]\nfirst\n\n[user]\nnext"
+	sentPrompt := "[user]\nnext"
+	count, _ := tokenEstimator("gpt-5.6-sol")
+	wantCached := count(fullPrompt) - count(sentPrompt)
 	tests := []struct {
-		name     string
-		resolved ResolveResult
-		total    int
-		want     int
+		name       string
+		resolved   ResolveResult
+		total      int
+		fullPrompt string
+		sentPrompt string
+		want       int
 	}{
-		{name: "new conversation", resolved: ResolveResult{IsNew: true}, total: 3, want: 0},
-		{name: "similarity fallback without prefix", resolved: ResolveResult{MatchedBy: "context_similar_0.90", IsNew: false}, total: 3, want: 0},
-		{name: "full prompt resent", resolved: ResolveResult{MatchedBy: "context_prefix_3", IsNew: false, HistoryLen: 3}, total: 3, want: 0},
-		{name: "strict prefix suffix sent", resolved: ResolveResult{MatchedBy: "context_prefix_2", IsNew: false, HistoryLen: 2}, total: 3, want: 2},
+		{name: "new conversation", resolved: ResolveResult{IsNew: true, HistoryLen: 2}, total: 3, fullPrompt: fullPrompt, sentPrompt: sentPrompt},
+		{name: "similarity fallback without prefix", resolved: ResolveResult{MatchedBy: "context_similar_0.90", IsNew: false}, total: 3, fullPrompt: fullPrompt, sentPrompt: sentPrompt},
+		{name: "full history has no suffix", resolved: ResolveResult{MatchedBy: "context_prefix_3", IsNew: false, HistoryLen: 3}, total: 3, fullPrompt: fullPrompt, sentPrompt: sentPrompt},
+		{name: "empty incremental prompt", resolved: ResolveResult{MatchedBy: "context_prefix_2", IsNew: false, HistoryLen: 2}, total: 3, fullPrompt: fullPrompt},
+		{name: "full prompt resent", resolved: ResolveResult{MatchedBy: "context_prefix_2", IsNew: false, HistoryLen: 2}, total: 3, fullPrompt: fullPrompt, sentPrompt: fullPrompt},
+		{name: "strict prefix suffix sent", resolved: ResolveResult{MatchedBy: "context_prefix_2", IsNew: false, HistoryLen: 2}, total: 3, fullPrompt: fullPrompt, sentPrompt: sentPrompt, want: wantCached},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := httptest.NewRequest("POST", "/v1/responses", nil)
 			r, capture := ensureRequestUsageCapture(r)
-			recordResolvedCacheUsage(r, tt.resolved, tt.total)
-			if got := capture.ReusedMessages(); got != tt.want {
-				t.Fatalf("reused messages=%d want=%d", got, tt.want)
+			recordResolvedCacheUsage(r, tt.resolved, tt.total, tt.fullPrompt, tt.sentPrompt)
+			if got := capture.CachedTokens("gpt-5.6-sol"); got != tt.want {
+				t.Fatalf("cached tokens=%d want=%d", got, tt.want)
 			}
 		})
 	}
@@ -120,18 +149,34 @@ func TestWriteToolResponseIncludesCacheUsage(t *testing.T) {
 	}
 }
 
-func TestRequestResponsesUsageUsesCapturedPrefix(t *testing.T) {
+func TestRequestResponsesUsageUsesPromptDelta(t *testing.T) {
 	r := httptest.NewRequest("POST", "/v1/responses", nil)
 	r, capture := ensureRequestUsageCapture(r)
-	capture.RecordReusedPrefix(2, 3)
 	messages := []oaiMsg{
-		{Role: "system", Content: "stable system context"},
-		{Role: "user", Content: "first question"},
-		{Role: "user", Content: "new question"},
+		{Role: "system", Content: "稳定 system context"},
+		{Role: "user", Content: "first question 123"},
+		{Role: "user", Content: "继续"},
 	}
+	fullPrompt, _ := flattenPromptMessages(messages, nil)
+	sentPrompt, _ := flattenPromptMessages(messages[2:], nil)
+	capture.RecordPromptDelta(fullPrompt, sentPrompt)
 
 	estimate := requestResponsesUsage(r, "gpt-5.6-sol", messages, nil, nil, "answer")
-	if cached := responsesCachedTokens(estimate.Values); cached <= 0 {
-		t.Fatalf("request capture was not reflected in Responses usage: %#v", estimate.Values)
+	count, _ := tokenEstimator("gpt-5.6-sol")
+	want := count(fullPrompt) - count(sentPrompt)
+	if cached := responsesCachedTokens(estimate.Values); cached != want {
+		t.Fatalf("cached tokens=%d want=%d usage=%#v", cached, want, estimate.Values)
+	}
+}
+
+func TestRequestResponsesUsageClampsPromptDelta(t *testing.T) {
+	r := httptest.NewRequest("POST", "/v1/responses", nil)
+	r, capture := ensureRequestUsageCapture(r)
+	capture.RecordPromptDelta(strings.Repeat("large cached context ", 512), "next")
+
+	estimate := requestResponsesUsage(r, "gpt-5.6-sol", []oaiMsg{{Role: "user", Content: "next"}}, nil, nil, "answer")
+	inputTokens := estimate.Values["input_tokens"].(int)
+	if cached := responsesCachedTokens(estimate.Values); cached != inputTokens {
+		t.Fatalf("cached tokens=%d want clamped input=%d", cached, inputTokens)
 	}
 }

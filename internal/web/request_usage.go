@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	"m365-copilot2api/internal/chathub"
@@ -10,8 +11,13 @@ import (
 
 type requestUsageCaptureKey struct{}
 
+type cachePromptDelta struct {
+	full string
+	sent string
+}
+
 type requestUsageCapture struct {
-	reusedMessages atomic.Int64
+	promptDelta atomic.Pointer[cachePromptDelta]
 }
 
 func ensureRequestUsageCapture(r *http.Request) (*http.Request, *requestUsageCapture) {
@@ -31,48 +37,48 @@ func requestUsageCaptureFrom(r *http.Request) *requestUsageCapture {
 	return capture
 }
 
-func (c *requestUsageCapture) RecordReusedPrefix(historyLen, totalMessages int) {
-	if c == nil || historyLen <= 0 || historyLen >= totalMessages {
+func (c *requestUsageCapture) RecordPromptDelta(fullPrompt, sentPrompt string) {
+	if c == nil || strings.TrimSpace(fullPrompt) == "" || strings.TrimSpace(sentPrompt) == "" || fullPrompt == sentPrompt {
 		return
 	}
-	for {
-		current := c.reusedMessages.Load()
-		if int64(historyLen) <= current || c.reusedMessages.CompareAndSwap(current, int64(historyLen)) {
-			return
-		}
-	}
+	c.promptDelta.CompareAndSwap(nil, &cachePromptDelta{full: fullPrompt, sent: sentPrompt})
 }
 
-func (c *requestUsageCapture) ReusedMessages() int {
+func (c *requestUsageCapture) CachedTokens(model string) int {
 	if c == nil {
 		return 0
 	}
-	return int(c.reusedMessages.Load())
+	delta := c.promptDelta.Load()
+	if delta == nil {
+		return 0
+	}
+	count, _ := tokenEstimator(model)
+	return max(count(delta.full)-count(delta.sent), 0)
 }
 
-func recordResolvedCacheUsage(r *http.Request, resolved ResolveResult, totalMessages int) {
-	if resolved.IsNew {
+func recordResolvedCacheUsage(r *http.Request, resolved ResolveResult, totalMessages int, fullPrompt, sentPrompt string) {
+	if resolved.IsNew || resolved.HistoryLen <= 0 || resolved.HistoryLen >= totalMessages {
 		return
 	}
 	if capture := requestUsageCaptureFrom(r); capture != nil {
-		capture.RecordReusedPrefix(resolved.HistoryLen, totalMessages)
+		capture.RecordPromptDelta(fullPrompt, sentPrompt)
 	}
 }
 
-func requestChatCompletionUsage(r *http.Request, messages []oaiMsg, prompt, output string) map[string]any {
-	reusedMessages := 0
+func requestChatCompletionUsage(r *http.Request, model, prompt, output string) map[string]any {
+	cachedTokens := 0
 	if capture := requestUsageCaptureFrom(r); capture != nil {
-		reusedMessages = capture.ReusedMessages()
+		cachedTokens = capture.CachedTokens(model)
 	}
-	return estimateChatCompletionUsage(messages, prompt, output, reusedMessages)
+	return estimateChatCompletionUsage(model, prompt, output, cachedTokens)
 }
 
 func requestResponsesUsage(r *http.Request, model string, messages []oaiMsg, tools []chathub.Tool, toolChoice any, output string) responsesUsageEstimate {
-	reusedMessages := 0
+	cachedTokens := 0
 	if capture := requestUsageCaptureFrom(r); capture != nil {
-		reusedMessages = capture.ReusedMessages()
+		cachedTokens = capture.CachedTokens(model)
 	}
-	return estimateResponsesUsageWithCache(model, messages, tools, toolChoice, output, reusedMessages)
+	return estimateResponsesUsageWithCache(model, messages, tools, toolChoice, output, cachedTokens)
 }
 
 func chatCachedTokens(usage map[string]any) int64 {
@@ -103,23 +109,17 @@ func responsesCachedTokens(usage map[string]any) int {
 	}
 }
 
-func estimateChatCompletionUsage(messages []oaiMsg, prompt, output string, reusedMessages int) map[string]any {
-	promptTokens := EstimateTokens(prompt)
-	completionTokens := EstimateTokens(output)
+func estimateChatCompletionUsage(model, prompt, output string, cachedTokens int) map[string]any {
+	count, _ := tokenEstimator(model)
+	promptTokens := int64(count(prompt))
+	completionTokens := int64(count(output))
 	usage := map[string]any{
 		"prompt_tokens":     promptTokens,
 		"completion_tokens": completionTokens,
 		"total_tokens":      promptTokens + completionTokens,
 	}
 
-	if reusedMessages > len(messages) {
-		reusedMessages = len(messages)
-	}
-	cacheTokens := int64(0)
-	for _, message := range messages[:max(reusedMessages, 0)] {
-		cacheTokens += EstimateTokens(contentToString(message.Content))
-	}
-	cacheTokens = min(cacheTokens, promptTokens)
+	cacheTokens := min(int64(max(cachedTokens, 0)), promptTokens)
 	if cacheTokens > 0 {
 		usage["prompt_tokens_details"] = map[string]any{"cached_tokens": cacheTokens}
 	}

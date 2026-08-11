@@ -163,6 +163,7 @@ docker compose up -d --build
 | `M365_CONTEXT_TTL_MINUTES` | `120` | 上下文指纹复用窗口（分钟） |
 | `M365_CONTEXT_SIMILARITY` | `0.6` | 上下文相似度复用阈值（0~1，Jaccard 相似度） |
 | `M365_LOG_LEVEL` | `info` | 日志级别 |
+| `M365_PUBLIC_IDENTITY_POLICY` | `true` | 公开身份策略总开关；设为 `false` / `0` / `off` 时关闭身份预设及所有正文、推理、引用和流式清洗 |
 
 ### 自动清理
 

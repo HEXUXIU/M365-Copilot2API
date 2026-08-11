@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"os"
 	"regexp"
 	"strings"
 	"unicode"
@@ -11,6 +12,21 @@ import (
 const (
 	publicAssistantIdentity = "GPT-5 系列 AI 助手"
 )
+
+// publicIdentityPolicyEnabled keeps the existing default while allowing a
+// deployment to restore the upstream response exactly during diagnosis.
+func publicIdentityPolicyEnabled() bool {
+	raw, ok := os.LookupEnv("M365_PUBLIC_IDENTITY_POLICY")
+	if !ok || strings.TrimSpace(raw) == "" {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "0", "false", "no", "off", "disabled":
+		return false
+	default:
+		return true
+	}
+}
 
 const (
 	publicIdentitySeparator          = `[\s\p{Zs}]*`
@@ -75,6 +91,9 @@ const (
 )
 
 func publicIdentityAnswer(messages []oaiMsg, requestedModel string) (string, bool) {
+	if !publicIdentityPolicyEnabled() {
+		return "", false
+	}
 	for i := len(messages) - 1; i >= 0; i-- {
 		if !strings.EqualFold(strings.TrimSpace(messages[i].Role), "user") {
 			continue
@@ -194,15 +213,24 @@ func sanitizePublicAssistantText(text string) string {
 }
 
 func sanitizePublicAssistantTextForModel(text, model string) string {
+	if !publicIdentityPolicyEnabled() {
+		return text
+	}
 	identityWritten := false
 	return sanitizePublicAssistantTextWithStateForModel(text, &identityWritten, model)
 }
 
 func sanitizePublicInternalText(text string) string {
+	if !publicIdentityPolicyEnabled() {
+		return text
+	}
 	return publicProviderIdentityPattern.ReplaceAllString(text, publicAssistantIdentity)
 }
 
 func sanitizePublicReasoningText(text string) string {
+	if !publicIdentityPolicyEnabled() {
+		return text
+	}
 	if text == "" || publicReasoningLeakPattern.MatchString(text) || publicProviderSelfDescriptionPattern.MatchString(text) || publicLocalizedSelfIdentityPattern.MatchString(text) {
 		return ""
 	}
@@ -301,6 +329,9 @@ func sanitizePublicAssistantMessage(message map[string]any, models ...string) {
 }
 
 func sanitizePublicPayload(value any) any {
+	if !publicIdentityPolicyEnabled() {
+		return value
+	}
 	raw, err := json.Marshal(value)
 	if err != nil {
 		return value
@@ -313,6 +344,9 @@ func sanitizePublicPayload(value any) any {
 }
 
 func sanitizePublicJSONText(text string) string {
+	if !publicIdentityPolicyEnabled() {
+		return text
+	}
 	var decoded any
 	if json.Unmarshal([]byte(text), &decoded) != nil {
 		return sanitizePublicAssistantText(text)
@@ -325,6 +359,9 @@ func sanitizePublicJSONText(text string) string {
 }
 
 func sanitizePublicJSONValue(value any) any {
+	if !publicIdentityPolicyEnabled() {
+		return value
+	}
 	switch v := value.(type) {
 	case string:
 		return sanitizePublicAssistantText(v)
@@ -367,6 +404,9 @@ func (f *publicIdentityStreamFilter) Push(fragment string) string {
 	if f == nil {
 		return sanitizePublicAssistantText(fragment)
 	}
+	if !publicIdentityPolicyEnabled() {
+		return fragment
+	}
 	f.pending += fragment
 	return f.consume(false)
 }
@@ -374,6 +414,11 @@ func (f *publicIdentityStreamFilter) Push(fragment string) string {
 func (f *publicIdentityStreamFilter) Flush() string {
 	if f == nil {
 		return ""
+	}
+	if !publicIdentityPolicyEnabled() {
+		out := f.pending
+		f.pending = ""
+		return out
 	}
 	out := f.consume(true)
 	f.pending = ""
@@ -420,6 +465,9 @@ func (f *publicReasoningStreamFilter) Push(fragment string) string {
 	if f == nil {
 		return sanitizePublicReasoningText(fragment)
 	}
+	if !publicIdentityPolicyEnabled() {
+		return fragment
+	}
 	f.pending += fragment
 	return f.consume(false)
 }
@@ -427,6 +475,11 @@ func (f *publicReasoningStreamFilter) Push(fragment string) string {
 func (f *publicReasoningStreamFilter) Flush() string {
 	if f == nil {
 		return ""
+	}
+	if !publicIdentityPolicyEnabled() {
+		out := f.pending
+		f.pending = ""
+		return out
 	}
 	out := sanitizePublicReasoningText(f.pending)
 	f.pending = ""

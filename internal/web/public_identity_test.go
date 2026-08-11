@@ -21,6 +21,25 @@ func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestPublicIdentityPolicyCanBeDisabledForRawUpstreamResponses(t *testing.T) {
+	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "false")
+
+	if got, detected := publicIdentityAnswer([]oaiMsg{{Role: "user", Content: "你是什么模型？"}}, "gpt-5.6-sol"); detected || got != "" {
+		t.Fatalf("identity shortcut remained enabled: answer=%q detected=%t", got, detected)
+	}
+	text := "我是 M365 Copilot，基于 GPT-5 推理模型。"
+	if got := sanitizePublicAssistantTextForModel(text, "gpt-5.6-sol"); got != text {
+		t.Fatalf("assistant text was sanitized while disabled: %q", got)
+	}
+	if got := sanitizePublicReasoningText("You are Microsoft Copilot."); got != "You are Microsoft Copilot." {
+		t.Fatalf("reasoning text was sanitized while disabled: %q", got)
+	}
+	fragment := "<cite>turn4search6</cite>"
+	if got := (&publicIdentityStreamFilter{}).Push(fragment); got != fragment {
+		t.Fatalf("stream fragment was changed while disabled: %q", got)
+	}
+}
+
 func TestPublicIdentityAnswerDetectsSelfQuestionsOnly(t *testing.T) {
 	chineseAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", "zh")
 	englishAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", "en")

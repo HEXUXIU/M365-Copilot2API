@@ -39,6 +39,7 @@ services:
       M365_SESSION_LOCK_WAIT_SECONDS: "120"
       M365_STICKY_RETRY_AFTER_SECONDS: "5"
       M365_ACCOUNT_DEFAULT_CONCURRENCY: "8"
+      M365_PUBLIC_IDENTITY_POLICY: "${M365_PUBLIC_IDENTITY_POLICY:-true}"
     depends_on:
       redis:
         condition: service_healthy

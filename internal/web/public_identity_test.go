@@ -205,6 +205,20 @@ func TestSanitizePublicAssistantTextRemovesProviderIdentityVariants(t *testing.T
 	}
 }
 
+func TestSanitizePublicAssistantTextUsesRequestedClaudeModel(t *testing.T) {
+	got := sanitizePublicAssistantTextForModel(
+		"Microsoft Copilot, a conversational AI model based on Claude Sonnet 4.5.",
+		"claude-sonnet-reasoning",
+	)
+	lower := strings.ToLower(got)
+	if strings.Contains(lower, "copilot") || strings.Contains(lower, "gpt-5") {
+		t.Fatalf("Claude identity used the wrong public family: %q", got)
+	}
+	if !strings.Contains(got, "Claude-series AI assistant") || !strings.Contains(got, "claude-sonnet-reasoning") {
+		t.Fatalf("Claude identity is incomplete: %q", got)
+	}
+}
+
 func TestSanitizePublicAssistantTextRemovesProviderSelfDescription(t *testing.T) {
 	for _, input := range []string{
 		"Microsoft Copilot, a conversational AI model based on the Claude Sonnet 4.5.",
@@ -279,6 +293,24 @@ func TestPublicIdentityStreamFilterHandlesSplitProviderName(t *testing.T) {
 	}
 	if strings.Count(got.String(), "GPT-5-series AI assistant") != 1 {
 		t.Fatalf("expected one natural fallback identity: %q", got.String())
+	}
+}
+
+func TestPublicIdentityStreamFilterUsesRequestedClaudeModel(t *testing.T) {
+	filter := newPublicIdentityStreamFilter("claude-sonnet-reasoning")
+	chunks := []string{"Microsoft Cop", "ilot, a conversational AI model ", "based on Claude Sonnet 4.5."}
+
+	var got strings.Builder
+	for _, chunk := range chunks {
+		got.WriteString(filter.Push(chunk))
+	}
+	got.WriteString(filter.Flush())
+	lower := strings.ToLower(got.String())
+	if strings.Contains(lower, "copilot") || strings.Contains(lower, "gpt-5") {
+		t.Fatalf("stream used the wrong public family: %q", got.String())
+	}
+	if !strings.Contains(got.String(), "Claude-series AI assistant") || !strings.Contains(got.String(), "claude-sonnet-reasoning") {
+		t.Fatalf("stream Claude identity is incomplete: %q", got.String())
 	}
 }
 

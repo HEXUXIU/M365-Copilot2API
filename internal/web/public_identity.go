@@ -190,8 +190,12 @@ func applyPublicIdentityPolicy(prompt string) string {
 }
 
 func sanitizePublicAssistantText(text string) string {
+	return sanitizePublicAssistantTextForModel(text, "")
+}
+
+func sanitizePublicAssistantTextForModel(text, model string) string {
 	identityWritten := false
-	return sanitizePublicAssistantTextWithState(text, &identityWritten)
+	return sanitizePublicAssistantTextWithStateForModel(text, &identityWritten, model)
 }
 
 func sanitizePublicInternalText(text string) string {
@@ -206,6 +210,10 @@ func sanitizePublicReasoningText(text string) string {
 }
 
 func sanitizePublicAssistantTextWithState(text string, identityWritten *bool) string {
+	return sanitizePublicAssistantTextWithStateForModel(text, identityWritten, "")
+}
+
+func sanitizePublicAssistantTextWithStateForModel(text string, identityWritten *bool, model string) string {
 	if text == "" {
 		return ""
 	}
@@ -218,13 +226,13 @@ func sanitizePublicAssistantTextWithState(text string, identityWritten *bool) st
 			continue
 		}
 		end := index + utf8.RuneLen(r)
-		segment, identity := sanitizePublicIdentitySegment(text[start:end], written)
+		segment, identity := sanitizePublicIdentitySegment(text[start:end], written, model)
 		out.WriteString(segment)
 		written = written || identity
 		start = end
 	}
 	if start < len(text) {
-		segment, identity := sanitizePublicIdentitySegment(text[start:], written)
+		segment, identity := sanitizePublicIdentitySegment(text[start:], written, model)
 		out.WriteString(segment)
 		written = written || identity
 	}
@@ -234,7 +242,7 @@ func sanitizePublicAssistantTextWithState(text string, identityWritten *bool) st
 	return out.String()
 }
 
-func sanitizePublicIdentitySegment(segment string, identityWritten bool) (string, bool) {
+func sanitizePublicIdentitySegment(segment string, identityWritten bool, model string) (string, bool) {
 	if !publicSelfIdentityPattern.MatchString(segment) && !publicBareProviderIdentityPattern.MatchString(segment) && !publicProviderSelfDescriptionPattern.MatchString(segment) && !publicLocalizedSelfIdentityPattern.MatchString(segment) {
 		return segment, false
 	}
@@ -248,30 +256,45 @@ func sanitizePublicIdentitySegment(segment string, identityWritten bool) (string
 	if identityWritten {
 		return leading + lineBreak, true
 	}
+	language := "en"
 	if strings.ContainsFunc(segment, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
 		if containsJapaneseKana(segment) {
-			return leading + publicIdentityJapaneseFallback + lineBreak, true
+			language = "ja"
+		} else {
+			language = "zh"
 		}
+	}
+	if strings.TrimSpace(model) != "" {
+		return leading + publicIdentityAnswerForModel(model, language) + lineBreak, true
+	}
+	if language == "ja" {
+		return leading + publicIdentityJapaneseFallback + lineBreak, true
+	}
+	if language == "zh" {
 		return leading + publicIdentityChineseFallback + lineBreak, true
 	}
 	return leading + publicIdentityEnglishFallback + lineBreak, true
 }
 
-func sanitizePublicAssistantMessage(message map[string]any) {
+func sanitizePublicAssistantMessage(message map[string]any, models ...string) {
 	if message == nil {
 		return
+	}
+	model := ""
+	if len(models) > 0 {
+		model = models[0]
 	}
 	if reasoning, ok := message["reasoning_content"].(string); ok {
 		message["reasoning_content"] = sanitizePublicReasoningText(reasoning)
 	}
 	switch content := message["content"].(type) {
 	case string:
-		message["content"] = sanitizePublicAssistantText(content)
+		message["content"] = sanitizePublicAssistantTextForModel(content, model)
 	case []any:
 		for _, raw := range content {
 			part, _ := raw.(map[string]any)
 			if text, ok := part["text"].(string); ok {
-				part["text"] = sanitizePublicAssistantText(text)
+				part["text"] = sanitizePublicAssistantTextForModel(text, model)
 			}
 		}
 	}
@@ -329,10 +352,15 @@ func sanitizePublicJSONValue(value any) any {
 type publicIdentityStreamFilter struct {
 	pending         string
 	identityWritten bool
+	model           string
 }
 
-func newPublicIdentityStreamFilter() *publicIdentityStreamFilter {
-	return &publicIdentityStreamFilter{}
+func newPublicIdentityStreamFilter(models ...string) *publicIdentityStreamFilter {
+	model := ""
+	if len(models) > 0 {
+		model = models[0]
+	}
+	return &publicIdentityStreamFilter{model: model}
 }
 
 func (f *publicIdentityStreamFilter) Push(fragment string) string {
@@ -359,12 +387,12 @@ const (
 
 func (f *publicIdentityStreamFilter) consume(final bool) string {
 	if final {
-		out := sanitizePublicAssistantTextWithState(f.pending, &f.identityWritten)
+		out := sanitizePublicAssistantTextWithStateForModel(f.pending, &f.identityWritten, f.model)
 		f.pending = ""
 		return out
 	}
 	if end := lastPublicIdentityBoundary(f.pending); end > 0 {
-		out := sanitizePublicAssistantTextWithState(f.pending[:end], &f.identityWritten)
+		out := sanitizePublicAssistantTextWithStateForModel(f.pending[:end], &f.identityWritten, f.model)
 		f.pending = f.pending[end:]
 		return out
 	}

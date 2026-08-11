@@ -809,7 +809,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 					s.markAccountFailure(acc.ID, err, rateLimitCooldown)
 					s.markAccountSuccess(next.ID)
 					res2.Text = sanitizePublicAssistantText(res2.Text)
-					res2.Reasoning = sanitizePublicAssistantText(res2.Reasoning)
+					res2.Reasoning = sanitizePublicReasoningText(res2.Reasoning)
 					jsonOut(w, map[string]any{
 						"status": "ok", "text": res2.Text, "conversationId": res2.ConversationID,
 						"sessionId": res2.SessionID, "requestId": res2.RequestID,
@@ -907,7 +907,7 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadGateway, "m365_error", upstreamError(err))
 		return
 	}
-	jsonOut(w, map[string]any{"ok": true, "model": b.Model, "reply": sanitizePublicAssistantText(res.Text), "latency_ms": ms})
+	jsonOut(w, map[string]any{"ok": true, "model": b.Model, "reply": sanitizePublicAssistantTextForModel(res.Text, b.Model), "latency_ms": ms})
 }
 
 func (s *Server) openaiModels(w http.ResponseWriter, r *http.Request) {
@@ -1234,7 +1234,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		var pending strings.Builder
 		var streamedTools []detectedToolCall
 		first := true
-		identityFilter := newPublicIdentityStreamFilter()
+		identityFilter := newPublicIdentityStreamFilter(model)
 		writeText := func(part string) error {
 			if part == "" {
 				return nil
@@ -1330,7 +1330,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if body.User != "" && res.ConversationID != "" {
 				s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 			}
-			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantText(text.String())}, answerPrompt, startedAt, affinityState)
+			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantTextForModel(text.String(), body.Model)}, answerPrompt, startedAt, affinityState)
 			_ = writeToolResponse(w, id, model, true, calls, chathub.Result{Text: text.String()}, chatUsage(usage))
 			return
 		}
@@ -1345,7 +1345,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantText(text.String())}, answerPrompt, startedAt, affinityState)
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantTextForModel(text.String(), body.Model)}, answerPrompt, startedAt, affinityState)
 		writeStreamFinish(r.Context(), w, flusher, id, model, chatUsage(usage))
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		return
@@ -1453,7 +1453,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			flusher.Flush()
 			return nil
 		}
-		contentFilter := newPublicIdentityStreamFilter()
+		contentFilter := newPublicIdentityStreamFilter(firstNonEmpty(body.Model, defaultPublicModelName))
 		reasoningFilter := newPublicReasoningStreamFilter()
 		onDelta := func(content string) error {
 			if content = contentFilter.Push(content); content != "" {
@@ -1482,7 +1482,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					return
 				}
 			}
-			res.Text = sanitizePublicAssistantText(res.Text)
+			res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
 			res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
 			s.markAccountSuccess(acc.ID)
 			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: res.Text}, prompt, startedAt, affinityState)
@@ -1576,7 +1576,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		log.Printf("[user-session] put user=%s conversation=%s session=%s", body.User, res.ConversationID, res.SessionID)
 	}
-	usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantText(res.Text)}, prompt, startedAt, affinityState)
+	usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: sanitizePublicAssistantTextForModel(res.Text, body.Model)}, prompt, startedAt, affinityState)
 	if res.ConversationID != "" {
 		resolved := s.sessionResolver.Resolve(r, &body)
 		if !resolved.IsNew {
@@ -1625,7 +1625,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	if !completionEvidenceAllows(res.Text, ledger) {
 		res.Text = "I cannot confirm completion because no matching tool results were returned. No external action has been verified."
 	}
-	res.Text = sanitizePublicAssistantText(res.Text)
+	res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
 	res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
 	log.Printf("[debug] res.Text bytes=%d content=%q", len(res.Text), res.Text)
 	created := time.Now().Unix()

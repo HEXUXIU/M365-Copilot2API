@@ -14,7 +14,7 @@ import (
 func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src map[string]any) {
 	id := firstNonEmpty(fmt.Sprint(src["m365_response_id"]), "resp_"+uuid.NewString())
 	msg, _ := openAIChoice(src)
-	sanitizePublicAssistantMessage(msg)
+	sanitizePublicAssistantMessage(msg, model)
 	var output []any
 	if calls, ok := msg["tool_calls"].([]any); ok {
 		for _, raw := range calls {

@@ -283,6 +283,13 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
     </div>
     <form id="loginForm" style="background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);padding:32px;box-shadow:var(--shadow-lg)">
       <div class="form-group">
+        <label class="form-label" for="loginLanguageSelect">Language</label>
+        <select class="form-input" id="loginLanguageSelect">
+          <option value="en">English</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
+      <div class="form-group">
         <label class="form-label">Password</label>
         <input class="form-input" id="loginPassword" type="password" placeholder="Enter administrator password" autofocus>
       </div>
@@ -676,6 +683,7 @@ if (response.output_text) {
 const $=id=>document.getElementById(id);
 const pages={dashboard:'Dashboard',usage:'Usage',accounts:'Accounts',apikeys:'API Keys',conversations:'Conversations',proxies:'Proxy Pool',modeltest:'Model Test',settings:'Settings'};
 const localeStorageKey='m365_locale';
+const localeSelectionKey='m365_locale_selected';
 const localeText={
   'Administrator Login':'管理员登录',
   'Password':'密码',
@@ -846,7 +854,15 @@ const localeText={
   'Testing…':'测试中…',
   'Failed':'失败'
 };
-let currentLocale='en';
+function preferredLocale(){
+  try{
+    const stored=localStorage.getItem(localeStorageKey);
+    if(stored==='zh')return 'zh';
+    if(stored==='en'&&localStorage.getItem(localeSelectionKey)==='1')return 'en';
+  }catch(e){}
+  return 'zh';
+}
+let currentLocale=preferredLocale();
 let localeObserver=null;
 function localeReverse(){const out={};Object.entries(localeText).forEach(([en,zh])=>{if(!out[zh])out[zh]=en;});return out;}
 const localeTextReverse=localeReverse();
@@ -890,7 +906,7 @@ function translatePage(){
   while(node=walker.nextNode()){if(!node.parentElement?.closest('script,style,pre,code,textarea'))nodes.push(node);}
   nodes.forEach(n=>{const translated=translateText(n.nodeValue);if(translated!==n.nodeValue)n.nodeValue=translated;});
   document.querySelectorAll('[placeholder],[title],[aria-label]').forEach(el=>['placeholder','title','aria-label'].forEach(attr=>{if(el.hasAttribute(attr))el.setAttribute(attr,translateText(el.getAttribute(attr)));}));
-  const selector=$('languageSelect');if(selector)selector.value=currentLocale;
+  ['languageSelect','loginLanguageSelect'].forEach(id=>{const selector=$(id);if(selector)selector.value=currentLocale;});
   document.documentElement.lang=currentLocale==='zh'?'zh-CN':'en';
 }
 function applyLocale(locale){
@@ -899,9 +915,13 @@ function applyLocale(locale){
   translatePage();
   if(!localeObserver){localeObserver=new MutationObserver(()=>translatePage());localeObserver.observe(document.body,{childList:true,subtree:true,characterData:true});}
 }
-try{currentLocale=localStorage.getItem(localeStorageKey)==='zh'?'zh':'en';}catch(e){}
 applyLocale(currentLocale);
-document.addEventListener('change',e=>{if(e.target?.id==='languageSelect')applyLocale(e.target.value);});
+document.addEventListener('change',e=>{
+  if(e.target?.id==='languageSelect'||e.target?.id==='loginLanguageSelect'){
+    try{localStorage.setItem(localeSelectionKey,'1');}catch(err){}
+    applyLocale(e.target.value);
+  }
+});
 let pkceTimer=null;
 
 function showNotice(msg,type='info'){

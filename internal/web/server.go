@@ -1072,6 +1072,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "messages required", http.StatusBadRequest)
 		return
 	}
+	if answer, ok := publicIdentityAnswer(body.Messages); ok && responseFormat == nil {
+		s.writePublicIdentityChatResponse(w, r, &body, prompt, answer, startedAt)
+		return
+	}
 
 	if body.SessionKey != "" {
 		if v, ok := s.sessions.get(body.SessionKey); ok {
@@ -1684,6 +1688,67 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		"m365":  compatM365Metadata(res),
 		"usage": chatUsage(usage),
 	})
+}
+
+func (s *Server) writePublicIdentityChatResponse(w http.ResponseWriter, r *http.Request, body *oaiReq, prompt, answer string, startedAt time.Time) {
+	model := firstNonEmpty(body.Model, defaultPublicModelName)
+	id := "chatcmpl-" + uuid.NewString()
+	created := time.Now().Unix()
+	usage := reuseUsage{
+		PromptTokens:     EstimateTokens(prompt),
+		CompletionTokens: EstimateTokens(answer),
+	}
+	if s.usage != nil {
+		s.usage.record(UsageRecord{
+			Time:         time.Now(),
+			APIKeyPrefix: extractAPIKey(r),
+			Model:        model,
+			Endpoint:     "/v1/chat/completions",
+			InputTokens:  usage.PromptTokens,
+			OutputTokens: usage.CompletionTokens,
+			CacheSource:  "none",
+			DurationMs:   time.Since(startedAt).Milliseconds(),
+			Status:       http.StatusOK,
+		})
+	}
+	if !body.Stream {
+		jsonOut(w, map[string]any{
+			"id":      id,
+			"object":  "chat.completion",
+			"created": created,
+			"model":   model,
+			"choices": []map[string]any{{
+				"index":         0,
+				"message":       map[string]any{"role": "assistant", "content": answer},
+				"finish_reason": "stop",
+			}},
+			"usage": chatUsage(usage),
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "stream unsupported", http.StatusInternalServerError)
+		return
+	}
+	chunk := map[string]any{
+		"id":      id,
+		"object":  "chat.completion.chunk",
+		"created": created,
+		"model":   model,
+		"choices": []map[string]any{{
+			"index":         0,
+			"delta":         map[string]any{"role": "assistant", "content": answer},
+			"finish_reason": nil,
+		}},
+	}
+	_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(chunk)+"\n\n")
+	writeStreamFinish(r.Context(), w, flusher, id, model, chatUsage(usage))
+	_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 }
 
 const sessionHeaderName = "X-M365-Session-Id"

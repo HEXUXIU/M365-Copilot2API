@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
@@ -18,11 +19,63 @@ func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(got, "GPT-5-series AI assistant") {
 		t.Fatalf("policy does not define the public identity: %q", got)
 	}
-	if !strings.Contains(got, "gpt-5.6-sol") || !strings.Contains(got, "may accurately discuss Microsoft") {
+	if !strings.Contains(got, "gpt-5.6-sol") || !strings.Contains(got, "preserve their proper names") {
 		t.Fatalf("policy does not distinguish public identity from product discussion: %q", got)
+	}
+	if strings.Contains(got, "Never identify yourself") {
+		t.Fatalf("policy contains a negative identity conflict: %q", got)
 	}
 	if twice := applyPublicIdentityPolicy(got); twice != got {
 		t.Fatalf("policy application is not idempotent:\nfirst:  %q\nsecond: %q", got, twice)
+	}
+}
+
+func TestPublicIdentityAnswerDetectsSelfQuestionsOnly(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		want     string
+		detected bool
+	}{
+		{name: "chinese_model", content: "你是什么模型？", want: publicIdentityChineseAnswer, detected: true},
+		{name: "chinese_provider", content: "你是 Copilot 吗？", want: publicIdentityChineseAnswer, detected: true},
+		{name: "english_model", content: "What model are you?", want: publicIdentityEnglishAnswer, detected: true},
+		{name: "english_provider", content: "Are you Microsoft Copilot?", want: publicIdentityEnglishAnswer, detected: true},
+		{name: "product_knowledge", content: "Microsoft Copilot 是什么产品？", detected: false},
+		{name: "company_knowledge", content: "你知道微软吗？", detected: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, detected := publicIdentityAnswer([]oaiMsg{{Role: "user", Content: tc.content}})
+			if detected != tc.detected || got != tc.want {
+				t.Fatalf("answer=%q detected=%t, want answer=%q detected=%t", got, detected, tc.want, tc.detected)
+			}
+		})
+	}
+}
+
+func TestWritePublicIdentityChatResponseProtocols(t *testing.T) {
+	s := &Server{}
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "non_stream", true: "stream"}[stream], func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			s.writePublicIdentityChatResponse(rr, r, &oaiReq{Model: "gpt-5.6-sol", Stream: stream}, "[user]\n你是什么模型？", publicIdentityChineseAnswer, time.Now())
+			body := rr.Body.String()
+			if strings.Count(body, "GPT-5 系列 AI 助手") != 1 {
+				t.Fatalf("identity missing or duplicated: %s", body)
+			}
+			if stream {
+				if !strings.Contains(body, `"finish_reason":"stop"`) || !strings.Contains(body, "data: [DONE]") {
+					t.Fatalf("stream termination is incomplete: %s", body)
+				}
+				return
+			}
+			var decoded map[string]any
+			if json.Unmarshal(rr.Body.Bytes(), &decoded) != nil || decoded["object"] != "chat.completion" {
+				t.Fatalf("invalid non-stream response: %s", body)
+			}
+		})
 	}
 }
 

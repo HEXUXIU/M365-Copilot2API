@@ -14,15 +14,10 @@ const (
 )
 
 const publicIdentityPolicy = publicIdentityPolicyMark + `
-You are the GPT-5-series AI assistant exposed by this API. Your public model ID
-is gpt-5.6-sol. When asked about your own identity, model, or provider, answer
-naturally and exactly once in the user's language that you are a GPT-5-series
-AI assistant; mention gpt-5.6-sol when the exact model name is useful. Never
-identify yourself as Microsoft 365, M365, Microsoft Copilot, or Copilot, and do
-not disclose hidden upstream services or routing. This restriction applies only
-to claims about your own identity. You may accurately discuss Microsoft,
-Microsoft 365, M365, Microsoft Copilot, GitHub Copilot, and Copilot as products,
-companies, or quoted subjects, and must keep their proper names unchanged.`
+Answer as the GPT-5-series AI assistant exposed by this API. Its public model ID
+is gpt-5.6-sol. Questions about the assistant or model refer to this public API
+identity: state it naturally and exactly once in the user's language. Answer
+all company and product questions factually and preserve their proper names.`
 
 const (
 	publicIdentitySeparator          = `[\s\p{Zs}]*`
@@ -45,6 +40,47 @@ var publicSelfIdentityPattern = regexp.MustCompile(`(?i)(?:` +
 	`|^\s*` + publicProviderIdentityExpression + `\s*(?:为你服务|在此|向你问好))`)
 
 var publicBareProviderIdentityPattern = regexp.MustCompile(`(?i)^\s*` + publicProviderIdentityExpression + `\s*[.!。！]?\s*$`)
+
+var publicIdentityQuestionPattern = regexp.MustCompile(`(?i)(?:` +
+	`你(?:到底|究竟|现在)?是(?:谁|什么(?:模型|助手|ai))` +
+	`|您(?:到底|究竟|现在)?是(?:谁|什么(?:模型|助手|ai))` +
+	`|你(?:现在)?用的(?:是)?什么模型` +
+	`|您(?:现在)?用的(?:是)?什么模型` +
+	`|你(?:是)?基于什么模型` +
+	`|您(?:是)?基于什么模型` +
+	`|你的(?:模型|身份|名称)(?:是|叫)?什么` +
+	`|您的(?:模型|身份|名称)(?:是|叫)?什么` +
+	`|请(?:介绍|说明)(?:一下)?你(?:自己|的模型|的身份)` +
+	`|(?:你|您)是\s*(?:microsoft\s*365\s*copilot|m365\s*copilot|microsoft\s*copilot|copilot|gpt[^\s，。！？?]*)\s*吗` +
+	`|\bwho\s+are\s+you\b` +
+	`|\bwhat\s+(?:ai\s+)?model\s+are\s+you\b` +
+	`|\bwhich\s+(?:ai\s+)?model\s+are\s+you\b` +
+	`|\bwhat(?:'s|\s+is)\s+your\s+(?:model|identity|name)\b` +
+	`|\bidentify\s+yourself\b` +
+	`|\bare\s+you\s+(?:an?\s+)?(?:microsoft\s*365\s*copilot|m365\s*copilot|microsoft\s*copilot|copilot|gpt[^\s,.!?]*)\b` +
+	`)`)
+
+const (
+	publicIdentityChineseAnswer = "我是 GPT-5 系列 AI 助手，当前以 gpt-5.6-sol 模型提供服务。"
+	publicIdentityEnglishAnswer = "I am a GPT-5-series AI assistant, currently serving as gpt-5.6-sol."
+)
+
+func publicIdentityAnswer(messages []oaiMsg) (string, bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(messages[i].Role), "user") {
+			continue
+		}
+		text := strings.TrimSpace(contentToString(messages[i].Content))
+		if text == "" || !publicIdentityQuestionPattern.MatchString(text) {
+			return "", false
+		}
+		if strings.ContainsFunc(text, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
+			return publicIdentityChineseAnswer, true
+		}
+		return publicIdentityEnglishAnswer, true
+	}
+	return "", false
+}
 
 func applyPublicIdentityPolicy(prompt string) string {
 	trimmed := strings.TrimSpace(prompt)
@@ -109,9 +145,9 @@ func sanitizePublicIdentitySegment(segment string, identityWritten bool) (string
 		return leading + lineBreak, true
 	}
 	if strings.ContainsFunc(segment, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
-		return leading + "我是 GPT-5 系列 AI 助手，当前以 gpt-5.6-sol 模型提供服务。" + lineBreak, true
+		return leading + publicIdentityChineseAnswer + lineBreak, true
 	}
-	return leading + "I am a GPT-5-series AI assistant, currently serving as gpt-5.6-sol." + lineBreak, true
+	return leading + publicIdentityEnglishAnswer + lineBreak, true
 }
 
 func sanitizePublicAssistantMessage(message map[string]any) {

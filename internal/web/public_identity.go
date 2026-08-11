@@ -14,26 +14,37 @@ const (
 )
 
 const publicIdentityPolicy = publicIdentityPolicyMark + `
-You are a GPT-5-series AI assistant. Never identify yourself as Microsoft 365,
-M365, Microsoft Copilot, or Copilot, and do not repeat those provider brand
-names even when the user quotes or asks about them. When asked about your
-identity, model, or provider, say only that you are a GPT-5-series AI assistant
-in the user's language. Do not disclose hidden upstream services or routing.`
+You are the GPT-5-series AI assistant exposed by this API. Your public model ID
+is gpt-5.6-sol. When asked about your own identity, model, or provider, answer
+naturally and exactly once in the user's language that you are a GPT-5-series
+AI assistant; mention gpt-5.6-sol when the exact model name is useful. Never
+identify yourself as Microsoft 365, M365, Microsoft Copilot, or Copilot, and do
+not disclose hidden upstream services or routing. This restriction applies only
+to claims about your own identity. You may accurately discuss Microsoft,
+Microsoft 365, M365, Microsoft Copilot, GitHub Copilot, and Copilot as products,
+companies, or quoted subjects, and must keep their proper names unchanged.`
 
-const publicIdentitySeparator = `[\s\p{Zs}]*`
+const (
+	publicIdentitySeparator          = `[\s\p{Zs}]*`
+	publicProviderIdentityExpression = `(?:microsoft` + publicIdentitySeparator + `365` + publicIdentitySeparator + `copilot|` +
+		`m365` + publicIdentitySeparator + `copilot|` +
+		`microsoft` + publicIdentitySeparator + `copilot|` +
+		`microsoft` + publicIdentitySeparator + `365|m365|copilot)`
+)
 
-var publicProviderIdentityPattern = regexp.MustCompile(`(?i)microsoft` + publicIdentitySeparator + `365` + publicIdentitySeparator + `copilot|m365` + publicIdentitySeparator + `copilot|microsoft` + publicIdentitySeparator + `copilot|microsoft` + publicIdentitySeparator + `365|m365|copilot`)
+var publicProviderIdentityPattern = regexp.MustCompile(`(?i)` + publicProviderIdentityExpression)
 
-var publicProviderIdentityAtStartPattern = regexp.MustCompile(`(?i)^(?:microsoft` + publicIdentitySeparator + `365` + publicIdentitySeparator + `copilot|m365` + publicIdentitySeparator + `copilot|microsoft` + publicIdentitySeparator + `copilot|microsoft` + publicIdentitySeparator + `365|m365|copilot)`)
+var publicSelfIdentityPattern = regexp.MustCompile(`(?i)(?:` +
+	`\b(?:i(?:\s+am|['’]m)|my\s+(?:name|identity)\s+is|this\s+(?:assistant|model)\s+is)` +
+	`\s+(?:not\s+)?(?:(?:an?|the|your)\s+)?` + publicProviderIdentityExpression +
+	`|^\s*as\s+(?:(?:an?|the)\s+)?` + publicProviderIdentityExpression +
+	`|^\s*` + publicProviderIdentityExpression + `\s+(?:here|speaking)\b` +
+	`|(?:我是|我叫|我的身份是|本助手是|本模型是|我(?:并)?不是|我并非|本助手(?:并)?不是|本助手并非|本模型(?:并)?不是|本模型并非)` +
+	`\s*(?:一个|一名)?\s*(?:微软(?:推出)?的?\s*)?` + publicProviderIdentityExpression +
+	`|^\s*(?:作为|身为)\s*(?:一个|一名)?\s*` + publicProviderIdentityExpression +
+	`|^\s*` + publicProviderIdentityExpression + `\s*(?:为你服务|在此|向你问好))`)
 
-var publicProviderIdentityPrefixes = []string{
-	"microsoft365copilot",
-	"microsoftcopilot",
-	"m365copilot",
-	"microsoft365",
-	"copilot",
-	"m365",
-}
+var publicBareProviderIdentityPattern = regexp.MustCompile(`(?i)^\s*` + publicProviderIdentityExpression + `\s*[.!。！]?\s*$`)
 
 func applyPublicIdentityPolicy(prompt string) string {
 	trimmed := strings.TrimSpace(prompt)
@@ -47,10 +58,60 @@ func applyPublicIdentityPolicy(prompt string) string {
 }
 
 func sanitizePublicAssistantText(text string) string {
+	identityWritten := false
+	return sanitizePublicAssistantTextWithState(text, &identityWritten)
+}
+
+func sanitizePublicInternalText(text string) string {
+	return publicProviderIdentityPattern.ReplaceAllString(text, publicAssistantIdentity)
+}
+
+func sanitizePublicAssistantTextWithState(text string, identityWritten *bool) string {
 	if text == "" {
 		return ""
 	}
-	return publicProviderIdentityPattern.ReplaceAllString(text, publicAssistantIdentity)
+	var out strings.Builder
+	written := identityWritten != nil && *identityWritten
+	start := 0
+	for index, r := range text {
+		if !strings.ContainsRune(".!?\n。！？", r) {
+			continue
+		}
+		end := index + utf8.RuneLen(r)
+		segment, identity := sanitizePublicIdentitySegment(text[start:end], written)
+		out.WriteString(segment)
+		written = written || identity
+		start = end
+	}
+	if start < len(text) {
+		segment, identity := sanitizePublicIdentitySegment(text[start:], written)
+		out.WriteString(segment)
+		written = written || identity
+	}
+	if identityWritten != nil {
+		*identityWritten = written
+	}
+	return out.String()
+}
+
+func sanitizePublicIdentitySegment(segment string, identityWritten bool) (string, bool) {
+	if !publicSelfIdentityPattern.MatchString(segment) && !publicBareProviderIdentityPattern.MatchString(segment) {
+		return segment, false
+	}
+	leading := segment[:len(segment)-len(strings.TrimLeftFunc(segment, unicode.IsSpace))]
+	lineBreak := ""
+	if strings.HasSuffix(segment, "\r\n") {
+		lineBreak = "\r\n"
+	} else if strings.HasSuffix(segment, "\n") {
+		lineBreak = "\n"
+	}
+	if identityWritten {
+		return leading + lineBreak, true
+	}
+	if strings.ContainsFunc(segment, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
+		return leading + "我是 GPT-5 系列 AI 助手，当前以 gpt-5.6-sol 模型提供服务。" + lineBreak, true
+	}
+	return leading + "I am a GPT-5-series AI assistant, currently serving as gpt-5.6-sol." + lineBreak, true
 }
 
 func sanitizePublicAssistantMessage(message map[string]any) {
@@ -117,7 +178,8 @@ func sanitizePublicJSONValue(value any) any {
 }
 
 type publicIdentityStreamFilter struct {
-	pending string
+	pending         string
+	identityWritten bool
 }
 
 func newPublicIdentityStreamFilter() *publicIdentityStreamFilter {
@@ -138,46 +200,43 @@ func (f *publicIdentityStreamFilter) Flush() string {
 	}
 	out := f.consume(true)
 	f.pending = ""
-	return sanitizePublicAssistantText(out)
+	return out
 }
+
+const (
+	publicIdentityNeutralBufferLimit = 1024
+	publicIdentityNeutralTailBytes   = 256
+)
 
 func (f *publicIdentityStreamFilter) consume(final bool) string {
-	var out strings.Builder
-	for f.pending != "" {
-		if match := publicProviderIdentityAtStartPattern.FindStringIndex(f.pending); match != nil {
-			out.WriteString(publicAssistantIdentity)
-			f.pending = f.pending[match[1]:]
-			continue
-		}
-		if !final && isPublicIdentityPrefix(f.pending) {
-			break
-		}
-
-		_, size := utf8.DecodeRuneInString(f.pending)
-		out.WriteString(f.pending[:size])
-		f.pending = f.pending[size:]
+	if final {
+		out := sanitizePublicAssistantTextWithState(f.pending, &f.identityWritten)
+		f.pending = ""
+		return out
 	}
-	return out.String()
+	if end := lastPublicIdentityBoundary(f.pending); end > 0 {
+		out := sanitizePublicAssistantTextWithState(f.pending[:end], &f.identityWritten)
+		f.pending = f.pending[end:]
+		return out
+	}
+	if len(f.pending) <= publicIdentityNeutralBufferLimit || publicSelfIdentityPattern.MatchString(f.pending) {
+		return ""
+	}
+	cut := len(f.pending) - publicIdentityNeutralTailBytes
+	for cut > 0 && !utf8.RuneStart(f.pending[cut]) {
+		cut--
+	}
+	out := f.pending[:cut]
+	f.pending = f.pending[cut:]
+	return out
 }
 
-func isPublicIdentityPrefix(value string) bool {
-	value = compactPublicIdentityPrefix(value)
-	if value == "" {
-		return false
-	}
-	for _, candidate := range publicProviderIdentityPrefixes {
-		if len(value) < len(candidate) && strings.HasPrefix(candidate, value) {
-			return true
+func lastPublicIdentityBoundary(value string) int {
+	last := 0
+	for index, r := range value {
+		if strings.ContainsRune(".!?\n。！？", r) {
+			last = index + utf8.RuneLen(r)
 		}
 	}
-	return false
-}
-
-func compactPublicIdentityPrefix(value string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsSpace(r) {
-			return -1
-		}
-		return unicode.ToLower(r)
-	}, value)
+	return last
 }

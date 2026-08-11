@@ -18,6 +18,9 @@ func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 	if !strings.Contains(got, "GPT-5-series AI assistant") {
 		t.Fatalf("policy does not define the public identity: %q", got)
 	}
+	if !strings.Contains(got, "gpt-5.6-sol") || !strings.Contains(got, "may accurately discuss Microsoft") {
+		t.Fatalf("policy does not distinguish public identity from product discussion: %q", got)
+	}
 	if twice := applyPublicIdentityPolicy(got); twice != got {
 		t.Fatalf("policy application is not idempotent:\nfirst:  %q\nsecond: %q", got, twice)
 	}
@@ -58,7 +61,7 @@ func TestSanitizePublicPayloadRemovesNestedIdentityAndPreservesMetadataKeys(t *t
 }
 
 func TestSanitizePublicAssistantTextRemovesProviderIdentityVariants(t *testing.T) {
-	input := "I am M365 Copilot, also called Microsoft 365 Copilot, Microsoft365Copilot, M365Copilot, or Microsoft Copilot. Copilot can help."
+	input := "I am M365 Copilot, also called Microsoft 365 Copilot, Microsoft365Copilot, M365Copilot, or Microsoft Copilot."
 
 	got := sanitizePublicAssistantText(input)
 	lower := strings.ToLower(got)
@@ -67,8 +70,48 @@ func TestSanitizePublicAssistantTextRemovesProviderIdentityVariants(t *testing.T
 			t.Fatalf("sanitized text still contains %q: %q", forbidden, got)
 		}
 	}
-	if !strings.Contains(got, publicAssistantIdentity) {
+	if !strings.Contains(got, "GPT-5-series AI assistant") {
 		t.Fatalf("sanitized text does not contain the neutral identity: %q", got)
+	}
+	if strings.Count(got, "GPT-5-series AI assistant") != 1 {
+		t.Fatalf("fallback identity should be natural and appear once: %q", got)
+	}
+}
+
+func TestSanitizePublicAssistantTextPreservesProductKnowledge(t *testing.T) {
+	input := "当然知道。微软（Microsoft）是一家全球科技公司，Microsoft Copilot 和 GitHub Copilot 是不同产品，Microsoft 365 包含 Word 和 Excel。"
+
+	if got := sanitizePublicAssistantText(input); got != input {
+		t.Fatalf("product knowledge was rewritten:\nwant: %q\n got: %q", input, got)
+	}
+}
+
+func TestSanitizePublicAssistantTextDistinguishesKnowledgeFromSelfIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		redacted bool
+	}{
+		{name: "chinese_self_identity", input: "我是 Microsoft 365 Copilot，基于 GPT-5 推理模型。", redacted: true},
+		{name: "chinese_as_identity", input: "作为 M365 Copilot，我可以帮助你。", redacted: true},
+		{name: "english_self_identity", input: "I'm Microsoft Copilot, here to help.", redacted: true},
+		{name: "english_negative_identity", input: "I am not Microsoft Copilot.", redacted: true},
+		{name: "chinese_negative_identity", input: "我并不是微软的 Copilot。", redacted: true},
+		{name: "bare_identity", input: "M365 Copilot", redacted: true},
+		{name: "chinese_product_knowledge", input: "我知道微软 Copilot，它是一个产品。", redacted: false},
+		{name: "english_product_knowledge", input: "I am familiar with Microsoft Copilot as a product.", redacted: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sanitizePublicAssistantText(tc.input)
+			containsProvider := publicProviderIdentityPattern.MatchString(got)
+			if tc.redacted && containsProvider {
+				t.Fatalf("self identity was not redacted: %q", got)
+			}
+			if !tc.redacted && got != tc.input {
+				t.Fatalf("product discussion was rewritten: %q", got)
+			}
+		})
 	}
 }
 
@@ -91,15 +134,47 @@ func TestPublicIdentityStreamFilterHandlesSplitProviderName(t *testing.T) {
 			t.Fatalf("stream output still contains %q: %q", forbidden, got.String())
 		}
 	}
-	if strings.Count(got.String(), publicAssistantIdentity) != 3 {
-		t.Fatalf("expected all provider identities to be replaced: %q", got.String())
+	if strings.Count(got.String(), "GPT-5-series AI assistant") != 1 {
+		t.Fatalf("expected one natural fallback identity: %q", got.String())
+	}
+}
+
+func TestPublicIdentityStreamFilterDoesNotRepeatFallbackIdentity(t *testing.T) {
+	filter := newPublicIdentityStreamFilter()
+	chunks := []string{"I am M365 Copilot.", " Microsoft Copilot here.", " I can help."}
+
+	var got strings.Builder
+	for _, chunk := range chunks {
+		got.WriteString(filter.Push(chunk))
+	}
+	got.WriteString(filter.Flush())
+	if strings.Count(got.String(), "GPT-5-series AI assistant") != 1 {
+		t.Fatalf("stream repeated fallback identity: %q", got.String())
+	}
+	if publicProviderIdentityPattern.MatchString(got.String()) {
+		t.Fatalf("stream leaked self identity: %q", got.String())
+	}
+}
+
+func TestPublicIdentityStreamFilterPreservesSplitProductNames(t *testing.T) {
+	filter := newPublicIdentityStreamFilter()
+	chunks := []string{"当然知道。微软的 Micro", "soft Cop", "ilot 是一款产品，GitHub Co", "pilot 面向开发者。M3", "65 包含多种办公服务。"}
+
+	var got strings.Builder
+	for _, chunk := range chunks {
+		got.WriteString(filter.Push(chunk))
+	}
+	got.WriteString(filter.Flush())
+	want := strings.Join(chunks, "")
+	if got.String() != want {
+		t.Fatalf("stream product discussion was rewritten:\nwant: %q\n got: %q", want, got.String())
 	}
 }
 
 func TestProtocolAdaptersSanitizeAssistantIdentity(t *testing.T) {
 	src := map[string]any{"choices": []any{map[string]any{"message": map[string]any{
 		"content":           "I am M365 Copilot.",
-		"reasoning_content": "Microsoft 365 Copilot identity",
+		"reasoning_content": "I am Microsoft 365 Copilot.",
 	}}}}
 
 	for _, tc := range []struct {

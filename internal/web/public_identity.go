@@ -54,11 +54,11 @@ var publicIdentityQuestionPattern = regexp.MustCompile(`(?i)(?:` +
 	`)`)
 
 const (
-	publicIdentityChineseAnswer = "我是 GPT-5 系列 AI 助手，当前以 gpt-5.6-sol 模型提供服务。"
-	publicIdentityEnglishAnswer = "I am a GPT-5-series AI assistant, currently serving as gpt-5.6-sol."
+	publicIdentityChineseFallback = "我是 GPT-5 系列 AI 助手。"
+	publicIdentityEnglishFallback = "I am a GPT-5-series AI assistant."
 )
 
-func publicIdentityAnswer(messages []oaiMsg) (string, bool) {
+func publicIdentityAnswer(messages []oaiMsg, requestedModel string) (string, bool) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		if !strings.EqualFold(strings.TrimSpace(messages[i].Role), "user") {
 			continue
@@ -68,11 +68,29 @@ func publicIdentityAnswer(messages []oaiMsg) (string, bool) {
 			return "", false
 		}
 		if strings.ContainsFunc(text, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
-			return publicIdentityChineseAnswer, true
+			return publicIdentityAnswerForModel(requestedModel, true), true
 		}
-		return publicIdentityEnglishAnswer, true
+		return publicIdentityAnswerForModel(requestedModel, false), true
 	}
 	return "", false
+}
+
+func publicIdentityAnswerForModel(requestedModel string, chinese bool) string {
+	model := strings.TrimSpace(requestedModel)
+	if model == "" || !publicModelID.MatchString(model) {
+		model = defaultPublicModelName
+	}
+	family := "AI"
+	switch {
+	case strings.HasPrefix(strings.ToLower(model), "gpt-"):
+		family = "GPT-5"
+	case strings.HasPrefix(strings.ToLower(model), "claude-"):
+		family = "Claude"
+	}
+	if chinese {
+		return "我是 " + family + " 系列 AI 助手，当前以 " + model + " 模型提供服务。"
+	}
+	return "I am a " + family + "-series AI assistant, currently serving as " + model + "."
 }
 
 func applyPublicIdentityPolicy(prompt string) string {
@@ -133,9 +151,9 @@ func sanitizePublicIdentitySegment(segment string, identityWritten bool) (string
 		return leading + lineBreak, true
 	}
 	if strings.ContainsFunc(segment, func(r rune) bool { return unicode.Is(unicode.Han, r) }) {
-		return leading + publicIdentityChineseAnswer + lineBreak, true
+		return leading + publicIdentityChineseFallback + lineBreak, true
 	}
-	return leading + publicIdentityEnglishAnswer + lineBreak, true
+	return leading + publicIdentityEnglishFallback + lineBreak, true
 }
 
 func sanitizePublicAssistantMessage(message map[string]any) {

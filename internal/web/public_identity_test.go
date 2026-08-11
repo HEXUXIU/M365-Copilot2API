@@ -22,26 +22,47 @@ func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 }
 
 func TestPublicIdentityAnswerDetectsSelfQuestionsOnly(t *testing.T) {
+	chineseAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", true)
+	englishAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", false)
 	tests := []struct {
 		name     string
 		content  string
 		want     string
 		detected bool
 	}{
-		{name: "chinese_model", content: "你是什么模型？", want: publicIdentityChineseAnswer, detected: true},
-		{name: "chinese_provider", content: "你是 Copilot 吗？", want: publicIdentityChineseAnswer, detected: true},
-		{name: "english_model", content: "What model are you?", want: publicIdentityEnglishAnswer, detected: true},
-		{name: "english_provider", content: "Are you Microsoft Copilot?", want: publicIdentityEnglishAnswer, detected: true},
+		{name: "chinese_model", content: "你是什么模型？", want: chineseAnswer, detected: true},
+		{name: "chinese_provider", content: "你是 Copilot 吗？", want: chineseAnswer, detected: true},
+		{name: "english_model", content: "What model are you?", want: englishAnswer, detected: true},
+		{name: "english_provider", content: "Are you Microsoft Copilot?", want: englishAnswer, detected: true},
 		{name: "product_knowledge", content: "Microsoft Copilot 是什么产品？", detected: false},
 		{name: "company_knowledge", content: "你知道微软吗？", detected: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, detected := publicIdentityAnswer([]oaiMsg{{Role: "user", Content: tc.content}})
+			got, detected := publicIdentityAnswer([]oaiMsg{{Role: "user", Content: tc.content}}, "gpt-5.6-sol")
 			if detected != tc.detected || got != tc.want {
 				t.Fatalf("answer=%q detected=%t, want answer=%q detected=%t", got, detected, tc.want, tc.detected)
 			}
 		})
+	}
+}
+
+func TestPublicIdentityAnswerUsesRequestedModelForAllAdvertisedModels(t *testing.T) {
+	models := configuredModelSpecs(defaultModelMappings)
+	if len(models) != 13 {
+		t.Fatalf("advertised models=%d, want 13", len(models))
+	}
+	for _, model := range models {
+		answer, detected := publicIdentityAnswer([]oaiMsg{{Role: "user", Content: "你是什么模型？"}}, model.ID)
+		if !detected || !strings.Contains(answer, model.ID) {
+			t.Fatalf("model=%q answer=%q detected=%t", model.ID, answer, detected)
+		}
+		if model.ID != "gpt-5.6-sol" && strings.Contains(answer, "gpt-5.6-sol") {
+			t.Fatalf("model=%q was reported as gpt-5.6-sol: %q", model.ID, answer)
+		}
+		if strings.HasPrefix(model.ID, "claude-") && !strings.Contains(answer, "Claude 系列") {
+			t.Fatalf("Claude model has wrong family: %q", answer)
+		}
 	}
 }
 
@@ -51,10 +72,14 @@ func TestWritePublicIdentityChatResponseProtocols(t *testing.T) {
 		t.Run(map[bool]string{false: "non_stream", true: "stream"}[stream], func(t *testing.T) {
 			rr := httptest.NewRecorder()
 			r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
-			s.writePublicIdentityChatResponse(rr, r, &oaiReq{Model: "gpt-5.6-sol", Stream: stream}, "[user]\n你是什么模型？", publicIdentityChineseAnswer, time.Now())
+			answer := publicIdentityAnswerForModel("gpt-5.6-terra", true)
+			s.writePublicIdentityChatResponse(rr, r, &oaiReq{Model: "gpt-5.6-terra", Stream: stream}, "[user]\n你是什么模型？", answer, time.Now())
 			body := rr.Body.String()
 			if strings.Count(body, "GPT-5 系列 AI 助手") != 1 {
 				t.Fatalf("identity missing or duplicated: %s", body)
+			}
+			if !strings.Contains(body, "gpt-5.6-terra") || strings.Contains(body, "gpt-5.6-sol") {
+				t.Fatalf("response reported the wrong model: %s", body)
 			}
 			if stream {
 				if !strings.Contains(body, `"finish_reason":"stop"`) || !strings.Contains(body, "data: [DONE]") {

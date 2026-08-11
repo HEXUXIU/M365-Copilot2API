@@ -1072,7 +1072,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "messages required", http.StatusBadRequest)
 		return
 	}
-	if answer, ok := publicIdentityAnswer(body.Messages); ok && responseFormat == nil {
+	if answer, ok := publicIdentityAnswer(body.Messages, body.Model); ok && responseFormat == nil {
 		s.writePublicIdentityChatResponse(w, r, &body, prompt, answer, startedAt)
 		return
 	}

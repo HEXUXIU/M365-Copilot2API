@@ -9,7 +9,7 @@ import (
 func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, calls []detectedToolCall, res chathub.Result, usage ...map[string]any) error {
 	toolCalls := toolCallMaps(calls)
 	msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": toolCalls}
-	reasoning := sanitizePublicAssistantText(res.Reasoning)
+	reasoning := sanitizePublicReasoningText(res.Reasoning)
 	if reasoning != "" {
 		msg["reasoning_content"] = reasoning
 	}

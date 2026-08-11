@@ -208,9 +208,9 @@ func modelCatalog() []map[string]any {
 			defaultReasoningLevel = "medium"
 		}
 		out = append(out, map[string]any{
-			"id": m.ID, "slug": m.ID, "display_name": displayName, "description": "Microsoft 365 gateway model route.",
+			"id": m.ID, "slug": m.ID, "display_name": displayName, "description": "Public model endpoint.",
 			"base_instructions": gatewayCodexBaseInstructions, "model_messages": codexModelMessages(),
-			"default_reasoning_level": defaultReasoningLevel, "object": "model", "owned_by": m.Owner,
+			"default_reasoning_level": defaultReasoningLevel, "object": "model", "owned_by": "gateway",
 			"shell_type": "shell_command", "visibility": "list", "supported_in_api": true, "priority": 1,
 			"additional_speed_tiers": []string{}, "service_tiers": []any{},
 			"availability_nux": nil, "upgrade": nil, "include_skills_usage_instructions": false,

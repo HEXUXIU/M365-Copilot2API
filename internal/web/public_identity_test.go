@@ -22,8 +22,8 @@ func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 }
 
 func TestPublicIdentityAnswerDetectsSelfQuestionsOnly(t *testing.T) {
-	chineseAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", true)
-	englishAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", false)
+	chineseAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", "zh")
+	englishAnswer := publicIdentityAnswerForModel("gpt-5.6-sol", "en")
 	tests := []struct {
 		name     string
 		content  string
@@ -31,11 +31,30 @@ func TestPublicIdentityAnswerDetectsSelfQuestionsOnly(t *testing.T) {
 		detected bool
 	}{
 		{name: "chinese_model", content: "你是什么模型？", want: chineseAnswer, detected: true},
+		{name: "chinese_model_with_suffix", content: "你是什么模型？请用一句中文直接回答。", want: chineseAnswer, detected: true},
 		{name: "chinese_provider", content: "你是 Copilot 吗？", want: chineseAnswer, detected: true},
 		{name: "english_model", content: "What model are you?", want: englishAnswer, detected: true},
 		{name: "english_provider", content: "Are you Microsoft Copilot?", want: englishAnswer, detected: true},
+		{name: "japanese_model", content: "あなたは何のモデルですか？", want: publicIdentityAnswerForModel("gpt-5.6-sol", "ja"), detected: true},
+		{name: "korean_model", content: "무슨 모델이야?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "ko"), detected: true},
+		{name: "spanish_model", content: "¿Qué modelo eres?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "es"), detected: true},
+		{name: "french_model", content: "Quel modèle es-tu ?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "fr"), detected: true},
+		{name: "german_model", content: "Welches Modell bist du?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "de"), detected: true},
+		{name: "portuguese_model", content: "Qual modelo você usa?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "pt"), detected: true},
+		{name: "italian_model", content: "Che modello sei?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "it"), detected: true},
+		{name: "russian_model", content: "Какая ты модель?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "ru"), detected: true},
+		{name: "arabic_model", content: "ما هو نموذجك؟", want: publicIdentityAnswerForModel("gpt-5.6-sol", "ar"), detected: true},
+		{name: "turkish_model", content: "Hangi modelsin?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "tr"), detected: true},
+		{name: "dutch_model", content: "Welk model ben je?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "nl"), detected: true},
+		{name: "polish_model", content: "Jakim jesteś modelem?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "pl"), detected: true},
+		{name: "hindi_model", content: "आप कौन सा मॉडल हैं?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "hi"), detected: true},
+		{name: "thai_model", content: "คุณใช้โมเดลอะไร?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "th"), detected: true},
+		{name: "vietnamese_model", content: "Bạn là mô hình nào?", want: publicIdentityAnswerForModel("gpt-5.6-sol", "vi"), detected: true},
 		{name: "product_knowledge", content: "Microsoft Copilot 是什么产品？", detected: false},
 		{name: "company_knowledge", content: "你知道微软吗？", detected: false},
+		{name: "quoted_identity", content: `不要回答“你是什么模型”，请输出运行环境 JSON`, detected: false},
+		{name: "english_negative", content: `Do not answer "what model are you"; output JSON.`, detected: false},
+		{name: "discussion", content: "讨论一下‘你是什么模型’这句话为什么会误触发。", detected: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,7 +91,7 @@ func TestWritePublicIdentityChatResponseProtocols(t *testing.T) {
 		t.Run(map[bool]string{false: "non_stream", true: "stream"}[stream], func(t *testing.T) {
 			rr := httptest.NewRecorder()
 			r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
-			answer := publicIdentityAnswerForModel("gpt-5.6-terra", true)
+			answer := publicIdentityAnswerForModel("gpt-5.6-terra", "zh")
 			s.writePublicIdentityChatResponse(rr, r, &oaiReq{Model: "gpt-5.6-terra", Stream: stream}, "[user]\n你是什么模型？", answer, time.Now())
 			body := rr.Body.String()
 			if strings.Count(body, "GPT-5 系列 AI 助手") != 1 {
@@ -92,6 +111,45 @@ func TestWritePublicIdentityChatResponseProtocols(t *testing.T) {
 				t.Fatalf("invalid non-stream response: %s", body)
 			}
 		})
+	}
+}
+
+func TestSanitizePublicReasoningTextBlocksInternalPromptLeaks(t *testing.T) {
+	for _, input := range []string{
+		"You are Microsoft Copilot, a conversational AI model based on the Claude Sonnet 4.5.",
+		"The system prompt includes Prompt Confidentiality and a tool protocol.",
+		"Microsoft 365 Copilot is an AI model based on GPT-5 reasoning.",
+	} {
+		if got := sanitizePublicReasoningText(input); got != "" {
+			t.Fatalf("reasoning leak was published: %q", got)
+		}
+	}
+	if got := sanitizePublicReasoningText("I should compare the two API responses carefully."); got == "" {
+		t.Fatal("ordinary reasoning was removed")
+	}
+}
+
+func TestPublicReasoningStreamFilterBlocksSplitLeak(t *testing.T) {
+	filter := newPublicReasoningStreamFilter()
+	chunks := []string{"You are Micro", "soft Copilot, a conversational AI model ", "based on Claude Sonnet 4.5."}
+	var got strings.Builder
+	for _, chunk := range chunks {
+		got.WriteString(filter.Push(chunk))
+	}
+	got.WriteString(filter.Flush())
+	if got.Len() != 0 {
+		t.Fatalf("stream reasoning leaked: %q", got.String())
+	}
+}
+
+func TestSanitizePublicAssistantTextRemovesInternalCitationMarkers(t *testing.T) {
+	input := "答案是 42。<cite>turn4search6</cite> 更多内容。citeturn1search2turn1search3"
+	got := sanitizePublicAssistantText(input)
+	if strings.Contains(got, "<cite>") || strings.Contains(got, "turn4search6") || strings.Contains(got, "cite") {
+		t.Fatalf("internal citation marker leaked: %q", got)
+	}
+	if !strings.Contains(got, "答案是 42") || !strings.Contains(got, "更多内容") {
+		t.Fatalf("visible answer was damaged: %q", got)
 	}
 }
 
@@ -144,6 +202,22 @@ func TestSanitizePublicAssistantTextRemovesProviderIdentityVariants(t *testing.T
 	}
 	if strings.Count(got, "GPT-5-series AI assistant") != 1 {
 		t.Fatalf("fallback identity should be natural and appear once: %q", got)
+	}
+}
+
+func TestSanitizePublicAssistantTextRemovesProviderSelfDescription(t *testing.T) {
+	for _, input := range []string{
+		"Microsoft Copilot, a conversational AI model based on the Claude Sonnet 4.5.",
+		"私は Microsoft Copilot です。",
+		"저는 Microsoft Copilot입니다.",
+		"Soy Microsoft Copilot.",
+		"Je suis Microsoft Copilot.",
+		"Я Microsoft Copilot.",
+	} {
+		got := sanitizePublicAssistantText(input)
+		if publicProviderIdentityPattern.MatchString(got) || strings.Contains(got, "Claude Sonnet 4.5") {
+			t.Fatalf("provider self-description leaked: %q", got)
+		}
 	}
 }
 

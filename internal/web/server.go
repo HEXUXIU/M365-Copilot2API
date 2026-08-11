@@ -827,7 +827,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 	}
 	s.markAccountSuccess(acc.ID)
 	res.Text = sanitizePublicAssistantText(res.Text)
-	res.Reasoning = sanitizePublicAssistantText(res.Reasoning)
+	res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
 	if body.SessionKey != "" {
 		s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: text})
 	}
@@ -1454,7 +1454,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			return nil
 		}
 		contentFilter := newPublicIdentityStreamFilter()
-		reasoningFilter := newPublicIdentityStreamFilter()
+		reasoningFilter := newPublicReasoningStreamFilter()
 		onDelta := func(content string) error {
 			if content = contentFilter.Push(content); content != "" {
 				return writeChunk(map[string]any{"content": content})
@@ -1483,7 +1483,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				}
 			}
 			res.Text = sanitizePublicAssistantText(res.Text)
-			res.Reasoning = sanitizePublicAssistantText(res.Reasoning)
+			res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
 			s.markAccountSuccess(acc.ID)
 			usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: res.Text}, prompt, startedAt, affinityState)
 			writeStreamFinish(r.Context(), w, flusher, id, model, chatUsage(usage))
@@ -1626,7 +1626,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		res.Text = "I cannot confirm completion because no matching tool results were returned. No external action has been verified."
 	}
 	res.Text = sanitizePublicAssistantText(res.Text)
-	res.Reasoning = sanitizePublicAssistantText(res.Reasoning)
+	res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
 	log.Printf("[debug] res.Text bytes=%d content=%q", len(res.Text), res.Text)
 	created := time.Now().Unix()
 

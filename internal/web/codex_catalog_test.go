@@ -44,6 +44,9 @@ func TestModelsAdvertiseContextAndReasoning(t *testing.T) {
 		t.Fatalf("models alias length=%d, data length=%d", len(body.Models), len(body.Data))
 	}
 	for _, m := range body.Data {
+		if m["owned_by"] != "gateway" || m["description"] != "Public model endpoint." {
+			t.Fatalf("model catalog exposes provider details: %#v", m)
+		}
 		baseInstructions, ok := m["base_instructions"].(string)
 		if !ok || baseInstructions == "" {
 			t.Fatalf("missing Codex base instructions: %#v", m)

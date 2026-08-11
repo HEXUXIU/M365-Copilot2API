@@ -63,7 +63,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: text})
 	}
 	res.Text = sanitizePublicAssistantText(res.Text)
-	res.Reasoning = sanitizePublicAssistantText(res.Reasoning)
+	res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

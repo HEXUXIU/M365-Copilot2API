@@ -164,3 +164,26 @@ func TestMultimodalHistoryDigestIncludesImageContent(t *testing.T) {
 		t.Fatal("different images produced the same history digest")
 	}
 }
+
+func TestToolCallHistoryDigestIgnoresProtocolRoundTripNoise(t *testing.T) {
+	stored := []oaiMsg{{
+		Role: "assistant", Content: nil, ReasoningContent: "planning",
+		ToolCalls: []map[string]any{{
+			"id": "call_gateway", "type": "function",
+			"function": map[string]any{"name": "RunCommand", "arguments": `{"cwd":"C:\\work","blocking":true}`},
+		}},
+	}}
+	roundTripped := []oaiMsg{{
+		Role: "assistant", Content: "", ReasoningContent: "planning",
+		ToolCalls: []map[string]any{{
+			"id": "call_client", "index": float64(0), "type": "function",
+			"function": map[string]any{"name": "RunCommand", "arguments": `{"blocking":true,"cwd":"C:\\work"}`},
+		}},
+	}}
+	if historyDigest(stored) != historyDigest(roundTripped) {
+		t.Fatal("protocol-equivalent tool calls produced different history digests")
+	}
+	if !messagesEqual(stored[0], roundTripped[0]) {
+		t.Fatal("session resolver rejected a protocol-equivalent tool call")
+	}
+}

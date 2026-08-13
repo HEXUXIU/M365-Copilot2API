@@ -121,9 +121,16 @@ func deriveAffinityKey(tenant string, body *oaiReq, r *http.Request) affinityKey
 }
 
 func canonicalMessage(msg oaiMsg) map[string]any {
+	content := canonicalContentValue(msg.Content)
+	// OpenAI-compatible clients commonly round-trip an assistant tool-call
+	// message as content:"" even when the gateway emitted content:null. Both
+	// forms mean that the turn contains only tool calls.
+	if len(msg.ToolCalls) > 0 && emptyMessageContent(msg.Content) {
+		content = ""
+	}
 	out := map[string]any{
 		"role":    strings.ToLower(strings.TrimSpace(msg.Role)),
-		"content": canonicalContentValue(msg.Content),
+		"content": content,
 	}
 	if msg.Name != "" {
 		out["name"] = msg.Name
@@ -138,12 +145,38 @@ func canonicalMessage(msg oaiMsg) map[string]any {
 			calls = append(calls, map[string]any{
 				"type":      firstNonEmpty(fmt.Sprint(call["type"]), "function"),
 				"name":      fmt.Sprint(fn["name"]),
-				"arguments": fmt.Sprint(fn["arguments"]),
+				"arguments": canonicalToolArgumentsValue(fn["arguments"]),
 			})
 		}
 		out["tool_calls"] = calls
 	}
 	return out
+}
+
+func emptyMessageContent(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(typed) == ""
+	case []any:
+		return len(typed) == 0
+	case []map[string]any:
+		return len(typed) == 0
+	default:
+		return false
+	}
+}
+
+func canonicalToolArgumentsValue(value any) any {
+	if raw, ok := value.(string); ok {
+		var decoded any
+		if json.Unmarshal([]byte(raw), &decoded) == nil {
+			return canonicalContentValue(decoded)
+		}
+		return raw
+	}
+	return canonicalContentValue(value)
 }
 
 func canonicalContentValue(value any) any {

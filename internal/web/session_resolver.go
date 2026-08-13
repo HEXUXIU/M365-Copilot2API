@@ -394,27 +394,25 @@ func contextPrefixLen(hist, msgs []oaiMsg) int {
 // messagesEqual 鍒ゅ畾涓ゆ潯娑堟伅鍦ㄤ細璇濋敭鎰忎箟涓婄瓑浠凤細role 涓庢枃鏈唴瀹逛竴鑷淬€?
 // 蹇界暐 tool_calls 鐨?ID 缁嗚妭锛堜細璇濋敭鍙叧蹇冨唴瀹瑰浣曡妯″瀷娑堝寲锛夈€?
 func messagesEqual(a, b oaiMsg) bool {
-	if a.Role != b.Role {
+	if !strings.EqualFold(strings.TrimSpace(a.Role), strings.TrimSpace(b.Role)) {
 		return false
 	}
 	ta := contentToString(a.Content)
 	tb := contentToString(b.Content)
-	if ta != tb {
+	toolOnly := len(a.ToolCalls) > 0 && len(b.ToolCalls) > 0 && emptyMessageContent(a.Content) && emptyMessageContent(b.Content)
+	if !toolOnly && ta != tb {
 		return false
 	}
-	if (a.ToolCalls == nil) != (b.ToolCalls == nil) {
+	if len(a.ToolCalls) != len(b.ToolCalls) {
 		return false
 	}
 	for i := range a.ToolCalls {
-		if i >= len(b.ToolCalls) {
-			return false
-		}
 		if toolCallEqual(a.ToolCalls[i], b.ToolCalls[i]) {
 			continue
 		}
 		return false
 	}
-	return len(a.ToolCalls) == len(b.ToolCalls)
+	return true
 }
 
 // toolCallEqual 比较 name 与 arguments，忽略 ID：同一段工具调用重放时
@@ -427,9 +425,9 @@ func toolCallEqual(x, y map[string]any) bool {
 	if xn != yn {
 		return false
 	}
-	xa, _ := xFunc["arguments"].(string)
-	ya, _ := yFunc["arguments"].(string)
-	return xa == ya
+	xa, _ := json.Marshal(canonicalToolArgumentsValue(xFunc["arguments"]))
+	ya, _ := json.Marshal(canonicalToolArgumentsValue(yFunc["arguments"]))
+	return string(xa) == string(ya)
 }
 
 func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, body *oaiReq, r *http.Request) {

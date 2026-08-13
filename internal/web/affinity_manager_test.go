@@ -124,9 +124,18 @@ func TestToolCallHistoryReusesCloudConversation(t *testing.T) {
 	ctx := context.Background()
 	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
 	available := func(string) bool { return true }
-	toolCall := map[string]any{
+	storedToolCall := map[string]any{
 		"id":   "call_weather",
 		"type": "function",
+		"function": map[string]any{
+			"name":      "get_weather",
+			"arguments": `{"city":"Beijing"}`,
+		},
+	}
+	clientToolCall := map[string]any{
+		"id":    "call_weather_rewritten",
+		"index": float64(0),
+		"type":  "function",
 		"function": map[string]any{
 			"name":      "get_weather",
 			"arguments": `{"city":"Beijing"}`,
@@ -139,14 +148,14 @@ func TestToolCallHistoryReusesCloudConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	first.apply(firstBody)
-	first.complete(ctx, firstBody, first.accountID, "conv-tool", "sess-tool", oaiMsg{Role: "assistant", ToolCalls: []map[string]any{toolCall}}, 20, 5)
+	first.complete(ctx, firstBody, first.accountID, "conv-tool", "sess-tool", oaiMsg{Role: "assistant", Content: nil, ToolCalls: []map[string]any{storedToolCall}}, 20, 5)
 	firstAccount := first.accountID
 	first.close()
 
 	nextBody := &oaiReq{Messages: []oaiMsg{
 		{Role: "user", Content: "weather in Beijing"},
-		{Role: "assistant", ToolCalls: []map[string]any{toolCall}},
-		{Role: "tool", ToolCallID: "call_weather", Content: `{"temperature":26}`},
+		{Role: "assistant", Content: "", ToolCalls: []map[string]any{clientToolCall}},
+		{Role: "tool", ToolCallID: "call_weather_rewritten", Content: `{"temperature":26}`},
 	}}
 	next, err := manager.begin(ctx, "tenant", nextBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
 	if err != nil {

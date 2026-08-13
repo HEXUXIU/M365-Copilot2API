@@ -1197,6 +1197,33 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 	defer cancel()
 	account := chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}
+	routerConversationID := body.ConversationID
+	routerSessionID := body.SessionID
+	runRouter := func(text string) (chathub.Result, error) {
+		res, routeErr := s.chat.Chat(ctx, account, chathub.Request{
+			Text: text, Tone: tone, ConversationID: routerConversationID,
+			SessionID: routerSessionID, Attachments: body.Attachments,
+		})
+		if routeErr == nil {
+			routerConversationID = firstNonEmpty(res.ConversationID, routerConversationID)
+			routerSessionID = firstNonEmpty(res.SessionID, routerSessionID)
+			res.ConversationID = routerConversationID
+			res.SessionID = routerSessionID
+			s.markAccountSuccess(acc.ID)
+		}
+		return res, routeErr
+	}
+	adoptRouterConversation := func() {
+		body.ConversationID = firstNonEmpty(routerConversationID, body.ConversationID)
+		body.SessionID = firstNonEmpty(routerSessionID, body.SessionID)
+	}
+	bindRouterCalls := func(res chathub.Result, calls []detectedToolCall, routePrompt string) reuseUsage {
+		adoptRouterConversation()
+		if body.User != "" && res.ConversationID != "" {
+			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
+		}
+		return s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", ToolCalls: toolCallMaps(calls)}, routePrompt, startedAt, affinityState)
+	}
 	// The stream is opened by the actual response path below. Do not emit a
 	// tool preamble here: a request may contain tools in its schema while still
 	// being an ordinary text question.
@@ -1209,16 +1236,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		// Only fall through to text streaming when the router explicitly selects
 		// no tool; this prevents a natural-language preamble from becoming a
 		// completed assistant turn with the actual call lost.
-		routePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routePrompt := modelToolRouterPrompt(answerPrompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
-		routeRes, routeErr := s.chat.Chat(ctx, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments})
+		routeRes, routeErr := runRouter(routePrompt)
 		log.Printf("[req-trace] id=%s stage=router_return elapsed_ms=%d err=%t", requestID, time.Since(startedAt).Milliseconds(), routeErr != nil)
-		// Router turns run in a throwaway cloud conversation that is never
-		// reused by the answer turn; delete it so the conversation list does
-		// not accumulate one entry per routed request.
-		if routeErr == nil && routeRes.ConversationID != "" {
-			s.dropTransientConversation(routeRes.ConversationID)
-		}
 		if routeErr != nil {
 			http.Error(w, "tool router: "+routeErr.Error(), http.StatusBadGateway)
 			return
@@ -1226,13 +1247,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
 		if !parsed {
-			repairRes, repairErr := s.chat.Chat(ctx, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed. OUTPUT:\n` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments})
-			if repairErr == nil && repairRes.ConversationID != "" {
-				s.dropTransientConversation(repairRes.ConversationID)
-			}
+			repairRes, repairErr := runRouter(`Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
+				routeRes = repairRes
 			}
 		}
 		if parsed && len(calls) > 0 {
@@ -1241,10 +1260,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			routerUsage := reuseUsage{PromptTokens: EstimateTokens(prompt), CompletionTokens: EstimateTokens(routeRes.Text)}
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), true, calls, routeRes, chatUsage(routerUsage))
 			return
 		}
+		adoptRouterConversation()
+		answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
 	}
 	if body.Stream {
 		answerPrompt = answerPrompt + "\n" + ledger.RouterContext() + "\nFINAL ANSWER RULE: Answer the user directly. If a tool is explicitly required, emit its structured call; otherwise return ordinary text."
@@ -1457,8 +1478,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// Ask the upstream model to select and validate the next tool. The gateway
 	// remains tool-agnostic; it only validates and serializes the decision.
 	if planningMode == "router" && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
-		routePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		routeRes, routeErr := s.chat.Chat(ctx, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments})
+		routePrompt := modelToolRouterPrompt(answerPrompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routeRes, routeErr := runRouter(routePrompt)
 		if routeErr != nil {
 			s.accountPool.MarkFailure(acc.ID, routeErr, rateLimitCooldown)
 			if IsRateLimited(routeErr) || IsAuthFailure(routeErr) {
@@ -1485,11 +1506,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.accountPool.MarkSuccess(acc.ID)
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
+		calls = filterCompletedCalls(calls, ledger)
 		if !parsed {
-			repairRes, repairErr := s.chat.Chat(ctx, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Do not invent calls; use {"calls":[]} if unrecoverable. OUTPUT:
-` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments})
+			repairRes, repairErr := runRouter(`Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Do not invent calls; use {"calls":[]} if unrecoverable.`)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
+				calls = filterCompletedCalls(calls, ledger)
+				routeRes = repairRes
 			}
 			if !parsed {
 				http.Error(w, "model returned an invalid tool routing decision", http.StatusBadGateway)
@@ -1503,7 +1526,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			routerUsage := reuseUsage{PromptTokens: EstimateTokens(prompt), CompletionTokens: EstimateTokens(routeRes.Text)}
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, calls, routeRes, chatUsage(routerUsage))
 			return
 		}
@@ -1512,7 +1535,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			retryText := `Select at least one required next tool call from FUNCTION_DEFINITIONS. Validate every argument against its schema. Return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.
 APPLICATION_REQUEST_AND_EVIDENCE:
 ` + prompt + "\n" + ledger.RouterContext() + "\nFUNCTION_DEFINITIONS:\n" + string(defs)
-			retryRes, retryErr := s.chat.Chat(ctx, account, chathub.Request{Text: retryText, Tone: tone, Attachments: body.Attachments})
+			retryRes, retryErr := runRouter(retryText)
 			if retryErr == nil {
 				calls, parsed = parseModelToolDecision(retryRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -1522,7 +1545,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 					}
 					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-					routerUsage := reuseUsage{PromptTokens: EstimateTokens(prompt), CompletionTokens: EstimateTokens(retryRes.Text)}
+					routerUsage := bindRouterCalls(retryRes, calls, retryText)
 					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, calls, retryRes, chatUsage(routerUsage))
 					return
 				}
@@ -1530,6 +1553,8 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			http.Error(w, "model did not select a required tool after constrained retry", http.StatusBadGateway)
 			return
 		}
+		adoptRouterConversation()
+		answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
 	}
 	if len(ledger.Completed) > 0 || len(ledger.Pending) > 0 {
 		answerPrompt += "\n" + ledger.RouterContext()
@@ -1848,7 +1873,11 @@ const defaultPublicModelName = "m365-copilot"
 func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.Request, res chathub.Result, assistantMsg oaiMsg, prompt string, startedAt time.Time, affinityState *affinityRequest) reuseUsage {
 	fullPrompt, _ := flattenPromptMessages(body.Messages, nil)
 	promptTokens := EstimateTokens(strings.TrimSpace(fullPrompt))
-	completionTokens := EstimateTokens(contentToString(assistantMsg.Content))
+	completionText := contentToString(assistantMsg.Content)
+	if len(assistantMsg.ToolCalls) > 0 {
+		completionText = mustJSON(assistantMsg.ToolCalls)
+	}
+	completionTokens := EstimateTokens(completionText)
 	usage := reuseUsage{PromptTokens: promptTokens, CompletionTokens: completionTokens}
 	if res.ConversationID == "" {
 		return usage

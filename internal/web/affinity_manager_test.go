@@ -118,6 +118,54 @@ func TestExplicitSessionContinuesWithoutResendingHistory(t *testing.T) {
 	}
 }
 
+func TestToolCallHistoryReusesCloudConversation(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second, AccountConcurrency: 8})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+	toolCall := map[string]any{
+		"id":   "call_weather",
+		"type": "function",
+		"function": map[string]any{
+			"name":      "get_weather",
+			"arguments": `{"city":"Beijing"}`,
+		},
+	}
+
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "weather in Beijing"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv-tool", "sess-tool", oaiMsg{Role: "assistant", ToolCalls: []map[string]any{toolCall}}, 20, 5)
+	firstAccount := first.accountID
+	first.close()
+
+	nextBody := &oaiReq{Messages: []oaiMsg{
+		{Role: "user", Content: "weather in Beijing"},
+		{Role: "assistant", ToolCalls: []map[string]any{toolCall}},
+		{Role: "tool", ToolCallID: "call_weather", Content: `{"temperature":26}`},
+	}}
+	next, err := manager.begin(ctx, "tenant", nextBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.close()
+	next.apply(nextBody)
+	if !next.hasBinding || !next.incremental || next.prefixCount != 2 {
+		t.Fatalf("tool history binding not resolved: state=%s", next)
+	}
+	if next.accountID != firstAccount || nextBody.ConversationID != "conv-tool" || nextBody.SessionID != "sess-tool" {
+		t.Fatalf("tool continuation changed route: account=%q body=%+v", next.accountID, nextBody)
+	}
+	usage := next.complete(ctx, nextBody, next.accountID, "conv-tool", "sess-tool", oaiMsg{Role: "assistant", Content: "26 C"}, 30, 3)
+	if !usage.Confirmed || usage.CachedTokens <= 0 {
+		t.Fatalf("tool continuation did not report confirmed cache: %+v", usage)
+	}
+}
+
 func TestSharedAccountHealthExcludesCoolingAccount(t *testing.T) {
 	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
 	defer manager.close()

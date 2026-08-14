@@ -99,3 +99,21 @@ func TestCacheUsageProtocolMappings(t *testing.T) {
 		}
 	})
 }
+
+func TestResponsesUsageUsesConfirmedInnerPromptTotal(t *testing.T) {
+	u := responsesReuseUsage(map[string]any{
+		"prompt_tokens":     int64(4698),
+		"completion_tokens": int64(12),
+		"prompt_tokens_details": map[string]any{
+			"cached_tokens": int64(4688),
+		},
+	}, 3338, 10)
+	usage := responsesUsage(u)
+	details, _ := usage["input_tokens_details"].(map[string]any)
+	if got := numberInt64(usage["input_tokens"]); got != 4698 {
+		t.Fatalf("Responses input tokens ignored inner usage: %d", got)
+	}
+	if got := numberInt64(details["cached_tokens"]); got != 4688 {
+		t.Fatalf("Responses cache tokens were cleared by fallback estimate: %d", got)
+	}
+}

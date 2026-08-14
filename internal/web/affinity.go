@@ -625,6 +625,26 @@ func cachedTokensFromChatResult(src map[string]any) int64 {
 	return numberInt64(details["cached_tokens"])
 }
 
+func responsesReuseUsage(innerUsage map[string]any, fallbackPrompt, fallbackCompletion int64) reuseUsage {
+	prompt := numberInt64(innerUsage["prompt_tokens"])
+	if prompt <= 0 {
+		prompt = fallbackPrompt
+	}
+	completion := numberInt64(innerUsage["completion_tokens"])
+	if completion <= 0 {
+		completion = fallbackCompletion
+	}
+	details, _ := innerUsage["prompt_tokens_details"].(map[string]any)
+	cached := numberInt64(details["cached_tokens"])
+	if prompt < cached {
+		prompt = cached
+	}
+	return reuseUsage{
+		PromptTokens: prompt, CompletionTokens: completion,
+		CachedTokens: cached, Confirmed: cached > 0,
+	}
+}
+
 func usageSourceFromCachedTokens(cached int64) string {
 	if cached > 0 {
 		return "conversation_reuse"

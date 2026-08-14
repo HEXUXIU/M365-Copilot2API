@@ -209,8 +209,8 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		usageOutput += call.Name + call.Args
 	}
 	estimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, usageOutput)
-	cached := cachedTokensFromChatResult(map[string]any{"usage": innerUsage})
-	u := reuseUsage{PromptTokens: numberInt64(estimate.Values["input_tokens"]), CompletionTokens: numberInt64(estimate.Values["output_tokens"]), CachedTokens: cached, Confirmed: cached > 0}
+	u := responsesReuseUsage(innerUsage, numberInt64(estimate.Values["input_tokens"]), numberInt64(estimate.Values["output_tokens"]))
+	cached := confirmedCachedTokens(u)
 	usage := responsesUsage(u)
 	source := usageSourceFromCachedTokens(cached)
 	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": usage, "m365": localUsageMetadata(source)}
@@ -308,8 +308,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	estimate := estimateResponsesUsage(firstNonEmpty(body.Model, defaultPublicModelName), o.Messages, o.Tools, o.ToolChoice, outputForUsage)
-	cached := cachedTokensFromChatResult(out)
-	u := reuseUsage{PromptTokens: numberInt64(estimate.Values["input_tokens"]), CompletionTokens: numberInt64(estimate.Values["output_tokens"]), CachedTokens: cached, Confirmed: cached > 0}
+	innerUsage, _ := out["usage"].(map[string]any)
+	u := responsesReuseUsage(innerUsage, numberInt64(estimate.Values["input_tokens"]), numberInt64(estimate.Values["output_tokens"]))
+	cached := confirmedCachedTokens(u)
 	out["usage"] = responsesUsage(u)
 	out["m365_usage_source"] = usageSourceFromCachedTokens(cached)
 	s.usage.record(UsageRecord{

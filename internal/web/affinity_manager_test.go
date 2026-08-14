@@ -326,6 +326,32 @@ func TestObserveModeDoesNotChangeRouting(t *testing.T) {
 	}
 }
 
+func TestRequestCancellationDoesNotDegradeRedisAffinity(t *testing.T) {
+	mr := miniredis.RunT(t)
+	manager := openAffinityManager(affinityConfig{
+		Mode: affinityEnforce, RedisURL: "redis://" + mr.Addr() + "/0",
+		RedisPoolSize: 2, TTL: time.Hour, MaxSessions: 100,
+		LockTTL: time.Minute, LockWait: time.Second, AccountConcurrency: 8,
+	})
+	defer manager.close()
+
+	for _, err := range []error{context.Canceled, context.DeadlineExceeded} {
+		if store := manager.markStoreError(err); store != manager.primary {
+			t.Fatalf("request cancellation selected fallback store: %v", err)
+		}
+		status := manager.status()
+		if status["degraded"] != false || status["store"] != "redis" {
+			t.Fatalf("request cancellation degraded Redis: err=%v status=%v", err, status)
+		}
+	}
+
+	manager.markStoreError(errors.New("redis connection failed"))
+	status := manager.status()
+	if status["degraded"] != true || status["store"] != "local_degraded" {
+		t.Fatalf("real store error did not degrade Redis: %v", status)
+	}
+}
+
 func TestRedisOutageFallsBackWithoutCacheClaim(t *testing.T) {
 	mr := miniredis.RunT(t)
 	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, RedisURL: "redis://" + mr.Addr() + "/0", RedisPoolSize: 2, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second, AccountConcurrency: 8})

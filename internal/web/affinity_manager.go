@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -139,6 +140,14 @@ func (m *affinityManager) store(ctx context.Context) affinityStore {
 }
 
 func (m *affinityManager) markStoreError(err error) affinityStore {
+	// Caller cancellation is not evidence that the shared Redis store failed.
+	// Degrading here sends unrelated requests to an empty local store.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		if m != nil && m.primary != nil {
+			return m.primary
+		}
+		return m.fallback
+	}
 	if err != nil {
 		m.mu.Lock()
 		m.degraded = true

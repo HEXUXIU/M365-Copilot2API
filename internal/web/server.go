@@ -978,17 +978,17 @@ type oaiReq struct {
 	Stream         bool            `json:"stream"`
 	PromptCacheKey string          `json:"prompt_cache_key,omitempty"`
 	// optional account routing
-	User           string               `json:"user"`
-	AccountID      string               `json:"accountId"`
-	ConversationID string               `json:"conversation_id"`
-	SessionID      string               `json:"session_id"`
-	SessionKey     string               `json:"session_key"`
+	User           string `json:"user"`
+	AccountID      string `json:"accountId"`
+	ConversationID string `json:"conversation_id"`
+	SessionID      string `json:"session_id"`
+	SessionKey     string `json:"session_key"`
 	// CamelCase aliases mirroring the response metadata fields; clients echo
 	// m365.conversationId / m365.sessionId back verbatim.
-	ConversationIDC string `json:"conversationId,omitempty"`
-	SessionIDC      string `json:"sessionId,omitempty"`
-	Attachments    []chathub.Attachment `json:"attachments,omitempty"`
-	Tools          []chathub.Tool       `json:"tools,omitempty"`
+	ConversationIDC string               `json:"conversationId,omitempty"`
+	SessionIDC      string               `json:"sessionId,omitempty"`
+	Attachments     []chathub.Attachment `json:"attachments,omitempty"`
+	Tools           []chathub.Tool       `json:"tools,omitempty"`
 	// Legacy OpenAI-compatible clients still send functions/function_call.
 	Functions       []json.RawMessage `json:"functions,omitempty"`
 	ToolChoice      any               `json:"tool_choice,omitempty"`
@@ -1222,7 +1222,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		return s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", ToolCalls: toolCallMaps(calls)}, routePrompt, startedAt, affinityState)
+		return s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, routePrompt, startedAt, affinityState)
 	}
 	// The stream is opened by the actual response path below. Do not emit a
 	// tool preamble here: a request may contain tools in its schema while still

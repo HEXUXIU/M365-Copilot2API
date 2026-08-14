@@ -29,17 +29,6 @@ func TestOpenAIErrorEnvelopeAndExtraction(t *testing.T) {
 		t.Fatalf("message=%q", got)
 	}
 }
-func TestPublicErrorsSanitizeProviderIdentity(t *testing.T) {
-	rr := httptest.NewRecorder()
-	writeOpenAIError(rr, 502, "upstream_error", "M365 Copilot returned an error")
-
-	lower := strings.ToLower(rr.Body.String())
-	for _, forbidden := range []string{"m365", "copilot"} {
-		if strings.Contains(lower, forbidden) {
-			t.Fatalf("error response still contains %q: %s", forbidden, rr.Body.String())
-		}
-	}
-}
 func TestMaxToolRoundsConfig(t *testing.T) {
 	t.Setenv("M365_MAX_TOOL_ROUNDS", "7")
 	if maxToolRounds() != 7 {

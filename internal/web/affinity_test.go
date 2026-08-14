@@ -166,14 +166,14 @@ func TestMultimodalHistoryDigestIncludesImageContent(t *testing.T) {
 
 func TestToolCallHistoryDigestIgnoresProtocolRoundTripNoise(t *testing.T) {
 	stored := []oaiMsg{{
-		Role: "assistant", Content: nil, ReasoningContent: "planning",
+		Role: "assistant", Content: nil,
 		ToolCalls: []map[string]any{{
 			"id": "call_gateway", "type": "function",
 			"function": map[string]any{"name": "RunCommand", "arguments": `{"cwd":"C:\\work","blocking":true}`},
 		}},
 	}}
 	roundTripped := []oaiMsg{{
-		Role: "assistant", Content: "", ReasoningContent: "planning",
+		Role: "assistant", Content: "",
 		ToolCalls: []map[string]any{{
 			"id": "call_client", "index": float64(0), "type": "function",
 			"function": map[string]any{"name": "RunCommand", "arguments": `{"blocking":true,"cwd":"C:\\work"}`},

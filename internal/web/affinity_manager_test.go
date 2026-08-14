@@ -119,7 +119,7 @@ func TestExplicitSessionContinuesWithoutResendingHistory(t *testing.T) {
 }
 
 func TestToolCallHistoryReusesCloudConversation(t *testing.T) {
-	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second, AccountConcurrency: 8})
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
 	defer manager.close()
 	ctx := context.Background()
 	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
@@ -302,7 +302,7 @@ func TestRequestCancellationDoesNotDegradeRedisAffinity(t *testing.T) {
 	manager := openAffinityManager(affinityConfig{
 		Mode: affinityEnforce, RedisURL: "redis://" + mr.Addr() + "/0",
 		RedisPoolSize: 2, TTL: time.Hour, MaxSessions: 100,
-		LockTTL: time.Minute, LockWait: time.Second, AccountConcurrency: 8,
+		LockTTL: time.Minute, LockWait: time.Second,
 	})
 	defer manager.close()
 

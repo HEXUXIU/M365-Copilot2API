@@ -89,22 +89,22 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 		inputTokens := int64(0)
 		outputTokens := int64(0)
 		if u, ok := src["usage"].(map[string]any); ok {
-		if v, ok := u["prompt_tokens"]; ok {
-			if n, ok := v.(int64); ok {
-				inputTokens = n
+			if v, ok := u["prompt_tokens"]; ok {
+				if n, ok := v.(int64); ok {
+					inputTokens = n
+				}
+				if n, ok := v.(float64); ok {
+					inputTokens = int64(n)
+				}
 			}
-			if n, ok := v.(float64); ok {
-				inputTokens = int64(n)
+			if v, ok := u["completion_tokens"]; ok {
+				if n, ok := v.(int64); ok {
+					outputTokens = n
+				}
+				if n, ok := v.(float64); ok {
+					outputTokens = int64(n)
+				}
 			}
-		}
-		if v, ok := u["completion_tokens"]; ok {
-			if n, ok := v.(int64); ok {
-				outputTokens = n
-			}
-			if n, ok := v.(float64); ok {
-				outputTokens = int64(n)
-			}
-		}
 		}
 		usage = map[string]any{"input_tokens": inputTokens, "output_tokens": outputTokens}
 	}

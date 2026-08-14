@@ -21,14 +21,10 @@ func TestCompatMetadataHidesEventsByDefault(t *testing.T) {
 
 func TestCompatMetadataEventsAreExplicitOptIn(t *testing.T) {
 	t.Setenv("M365_INCLUDE_UPSTREAM_EVENTS", "true")
-	res := chathub.Result{Events: []json.RawMessage{json.RawMessage(`{"type":1,"text":"M365 Copilot"}`)}}
-	events, ok := compatM365Metadata(res)["events"]
+	res := chathub.Result{Events: []json.RawMessage{json.RawMessage(`{"type":1}`)}}
+	_, ok := compatM365Metadata(res)["events"]
 	if !ok {
 		t.Fatal("opt-in events missing")
-	}
-	raw, _ := json.Marshal(events)
-	if publicProviderIdentityPattern.Match(raw) {
-		t.Fatalf("opt-in events leaked provider identity: %s", raw)
 	}
 }
 

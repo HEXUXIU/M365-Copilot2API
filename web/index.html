@@ -499,7 +499,7 @@ if (response.output_text) {
               <div class="onb-step">
                 <span class="onb-step-num">2</span>
                 <span class="onb-step-icon"><i data-lucide="clipboard-copy" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>Copy the callback URL from the popup's address bar</b><p>After signing in, the popup will show a blank or error page — this is normal. Copy the full URL from the <b>popup's address bar</b> (it contains <code>code=...</code> and <code>state=...</code>).</p></span>
+                <span class="onb-step-text"><b>Copy the callback URL from the popup’s address bar</b><p>After signing in, the popup will show a blank or error page — this is normal. Copy the full URL from the <b>popup’s address bar</b> (it contains <code>code=...</code> and <code>state=...</code>).</p></span>
               </div>
               <div class="onb-step">
                 <span class="onb-step-num">3</span>
@@ -510,7 +510,7 @@ if (response.output_text) {
             <button class="btn primary" onclick="startPKCE()" style="width:100%;margin-bottom:12px;"><i data-lucide="link" style="width:15px;height:15px"></i> Start authorization</button>
             <div class="highlight-box warning" style="margin-top:0;margin-bottom:16px">
               <div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i> You must manually paste the callback URL to complete authorization</div>
-              <p>After signing in on the popup, it will display a blank or error page — <strong>this is normal</strong> because the callback endpoint is not a real website. The authorization is <strong>not</strong> complete yet. Copy the <strong>full URL from the popup's address bar</strong> (it will look like <code>http://localhost:4141/api/auth/callback?code=M.C5...&state=abc123</code>) and paste it into the Callback URL field below.</p>
+              <p>After signing in on the popup, it will display a blank or error page — <strong>this is normal</strong> because the callback endpoint is not a real website. The authorization is <strong>not</strong> complete yet. Copy the <strong>full URL from the popup’s address bar</strong> (it will look like <code>http://localhost:4141/api/auth/callback?code=M.C5...&state=abc123</code>) and paste it into the Callback URL field below.</p>
             </div>
             <label class="form-label">Callback URL</label>
             <div class="copy-field">
@@ -1069,7 +1069,7 @@ async function startPKCE(){
     $('callbackInput').dataset.state=d.state;
     const popup=window.open(d.url,'pkce','width=600,height=800');
     if(!popup){$('authStatus').innerHTML='<div class="highlight-box warning"><div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i>Popup blocked by browser</div><p>Please allow popups for this site, then click "Start authorization" again.</p></div>';lucide.createIcons();return;}
-    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>Authorization page opened in a new window</div><p>Complete the sign-in in the popup. After signing in, the popup will show a blank or error page — this is normal. Copy the <b>full URL from the popup's address bar</b> and paste it into the Callback URL field below.</p></div>';
+    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>Authorization page opened in a new window</div><p>Complete the sign-in in the popup. After signing in, the popup will show a blank or error page — this is normal. Copy the <b>full URL from the popup’s address bar</b> and paste it into the Callback URL field below.</p></div>';
     $('callbackInput').focus();
     $('callbackInput').placeholder='Paste the full callback URL from the popup address bar…';
     if(pkceTimer)clearInterval(pkceTimer);

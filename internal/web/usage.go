@@ -21,6 +21,12 @@ type UsageRecord struct {
 	InputTokens  int64     `json:"input_tokens"`
 	OutputTokens int64     `json:"output_tokens"`
 	CacheTokens  int64     `json:"cache_tokens"`
+	CacheHit     bool      `json:"cache_hit"`
+	CacheSource  string    `json:"cache_source,omitempty"`
+	AccountID    string    `json:"account_id,omitempty"`
+	Migration    string    `json:"migration_reason,omitempty"`
+	AffinityHash string    `json:"affinity_hash_prefix,omitempty"`
+	BindingID    string    `json:"binding_id_prefix,omitempty"`
 	DurationMs   int64     `json:"duration_ms"`
 	Status       int       `json:"status"`
 }

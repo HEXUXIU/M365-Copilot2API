@@ -348,7 +348,7 @@ curl http://127.0.0.1:4141/v1/messages \
 
 ## 账号亲和与会话复用
 
-多账号模式使用进程内存储保存租户隔离的账号亲和与微软云端会话绑定。两者是独立状态：相同首轮请求可以稳定落到同一账号，但仍会创建独立云端对话；只有显式会话 ID、Responses 会话链，或包含 assistant 消息的严格历史前缀才能续接已有云端对话。
+多账号模式可以使用 Redis 保存租户隔离的账号亲和与微软云端会话绑定。两者是独立状态：相同首轮请求可以稳定落到同一账号，但仍会创建独立云端对话；只有显式会话 ID、Responses 会话链，或包含 assistant 消息的严格历史前缀才能续接已有云端对话。未配置 `M365_REDIS_URL` 时继续使用进程内存储。
 
 新会话使用 Rendezvous Hash 稳定分配健康账号。热会话优先保留原账号；短暂的 429/503（默认 `Retry-After <= 5s`）会先在原账号重试一次，持续限流或认证失败才迁移。迁移采用成功后 CAS 切换，失败不会覆盖旧绑定。账号并发上限由独立的账号并发配置负责。
 
@@ -359,7 +359,7 @@ curl http://127.0.0.1:4141/v1/messages \
 - Anthropic Messages：`usage.cache_read_input_tokens`
 - 流式响应：只在成功终止 usage 事件中输出
 
-`M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。核心实现使用进程内存储，缓存统计保持保守值，不会把普通历史消息误报成命中。
+`M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态和 Redis 状态正常后切换为 `enforce`。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。Redis 异常时请求会降级到进程内存储，缓存统计保持保守值，不会把普通历史消息误报成命中。
 
 未携带 API key 或 Bearer token 的请求默认通过 `M365_AFFINITY_ANONYMOUS_SCOPE=ip` 按远端 IP 隔离。仅在可信的单租户部署中可设为 `global`，共享匿名亲和范围。
 

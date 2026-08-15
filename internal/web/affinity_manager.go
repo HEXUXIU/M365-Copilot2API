@@ -27,8 +27,10 @@ const (
 
 type affinityConfig struct {
 	Mode             affinityMode
+	RedisURL         string
 	TTL              time.Duration
 	MaxSessions      int
+	RedisPoolSize    int
 	LockTTL          time.Duration
 	LockWait         time.Duration
 	StickyRetryAfter time.Duration
@@ -46,8 +48,10 @@ func loadAffinityConfig() affinityConfig {
 	}
 	return affinityConfig{
 		Mode:             mode,
+		RedisURL:         strings.TrimSpace(os.Getenv("M365_REDIS_URL")),
 		TTL:              time.Duration(affinityEnvInt("M365_AFFINITY_TTL_MINUTES", 120)) * time.Minute,
 		MaxSessions:      affinityEnvInt("M365_AFFINITY_MAX_SESSIONS", 10000),
+		RedisPoolSize:    affinityEnvInt("M365_REDIS_POOL_SIZE", 32),
 		LockTTL:          time.Duration(affinityEnvInt("M365_SESSION_LOCK_TTL_SECONDS", 180)) * time.Second,
 		LockWait:         time.Duration(affinityEnvInt("M365_SESSION_LOCK_WAIT_SECONDS", 120)) * time.Second,
 		StickyRetryAfter: time.Duration(affinityEnvInt("M365_STICKY_RETRY_AFTER_SECONDS", 5)) * time.Second,
@@ -76,9 +80,27 @@ type affinityManager struct {
 }
 
 func openAffinityManager(config affinityConfig) *affinityManager {
-	return &affinityManager{
+	m := &affinityManager{
 		config: config, fallback: newMemoryAffinityStore(config.TTL, config.MaxSessions),
 	}
+	if config.Mode == affinityOff || config.RedisURL == "" {
+		return m
+	}
+	store, err := newRedisAffinityStore(config.RedisURL, config.RedisPoolSize, config.TTL, config.MaxSessions)
+	if err != nil {
+		m.degraded = true
+		m.lastError = err.Error()
+		return m
+	}
+	m.primary = store
+	m.primaryName = "redis"
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if !store.Healthy(ctx) {
+		m.degraded = true
+		m.lastError = "redis ping failed"
+	}
+	return m
 }
 
 func (m *affinityManager) close() {

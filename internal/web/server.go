@@ -1511,7 +1511,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.dropTransientConversation(routeRes.ConversationID)
 		}
 		if routeErr != nil {
-			http.Error(w, "tool router: "+routeErr.Error(), http.StatusBadGateway)
+			writeUpstreamError(w, routeErr)
 			return
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
@@ -1818,11 +1818,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if routeErr != nil {
-				msg := upstreamError(routeErr)
-				if IsRateLimited(routeErr) {
-					msg = "upstream is rate limiting; try again shortly"
-				}
-			writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", "tool_router_failed", msg)
+				writeUpstreamError(w, routeErr)
 				return
 			}
 			s.accountPool.MarkSuccess(acc.ID)
@@ -1835,7 +1831,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 			}
 			if !parsed {
-				http.Error(w, "model returned an invalid tool routing decision", http.StatusBadGateway)
+				writeOpenAIError(w, http.StatusBadGateway, "server_error", "tool_router_failed", "model returned an invalid tool routing decision")
 				return
 			}
 		}

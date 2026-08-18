@@ -497,7 +497,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 						throttlingInfo = parseThrottling(thr)
 					}
 					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame {
-						if err := emitSnapshot(w); err != nil {
+						if err := emitDelta(w); err != nil {
 							returnConn = false
 							return Result{}, err
 						}

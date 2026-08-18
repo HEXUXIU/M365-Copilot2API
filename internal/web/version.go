@@ -23,7 +23,7 @@ func (s *Server) version(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Server) update(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeOpenAIError(w, 405, "invalid_request_error", "method not allowed")
+		writeOpenAIError(w, 405, "invalid_request_error", "method_not_allowed", "method not allowed")
 		return
 	}
 	// Read-only endpoint: release automation remains the only publisher/upgrader.

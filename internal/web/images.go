@@ -61,7 +61,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		b.N = 1
 	}
 	if b.N > 10 {
-		writeOpenAIError(w, 400, "invalid_request_error", "n must be between 1 and 10")
+		writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", "n must be between 1 and 10")
 		return
 	}
 	format := strings.ToLower(strings.TrimSpace(b.ResponseFormat))
@@ -81,7 +81,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		acc.OID, acc.TID = extractOIDTID(acc.AccessToken)
 	}
 	if acc.OID == "" || acc.TID == "" {
-		writeOpenAIError(w, 400, "invalid_request_error", "account missing oid/tid — re-login with PKCE")
+		writeOpenAIError(w, 400, "invalid_request_error", "missing_account_info", "account missing oid/tid — re-login with PKCE")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ImageTimeoutSeconds)*time.Second)
@@ -94,7 +94,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 	prompt := fmt.Sprintf("Generate an image with GPT Image 2. Size: %s. Description: %s. Return the image URL directly.", size, b.Prompt)
 	if b.Operation == "edit" {
 		if len(b.Attachments) == 0 {
-			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "image is required")
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_parameter", "image is required")
 			return
 		}
 		endpoint = "/v1/images/edits"
@@ -120,7 +120,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		refusalText := strings.Join([]string{res.Text, res.RawResult}, "\n")
 		if isImageQuotaRefusal(refusalText) {
 			w.Header().Set("Retry-After", "86400")
-			writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", "M365 image generation quota is exhausted; try again later or use another account")
+			writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", "rate_limit_exceeded", "M365 image generation quota is exhausted; try again later or use another account")
 			return
 		}
 		textPreview := res.Text
@@ -205,12 +205,12 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method_not_allowed", "method not allowed")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxImageEditRequestBytes)
 	if err := r.ParseMultipartForm(1 << 20); err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid multipart image edit request")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_parameter", "invalid multipart image edit request")
 		return
 	}
 	if r.MultipartForm != nil {
@@ -218,7 +218,7 @@ func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {
 	}
 	prompt := strings.TrimSpace(r.FormValue("prompt"))
 	if prompt == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "prompt is required")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_parameter", "prompt is required")
 		return
 	}
 	file, header, err := r.FormFile("image")
@@ -226,17 +226,17 @@ func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {
 		file, header, err = r.FormFile("image[]")
 	}
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "image is required")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_parameter", "image is required")
 		return
 	}
 	defer file.Close()
 	imageData, err := io.ReadAll(io.LimitReader(file, maxGeneratedImageBytes+1))
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "could not read image")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_parameter", "could not read image")
 		return
 	}
 	if len(imageData) > maxGeneratedImageBytes {
-		writeOpenAIError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "image exceeds 20 MiB")
+		writeOpenAIError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "invalid_parameter", "image exceeds 20 MiB")
 		return
 	}
 	contentType := http.DetectContentType(imageData)
@@ -249,7 +249,7 @@ func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {
 	case "image/webp":
 		ext = "webp"
 	default:
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "image must be PNG, JPEG, or WebP")
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_parameter", "image must be PNG, JPEG, or WebP")
 		return
 	}
 	name := strings.TrimSpace(header.Filename)
@@ -260,7 +260,7 @@ func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {
 	if rawN := strings.TrimSpace(r.FormValue("n")); rawN != "" {
 		n, err = strconv.Atoi(rawN)
 		if err != nil {
-			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "n must be an integer")
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid_parameter", "n must be an integer")
 			return
 		}
 	}
@@ -282,7 +282,7 @@ func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {
 	}
 	encoded, err := json.Marshal(body)
 	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "could not encode image edit request")
+		writeOpenAIError(w, http.StatusInternalServerError, "internal_error", "internal_error", "could not encode image edit request")
 		return
 	}
 	next := r.Clone(r.Context())

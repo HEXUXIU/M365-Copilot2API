@@ -86,28 +86,28 @@ func (s *Server) deployments(w http.ResponseWriter, r *http.Request) {
 			Token     string `json:"token"`
 		}
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&in) != nil {
-			writeOpenAIError(w, 400, "invalid_request_error", "bad json")
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_json", "bad json")
 			return
 		}
 		if in.Provider != "cloudflare" {
-			writeOpenAIError(w, 400, "invalid_request_error", "only cloudflare is implemented")
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", "only cloudflare is implemented")
 			return
 		}
 		d, e := deployCloudflare(r.Context(), in.AccountID, in.Name, in.Token)
 		if e != nil {
-			writeOpenAIError(w, 400, "deployment_error", e.Error())
+			writeOpenAIError(w, 400, "deployment_error", "deployment_failed", e.Error())
 			return
 		}
 		st.mu.Lock()
 		st.Items = append(st.Items, d)
 		st.mu.Unlock()
 		if e = st.save(); e != nil {
-			writeOpenAIError(w, 500, "storage_error", e.Error())
+			writeOpenAIError(w, 500, "storage_error", "storage_error", e.Error())
 			return
 		}
 		jsonOut(w, map[string]any{"ok": true, "deployment": d})
 	default:
-		writeOpenAIError(w, 405, "invalid_request_error", "method not allowed")
+		writeOpenAIError(w, 405, "invalid_request_error", "method_not_allowed", "method not allowed")
 	}
 }
 func (s *Server) deploymentAction(w http.ResponseWriter, r *http.Request) {
@@ -123,7 +123,7 @@ func (s *Server) deploymentAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if d == nil {
 		st.mu.Unlock()
-		writeOpenAIError(w, 404, "not_found", "deployment not found")
+		writeOpenAIError(w, 404, "not_found", "resource_not_found", "deployment not found")
 		return
 	}
 	var in struct {
@@ -138,14 +138,14 @@ func (s *Server) deploymentAction(w http.ResponseWriter, r *http.Request) {
 		}
 		st.mu.Unlock()
 		if e := st.save(); e != nil {
-			writeOpenAIError(w, 500, "storage_error", e.Error())
+			writeOpenAIError(w, 500, "storage_error", "storage_error", e.Error())
 			return
 		}
 		jsonOut(w, map[string]any{"ok": true, "deployment": d})
 		return
 	}
 	st.mu.Unlock()
-	writeOpenAIError(w, 405, "invalid_request_error", "method not allowed")
+	writeOpenAIError(w, 405, "invalid_request_error", "method_not_allowed", "method not allowed")
 }
 func deployCloudflare(ctx context.Context, account, name, token string) (deployment, error) {
 	if account == "" || name == "" || token == "" {
@@ -212,7 +212,7 @@ func (s *Server) deploymentCheck(w http.ResponseWriter, r *http.Request) {
 	}
 	if d == nil {
 		st.mu.Unlock()
-		writeOpenAIError(w, 404, "not_found", "deployment not found")
+		writeOpenAIError(w, 404, "not_found", "resource_not_found", "deployment not found")
 		return
 	}
 	target := d.ActiveURL

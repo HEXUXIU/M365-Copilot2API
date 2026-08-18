@@ -274,6 +274,9 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .uke-file pre{margin:0;padding:12px;font-family:SF Mono,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.65;white-space:pre-wrap;word-break:break-all;color:var(--text);max-height:240px;overflow:auto}
 .uke-file pre .c{color:var(--muted)}
 .modal.wide{width:min(720px,calc(100vw - 32px))}
+.proxy-select{width:100%;max-width:160px;font-size:11px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);outline:0;cursor:pointer;font-family:inherit}
+.proxy-select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,113,227,0.1)}
+@media(prefers-color-scheme:dark){.proxy-select{background:var(--surface-solid)}}
 </style>
 </head>
 <body>
@@ -860,7 +863,53 @@ const localeText={
   'Not checked': {'zh-CN':'未检测','zh-TW':'未檢測','ja':'未確認','ko':'확인 안 됨','es':'Sin comprobar','fr':'Non vérifié','de':'Nicht geprüft','pt-BR':'Não verificado','ru':'Не проверено','ar':'لم يتم التحقق'},
   'Cooling down': {'zh-CN':'冷却中','zh-TW':'冷卻中','ja':'クールダウン中','ko':'쿨다운 중','es':'Enfriando','fr':'En attente','de':'Wird abgekühlt','pt-BR':'Resfriando','ru':'Ожидание','ar':'جارٍ التهدئة'},
   'Testing…': {'zh-CN':'测试中…','zh-TW':'測試中…','ja':'テスト中…','ko':'테스트 중…','es':'Probando…','fr':'Test en cours…','de':'Wird getestet…','pt-BR':'Testando…','ru':'Тестирование…','ar':'جارٍ الاختبار…'},
-  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'}
+  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'},
+  'curl copied': {'zh-CN':'curl 已复制','zh-TW':'curl 已複製','ja':'curl をコピーしました','ko':'curl 복사됨','es':'curl copiado','fr':'curl copié','de':'curl kopiert','pt-BR':'curl copiado','ru':'curl скопирован','ar':'تم نسخ curl'},
+  'Login successful': {'zh-CN':'登录成功','zh-TW':'登入成功','ja':'ログイン成功','ko':'로그인 성공','es':'Inicio de sesión exitoso','fr':'Connexion réussie','de':'Anmeldung erfolgreich','pt-BR':'Login bem-sucedido','ru':'Вход выполнен','ar':'تسجيل الدخول ناجح'},
+  'Are you sure you want to delete this account?': {'zh-CN':'确定删除此账号？','zh-TW':'確定刪除此帳號？','ja':'このアカウントを削除しますか？','ko':'이 계정을 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar esta cuenta?','fr':'Voulez-vous vraiment supprimer ce compte ?','de':'Möchten Sie dieses Konto wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir esta conta?','ru':'Вы уверены, что хотите удалить этот аккаунт?','ar':'هل أنت متأكد من حذف هذا الحساب؟'},
+  'Deleted': {'zh-CN':'已删除','zh-TW':'已刪除','ja':'削除しました','ko':'삭제됨','es':'Eliminado','fr':'Supprimé','de':'Gelöscht','pt-BR':'Excluído','ru':'Удалено','ar':'تم الحذف'},
+  'Popup blocked by browser': {'zh-CN':'弹出窗口被浏览器拦截','zh-TW':'彈出視窗被瀏覽器攔截','ja':'ポップアップがブラウザにブロックされました','ko':'팝업이 브라우저에 차단됨','es':'Ventana emergente bloqueada por el navegador','fr':'Fenêtre contextuelle bloquée par le navigateur','de':'Popup vom Browser blockiert','pt-BR':'Pop-up bloqueado pelo navegador','ru':'Всплывающее окно заблокировано браузером','ar':'تم حظر النافذة المنبثقة بواسطة المتصفح'},
+  'Please allow popups for this site, then click "Start authorization" again.': {'zh-CN':'请允许此网站的弹出窗口，然后重新点击"开始授权"。','zh-TW':'請允許此網站的彈出視窗，然後重新點擊「開始授權」。','ja':'このサイトのポップアップを許可してから、「承認を開始」を再度クリックしてください。','ko':'이 사이트의 팝업을 허용한 후 "인증 시작"을 다시 클릭하세요.','es':'Permita las ventanas emergentes de este sitio y haga clic en "Iniciar autorización" de nuevo.','fr':'Autorisez les fenêtres contextuelles de ce site, puis cliquez à nouveau sur « Démarrer l\'autorisation ».','de':'Erlauben Sie Popups für diese Seite und klicken Sie erneut auf „Autorisierung starten".','pt-BR':'Permita pop-ups para este site e clique em "Iniciar autorização" novamente.','ru':'Разрешите всплывающие окна для этого сайта и снова нажмите «Начать авторизацию».','ar':'اسمح بالنوافذ المنبثقة لهذا الموقع، ثم انقر "بدء التفويض" مرة أخرى.'},
+  'Authorization page opened in new window': {'zh-CN':'授权页面已在新窗口打开','zh-TW':'授權頁面已在新視窗開啟','ja':'承認ページが新しいウィンドウで開きました','ko':'인증 페이지가 새 창에서 열렸습니다','es':'Página de autorización abierta en nueva ventana','fr':'Page d\'autorisation ouverte dans une nouvelle fenêtre','de':'Autorisierungsseite in neuem Fenster geöffnet','pt-BR':'Página de autorização aberta em nova janela','ru':'Страница авторизации открыта в новом окне','ar':'تم فتح صفحة التفويض في نافذة جديدة'},
+  'Please complete login in the popup. After login, the page may show blank or error — this is normal. Copy the <b>full URL</b> from the popup address bar and paste it into the "Callback URL" input below.': {'zh-CN':'请在弹出窗口中完成登录。登录后弹出页会显示空白或错误——这是正常的。复制弹出页地址栏的<b>完整网址</b>，粘贴到下方"回调地址"输入框。','zh-TW':'請在彈出視窗中完成登入。登入後彈出頁會顯示空白或錯誤——這是正常的。複製彈出頁網址列的<b>完整網址</b>，貼上到下方「回呼位址」輸入框。','ja':'ポップアップでログインを完了してください。ログイン後、空白やエラーが表示されますが—これは正常です。ポップアップのアドレスバーから<b>完全な URL</b> をコピーし、下の「コールバック URL」入力欄に貼り付けてください。','ko':'팝업 창에서 로그인을 완료하세요. 로그인 후 빈 페이지나 오류가 표시되지만 — 이는 정상입니다. 팝업 주소창의 <b>전체 URL</b>을 복사하여 아래 "콜백 URL" 입력란에 붙여넣으세요.','es':'Complete el inicio de sesión en la ventana emergente. Después, la página puede estar en blanco o mostrar un error — esto es normal. Copie la <b>URL completa</b> de la barra de direcciones y péguela en el campo "URL de devolución" de abajo.','fr':'Connectez-vous dans la fenêtre contextuelle. Après, la page peut être vide ou afficher une erreur — c\'est normal. Copiez l\'<b>URL complète</b> depuis la barre d\'adresse et collez-la dans le champ « URL de rappel » ci-dessous.','de':'Schließen Sie die Anmeldung im Popup ab. Danach kann die Seite leer sein oder einen Fehler anzeigen — das ist normal. Kopieren Sie die <b>vollständige URL</b> aus der Adressleiste und fügen Sie sie in das Feld „Callback-URL" unten ein.','pt-BR':'Complete o login na janela pop-up. Após, a página pode ficar em branco ou mostrar erro — isso é normal. Copie a <b>URL completa</b> da barra de endereços e cole no campo "URL de retorno" abaixo.','ru':'Войдите во всплывающем окне. После входа страница может быть пустой или с ошибкой — это нормально. Скопируйте <b>полный URL</b> из адресной строки и вставьте в поле «URL обратного вызова» ниже.','ar':'أكمل تسجيل الدخول في النافذة المنبثقة. بعد ذلك، قد تكون الصفحة فارغة أو خطأ — هذا طبيعي. انسخ <b>عنوان URL الكامل</b> من شريط العنوان والصقه في حقل "عنوان URL لإعادة التوجيه" أدناه.'},
+  'Paste the full callback URL from the popup address bar…': {'zh-CN':'粘贴弹出页地址栏中的完整回调地址…','zh-TW':'貼上彈出頁網址列中的完整回呼位址…','ja':'ポップアップのアドレスバーから完全なコールバック URL を貼り付けてください…','ko':'팝업 주소창의 전체 콜백 URL을 붙여넣으세요…','es':'Pegue la URL de devolución completa de la barra de direcciones de la ventana emergente…','fr':'Collez l\'URL de rappel complète depuis la barre d\'adresse de la fenêtre contextuelle…','de':'Vollständige Callback-URL aus der Popup-Adressleiste einfügen…','pt-BR':'Cole a URL de retorno completa da barra de endereços do pop-up…','ru':'Вставьте полный URL обратного вызова из адресной строки всплывающего окна…','ar':'الصق عنوان URL الكامل لإعادة التوجيه من شريط عنوان النافذة المنبثقة…'},
+  'Authorization timed out, please start over.': {'zh-CN':'授权超时，请重新开始授权。','zh-TW':'授權逾時，請重新開始授權。','ja':'承認がタイムアウトしました。最初からやり直してください。','ko':'인증 시간이 초과되었습니다. 다시 시작하세요.','es':'Autorización agotada, por favor vuelva a empezar.','fr':'Autorisation expirée, veuillez recommencer.','de':'Autorisierung abgelaufen, bitte starten Sie erneut.','pt-BR':'Autorização expirada, por favor comece novamente.','ru':'Время авторизации истекло, начните заново.','ar':'انتهت مهلة التفويض، يرجى البدء من جديد.'},
+  'Authorization window was closed before completion.': {'zh-CN':'授权窗口在完成前已关闭。','zh-TW':'授權視窗在完成前已關閉。','ja':'承認ウィンドウが完了前に閉じられました。','ko':'인증 창이 완료 전에 닫혔습니다.','es':'La ventana de autorización se cerró antes de completarse.','fr':'La fenêtre d\'autorisation a été fermée avant la fin.','de':'Das Autorisierungsfenster wurde vor Abschluss geschlossen.','pt-BR':'A janela de autorização foi fechada antes da conclusão.','ru':'Окно авторизации закрыто до завершения.','ar':'تم إغلاق نافذة التفويض قبل الاكتمال.'},
+  'Authorization successful': {'zh-CN':'授权成功','zh-TW':'授權成功','ja':'承認成功','ko':'인증 성공','es':'Autorización exitosa','fr':'Autorisation réussie','de':'Autorisierung erfolgreich','pt-BR':'Autorização bem-sucedida','ru':'Авторизация успешна','ar':'تفويض ناجح'},
+  'Account has been added to the pool.': {'zh-CN':'账号已加入账号池。','zh-TW':'帳號已加入帳號池。','ja':'アカウントがプールに追加されました。','ko':'계정이 풀에 추가되었습니다.','es':'La cuenta se ha añadido al grupo.','fr':'Le compte a été ajouté au pool.','de':'Das Konto wurde zum Pool hinzugefügt.','pt-BR':'A conta foi adicionada ao pool.','ru':'Аккаунт добавлен в пул.','ar':'تمت إضافة الحساب إلى المجموعة.'},
+  'Authorization failed or expired': {'zh-CN':'授权失败或已过期','zh-TW':'授權失敗或已過期','ja':'承認に失敗したか期限切れです','ko':'인증 실패 또는 만료됨','es':'Autorización fallida o expirada','fr':'Autorisation échouée ou expirée','de':'Autorisierung fehlgeschlagen oder abgelaufen','pt-BR':'Autorização falhou ou expirou','ru':'Авторизация не удалась или истекла','ar':'فشل التفويض أو انتهت صلاحيته'},
+  'Please paste the callback URL': {'zh-CN':'请粘贴回调地址','zh-TW':'請貼上回呼位址','ja':'コールバック URL を貼り付けてください','ko':'콜백 URL을 붙여넣으세요','es':'Pegue la URL de devolución','fr':'Collez l\'URL de rappel','de':'Callback-URL einfügen','pt-BR':'Cole a URL de retorno','ru':'Вставьте URL обратного вызова','ar':'الصق عنوان URL لإعادة التوجيه'},
+  'Name cannot be empty': {'zh-CN':'名称不能为空','zh-TW':'名稱不能為空','ja':'名前は空にできません','ko':'이름은 비워둘 수 없습니다','es':'El nombre no puede estar vacío','fr':'Le nom ne peut pas être vide','de':'Der Name darf nicht leer sein','pt-BR':'O nome não pode estar vazio','ru':'Имя не может быть пустым','ar':'لا يمكن أن يكون الاسم فارغًا'},
+  'Key updated': {'zh-CN':'已更新','zh-TW':'已更新','ja':'更新しました','ko':'업데이트됨','es':'Actualizado','fr':'Mis à jour','de':'Aktualisiert','pt-BR':'Atualizado','ru':'Обновлено','ar':'تم التحديث'},
+  'Copied': {'zh-CN':'已复制','zh-TW':'已複製','ja':'コピーしました','ko':'복사됨','es':'Copiado','fr':'Copié','de':'Kopiert','pt-BR':'Copiado','ru':'Скопировано','ar':'تم النسخ'},
+  'Are you sure you want to delete this key?': {'zh-CN':'确定删除此密钥？','zh-TW':'確定刪除此金鑰？','ja':'このキーを削除しますか？','ko':'이 키를 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar esta clave?','fr':'Voulez-vous vraiment supprimer cette clé ?','de':'Möchten Sie diesen Schlüssel wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir esta chave?','ru':'Вы уверены, что хотите удалить этот ключ?','ar':'هل أنت متأكد من حذف هذا المفتاح؟'},
+  'Key not found': {'zh-CN':'找不到密钥','zh-TW':'找不到金鑰','ja':'キーが見つかりません','ko':'키를 찾을 수 없음','es':'Clave no encontrada','fr':'Clé introuvable','de':'Schlüssel nicht gefunden','pt-BR':'Chave não encontrada','ru':'Ключ не найден','ar':'لم يتم العثور على المفتاح'},
+  'Current key': {'zh-CN':'当前密钥','zh-TW':'目前金鑰','ja':'現在のキー','ko':'현재 키','es':'Clave actual','fr':'Clé actuelle','de':'Aktueller Schlüssel','pt-BR':'Chave atual','ru':'Текущий ключ','ar':'المفتاح الحالي'},
+  'Full key unavailable': {'zh-CN':'完整密钥不可用','zh-TW':'完整金鑰不可用','ja':'完全なキーは利用できません','ko':'전체 키를 사용할 수 없음','es':'Clave completa no disponible','fr':'Clé complète indisponible','de':'Vollständiger Schlüssel nicht verfügbar','pt-BR':'Chave completa indisponível','ru':'Полный ключ недоступен','ar':'المفتاح الكامل غير متاح'},
+  'Unnamed conversation': {'zh-CN':'未命名对话','zh-TW':'未命名對話','ja':'名前なしの会話','ko':'이름 없는 대화','es':'Conversación sin nombre','fr':'Conversation sans nom','de':'Unbenannte Unterhaltung','pt-BR':'Conversa sem nome','ru':'Безымянный разговор','ar':'محادثة بدون اسم'},
+  'Are you sure you want to delete this conversation?': {'zh-CN':'确定删除此对话？','zh-TW':'確定刪除此對話？','ja':'この会話を削除しますか？','ko':'이 대화를 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar esta conversación?','fr':'Voulez-vous vraiment supprimer cette conversation ?','de':'Möchten Sie diese Unterhaltung wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir esta conversa?','ru':'Вы уверены, что хотите удалить этот разговор?','ar':'هل أنت متأكد من حذف هذه المحادثة؟'},
+  'Are you sure you want to clean up all conversations?': {'zh-CN':'确定清理所有对话？','zh-TW':'確定清理全部對話？','ja':'すべての会話をクリーンアップしますか？','ko':'모든 대화를 정리하시겠습니까？','es':'¿Está seguro de que desea limpiar todas las conversaciones?','fr':'Voulez-vous vraiment nettoyer toutes les conversations ?','de':'Möchten Sie wirklich alle Unterhaltungen bereinigen?','pt-BR':'Tem certeza de que deseja limpar todas as conversas?','ru':'Вы уверены, что хотите очистить все разговоры?','ar':'هل أنت متأكد من تنظيف جميع المحادثات؟'},
+  'Each conversation will be deleted individually and logged in the terminal.': {'zh-CN':'每条对话将逐一删除并在终端记录日志。','zh-TW':'每條對話將逐一刪除並在終端記錄日誌。','ja':'各会話は個別に削除され、ターミナルに記録されます。','ko':'각 대화는 개별적으로 삭제되며 터미널에 기록됩니다.','es':'Cada conversación se eliminará individualmente y se registrará en la terminal.','fr':'Chaque conversation sera supprimée individuellement et journalisée dans le terminal.','de':'Jede Unterhaltung wird einzeln gelöscht und im Terminal protokolliert.','pt-BR':'Cada conversa será excluída individualmente e registrada no terminal.','ru':'Каждый разговор будет удалён по одному и записан в терминал.','ar':'سيتم حذف كل محادثة على حدة وتسجيلها في الطرفية.'},
+  'Starting cleanup of all conversations…': {'zh-CN':'开始清理所有对话…','zh-TW':'開始清理全部對話…','ja':'すべての会話のクリーンアップを開始…','ko':'모든 대화 정리 시작…','es':'Iniciando limpieza de todas las conversaciones…','fr':'Début du nettoyage de toutes les conversations…','de':'Bereinigung aller Unterhaltungen gestartet…','pt-BR':'Iniciando limpeza de todas as conversas…','ru':'Начинаем очистку всех разговоров…','ar':'جارٍ بدء تنظيف جميع المحادثات…'},
+  'Failed to fetch conversation list': {'zh-CN':'获取对话列表失败','zh-TW':'取得對話列表失敗','ja':'会話リストの取得に失敗','ko':'대화 목록 가져오기 실패','es':'Error al obtener la lista de conversaciones','fr':'Échec de récupération de la liste des conversations','de':'Fehler beim Abrufen der Unterhaltungsliste','pt-BR':'Falha ao buscar lista de conversas','ru':'Не удалось получить список разговоров','ar':'فشل في جلب قائمة المحادثات'},
+  'Unnamed': {'zh-CN':'未命名','zh-TW':'未命名','ja':'名前なし','ko':'이름 없음','es':'Sin nombre','fr':'Sans nom','de':'Unbenannt','pt-BR':'Sem nome','ru':'Безымянный','ar':'بدون اسم'},
+  'Cleanup complete': {'zh-CN':'清理完成','zh-TW':'清理完成','ja':'クリーンアップ完了','ko':'정리 완료','es':'Limpieza completa','fr':'Nettoyage terminé','de':'Bereinigung abgeschlossen','pt-BR':'Limpeza concluída','ru':'Очистка завершена','ar':'اكتمل التنظيف'},
+  'Check': {'zh-CN':'检测','zh-TW':'檢測','ja':'チェック','ko':'확인','es':'Comprobar','fr':'Vérifier','de':'Prüfen','pt-BR':'Verificar','ru':'Проверить','ar':'فحص'},
+  'Please enter proxy address': {'zh-CN':'请输入代理地址','zh-TW':'請輸入代理位址','ja':'プロキシアドレスを入力してください','ko':'프록시 주소를 입력하세요','es':'Introduzca la dirección del proxy','fr':'Saisissez l\'adresse du proxy','de':'Proxy-Adresse eingeben','pt-BR':'Digite o endereço do proxy','ru':'Введите адрес прокси','ar':'أدخل عنوان البروكسي'},
+  'Are you sure you want to delete this proxy?': {'zh-CN':'确定删除此代理？','zh-TW':'確定刪除此代理？','ja':'このプロキシを削除しますか？','ko':'이 프록시를 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar este proxy?','fr':'Voulez-vous vraiment supprimer ce proxy ?','de':'Möchten Sie diesen Proxy wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir este proxy?','ru':'Вы уверены, что хотите удалить этот прокси?','ar':'هل أنت متأكد من حذف هذا البروكسي؟'},
+  'Connection failed': {'zh-CN':'连接失败','zh-TW':'連線失敗','ja':'接続失敗','ko':'연결 실패','es':'Conexión fallida','fr':'Échec de connexion','de':'Verbindung fehlgeschlagen','pt-BR':'Conexão falhou','ru':'Ошибка соединения','ar':'فشل الاتصال'},
+  'Checking all proxies…': {'zh-CN':'正在检测所有代理…','zh-TW':'正在檢測所有代理…','ja':'すべてのプロキシをチェック中…','ko':'모든 프록시 확인 중…','es':'Comprobando todos los proxies…','fr':'Vérification de tous les proxys…','de':'Alle Proxys werden geprüft…','pt-BR':'Verificando todos os proxies…','ru':'Проверка всех прокси…','ar':'جارٍ فحص جميع البروكسي…'},
+  'Health check complete': {'zh-CN':'健康检查完成','zh-TW':'健康檢查完成','ja':'ヘルスチェック完了','ko':'상태 확인 완료','es':'Comprobación de salud completada','fr':'Vérification de santé terminée','de':'Gesundheitsprüfung abgeschlossen','pt-BR':'Verificação de integridade concluída','ru':'Проверка работоспособности завершена','ar':'اكتمل فحص الصحة'},
+  'Click "Test all" to start': {'zh-CN':'点击"测试全部"','zh-TW':'點擊「測試全部」','ja':'「すべてテスト」をクリック','ko':'"모두 테스트" 클릭','es':'Haga clic en "Probar todo" para iniciar','fr':'Cliquez sur « Tout tester » pour commencer','de':'Klicken Sie auf „Alle testen" zum Starten','pt-BR':'Clique em "Testar tudo" para iniciar','ru':'Нажмите «Протестировать все» для запуска','ar':'انقر "اختبار الكل" للبدء'},
+  '(empty reply)': {'zh-CN':'（空回复）','zh-TW':'（空回覆）','ja':'（空の返信）','ko':'(빈 답변)','es':'(respuesta vacía)','fr':'(réponse vide)','de':'(leere Antwort)','pt-BR':'(resposta vazia)','ru':'(пустой ответ)','ar':'(رد فارغ)'},
+  'Please load model list first': {'zh-CN':'请先加载模型列表','zh-TW':'請先載入模型列表','ja':'先にモデルリストを読み込んでください','ko':'먼저 모델 목록을 로드하세요','es':'Cargue la lista de modelos primero','fr':'Chargez d\'abord la liste des modèles','de':'Modellliste zuerst laden','pt-BR':'Carregue a lista de modelos primeiro','ru':'Сначала загрузите список моделей','ar':'قم بتحميل قائمة النماذج أولاً'},
+  'Model test complete': {'zh-CN':'模型测试完成','zh-TW':'模型測試完成','ja':'モデルテスト完了','ko':'모델 테스트 완료','es':'Prueba de modelos completada','fr':'Test de modèles terminé','de':'Modelltest abgeschlossen','pt-BR':'Teste de modelos concluído','ru':'Тест моделей завершён','ar':'اكتمل اختبار النماذج'},
+  'Settings saved': {'zh-CN':'设置已保存','zh-TW':'設定已儲存','ja':'設定を保存しました','ko':'설정 저장됨','es':'Ajustes guardados','fr':'Paramètres enregistrés','de':'Einstellungen gespeichert','pt-BR':'Configurações salvas','ru':'Настройки сохранены','ar':'تم حفظ الإعدادات'},
+  'Proxy bound': {'zh-CN':'代理已绑定','zh-TW':'代理已綁定','ja':'プロキシをバインドしました','ko':'프록시 바인딩됨','es':'Proxy vinculado','fr':'Proxy lié','de':'Proxy gebunden','pt-BR':'Proxy vinculado','ru':'Прокси привязан','ar':'تم ربط البروكسي'},
+  'Proxy unbound': {'zh-CN':'代理已解绑','zh-TW':'代理已解綁','ja':'プロキシをアンバインドしました','ko':'프록시 바인딩 해제됨','es':'Proxy desvinculado','fr':'Proxy délié','de':'Proxy entbunden','pt-BR':'Proxy desvinculado','ru':'Прокси отвязан','ar':'تم إلغاء ربط البروكسي'},
+  'Direct (no proxy)': {'zh-CN':'直连（无代理）','zh-TW':'直連（無代理）','ja':'直接（プロキシなし）','ko':'직접 (프록시 없음)','es':'Directo (sin proxy)','fr':'Direct (sans proxy)','de':'Direkt (ohne Proxy)','pt-BR':'Direto (sem proxy)','ru':'Напрямую (без прокси)','ar':'مباشر (بدون بروكسي)'},
+  '+ Manual input...': {'zh-CN':'+ 手动输入...','zh-TW':'+ 手動輸入...','ja':'+ 手動入力...','ko':'+ 수동 입력...','es':'+ Entrada manual...','fr':'+ Saisie manuelle...','de':'+ Manuelle Eingabe...','pt-BR':'+ Entrada manual...','ru':'+ Ручной ввод...','ar':'+ إدخال يدوي...'},
+  'Enter proxy URL (empty to unbind):': {'zh-CN':'输入代理地址（留空解绑）：','zh-TW':'輸入代理位址（留空解綁）：','ja':'プロキシURLを入力（空で解除）：','ko':'프록시 URL 입력 (빈 칸으로 해제):','es':'URL del proxy (vacío para desvincular):','fr':'URL du proxy (vide pour détacher) :','de':'Proxy-URL (leer zum Lösen):','pt-BR':'URL do proxy (vazio para desvincular):','ru':'URL прокси (пусто для отвязки):','ar':'عنوان البروكسي (فارغ لإلغاء الربط):'}
 };
 function preferredLocale(){
   try{
@@ -907,6 +956,7 @@ function translateDynamic(value,locale){
   }
   return value;
 }
+function t(key){if(currentLocale==='en')return key;return localeText[key]?.[currentLocale]||key;}
 function translateText(value){
   const trimmed=value.trim();
   if(!trimmed)return value;
@@ -985,7 +1035,7 @@ function buildCurl(keyPrefix){
   return `curl ${base}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${keyPrefix}..." \\\n  -d '{"model":"auto","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`;
 }
 async function copyCurl(){
-  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice('curl 已复制','success');}catch(e){}
+  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice(t('curl copied'),'success');}catch(e){}
 }
 async function loadOnboarding(){
   let acc=0,key=0,prefix='sk-';
@@ -1019,7 +1069,7 @@ $('loginForm')?.addEventListener('submit',async e=>{
     if(d.must_change_password){location.replace('/login');return;}
     $('login').style.display='none';$('app').style.display='flex';
     showPage('dashboard');loadStats();
-    showNotice('登录成功','success');
+    showNotice(t('Login successful'),'success');
   }catch(e){showNotice(e.message,'error');}
 });
 
@@ -1079,12 +1129,12 @@ function renderAccounts(){
     const status=x.status==='cooldown'?`<div><span class="status cooldown"><i></i>Cooldown</span>${cooldown}</div>`:x.status==='online'?'<span class="status online"><i></i>Online</span>':'<span class="status offline"><i></i>Offline</span>';
     const calls=x.rateLimited?`Limited after ${x.callCount||0} calls`:`Called ${x.callCount||0} times`;
     const scheduleEnabled=x.scheduleEnabled!==false;
-    const proxyLabel=x.boundProxy?`<span style="font-size:11px;word-break:break-all">${esc(x.boundProxy)}</span>`:'<span style="color:var(--muted);font-size:11px">—</span>';
-    return `<tr><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div><b>${x.displayName||x.email}</b><div style="font-size:11px;color:var(--muted)">${x.email||''}</div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" onclick="toggleAccountSchedule('${x.id}',${!scheduleEnabled})">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td>${proxyLabel} <button class="btn-sm btn" style="margin-top:2px" onclick="bindAccountProxy('${x.id}','${esc(x.boundProxy||'')}')">Bind</button></td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`;
+    return `<tr><td style="max-width:200px"><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div style="min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.displayName||x.email)}</b><div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.email||'')}</div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" onclick="toggleAccountSchedule('${x.id}',${!scheduleEnabled})">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td style="max-width:160px">${buildProxySelect(x.id,x.boundProxy)}</td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`;
   }).join(''):'<tr><td colspan="7" class="empty">No matching accounts</td></tr>';
 }
 async function loadAccounts(){
   try{
+    if(!window.proxyListCache) try{const pd=await api('/api/admin/proxy-pool');window.proxyListCache=pd.proxies||[];}catch(e){window.proxyListCache=[];}
     const d=await api('/api/accounts');
     _accountsCache=d.accounts||[];
     renderAccounts();
@@ -1101,15 +1151,48 @@ async function toggleAccountSchedule(id,enabled){
 }
 
 async function deleteAccount(id){
-  if(!confirm('确定删除此账号？'))return;
-  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice('已删除','success');loadAccounts();showPage('dashboard');}
+  if(!confirm(t('Are you sure you want to delete this account?')))return;
+  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice(t('Deleted'),'success');loadAccounts();showPage('dashboard');}
   catch(e){showNotice(e.message,'error');}
 }
 
-function bindAccountProxy(id,current){
-  const url=prompt('Bind proxy for this account (socks5://, http://, https://). Leave empty to unbind:',current||'');
-  if(url===null)return;
-  api('/api/accounts/bind-proxy',{method:'POST',body:JSON.stringify({id,proxyUrl:url.trim()})}).then(()=>{showNotice(url.trim()?'Proxy bound':'Proxy unbound','success');loadAccounts();}).catch(e=>showNotice(e.message,'error'));
+function buildProxySelect(accountId,boundProxy){
+  const cache=window.proxyListCache||[];
+  let opts='';
+  opts+=`<option value="">${t('Direct (no proxy)')}</option>`;
+  let foundInCache=false;
+  for(const p of cache){
+    const icon=p.health==='reachable'?'✓':(p.health==='unreachable'||p.health==='upstream_error')?'✗':'·';
+    const full=icon+' '+p.url;
+    const label=full.length>30?full.slice(0,29)+'…':full;
+    const sel=p.url===boundProxy?' selected':'';
+    if(sel)foundInCache=true;
+    opts+=`<option value="${esc(p.url)}"${sel}>${esc(label)}</option>`;
+  }
+  if(boundProxy&&!foundInCache){
+    const label=boundProxy.length>28?boundProxy.slice(0,27)+'…':boundProxy;
+    opts+=`<option value="${esc(boundProxy)}" selected>${esc(label)}</option>`;
+  }
+  opts+=`<option value="__manual__">${t('+ Manual input...')}</option>`;
+  return `<select class="proxy-select" data-prev="${esc(boundProxy||'')}" onchange="onProxySelectChange(this,'${accountId}')">${opts}</select>`;
+}
+function onProxySelectChange(sel,accountId){
+  const val=sel.value;
+  if(val==='__manual__'){
+    const url=prompt(t('Enter proxy URL (empty to unbind):'),'');
+    if(url===null){sel.value=sel.dataset.prev||'';return;}
+    bindAccountProxy(accountId,url.trim());
+  }else{
+    bindAccountProxy(accountId,val);
+  }
+}
+
+async function bindAccountProxy(id,proxyUrl){
+  try{
+    await api('/api/accounts/bind-proxy',{method:'POST',body:JSON.stringify({id,proxyUrl})});
+    showNotice(proxyUrl?t('Proxy bound'):t('Proxy unbound'),'success');
+    loadAccounts();
+  }catch(e){showNotice(e.message,'error');}
 }
 
 async function startPKCE(){
@@ -1117,18 +1200,18 @@ async function startPKCE(){
     const d=await api('/api/auth/start');
     $('callbackInput').dataset.state=d.state;
     const popup=window.open(d.url,'pkce','width=600,height=800');
-    if(!popup){$('authStatus').innerHTML='<div class="highlight-box warning"><div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i>弹出窗口被浏览器拦截</div><p>请允许此网站的弹出窗口，然后重新点击"开始授权"。</p></div>';lucide.createIcons();return;}
-    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>授权页面已在新窗口打开</div><p>请在弹出窗口中完成登录。登录后弹出页会显示空白或错误——这是正常的。复制弹出页地址栏的<b>完整网址</b>，粘贴到下方"回调地址"输入框。</p></div>';
+    if(!popup){$('authStatus').innerHTML='<div class="highlight-box warning"><div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i>'+t('Popup blocked by browser')+'</div><p>'+t('Please allow popups for this site, then click "Start authorization" again.')+'</p></div>';lucide.createIcons();return;}
+    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>'+t('Authorization page opened in new window')+'</div><p>'+t('Please complete login in the popup. After login, the page may show blank or error — this is normal. Copy the <b>full URL</b> from the popup address bar and paste it into the "Callback URL" input below.')+'</p></div>';
     $('callbackInput').focus();
-    $('callbackInput').placeholder='粘贴弹出页地址栏中的完整回调地址…';
+    $('callbackInput').placeholder=t('Paste the full callback URL from the popup address bar…');
     if(pkceTimer)clearInterval(pkceTimer);
     const start=Date.now();
     pkceTimer=setInterval(async()=>{
-      if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权超时，请重新开始授权。</b></div>';return;}
-      if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权窗口在完成前已关闭。</b></div>';return;}
+      if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>'+t('Authorization timed out, please start over.')+'</b></div>';return;}
+      if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>'+t('Authorization window was closed before completion.')+'</b></div>';return;}
       try{const s=await api('/api/auth/status?state='+d.state);
-        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>授权成功</div><p>账号已加入账号池。</p></div>';showNotice('授权成功','success');loadAccounts();}
-        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权失败或已过期</b></div>';}
+        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>'+t('Authorization successful')+'</div><p>'+t('Account has been added to the pool.')+'</p></div>';showNotice(t('Authorization successful'),'success');loadAccounts();}
+        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>'+t('Authorization failed or expired')+'</b></div>';}
       }catch(e){}
     },2000);
   }catch(e){showNotice(e.message,'error');}
@@ -1136,12 +1219,12 @@ async function startPKCE(){
 
 async function submitCallback(){
   const raw=$('callbackInput').value.trim();
-  if(!raw)return showNotice('请粘贴回调地址','error');
+  if(!raw)return showNotice(t('Please paste the callback URL'),'error');
   try{
     let u='/api/auth/callback?';
     if(raw.includes('://')){u+='url='+encodeURIComponent(raw);}
     else{u+=raw.replace(/^\?/,'');if(!raw.includes('state='))$('callbackInput').dataset.state&&(u+='&state='+$('callbackInput').dataset.state);}
-    await api(u);showNotice('授权成功','success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
+    await api(u);showNotice(t('Authorization successful'),'success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
   }catch(e){showNotice(e.message,'error');}
 }
 
@@ -1163,8 +1246,8 @@ function editKey(id,name){editKeyId=id;$('editKeyName').value=name;$('editKeyMod
 function closeEditKeyModal(){$('editKeyModal').classList.remove('open');editKeyId=null;}
 async function saveEditKey(){
   const name=$('editKeyName').value.trim();
-  if(!name)return showNotice('名称不能为空','error');
-  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice('已更新','success');loadKeys();}
+  if(!name)return showNotice(t('Name cannot be empty'),'error');
+  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice(t('Key updated'),'success');loadKeys();}
   catch(e){showNotice(e.message,'error');}
 }
 async function toggleKey(id,revoked){
@@ -1174,7 +1257,7 @@ async function toggleKey(id,revoked){
 
 function openKeyModal(){$('keyModal').classList.add('open');$('keyResult').style.display='none';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
 function closeKeyModal(){$('keyModal').classList.remove('open');}
-async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice('已复制','success');}catch(e){}}
+async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice(t('Copied'),'success');}catch(e){}}
 async function createKey(e){
   e.preventDefault();
   try{
@@ -1182,7 +1265,7 @@ async function createKey(e){
     $('keyValue').value=d.key;$('keyResult').style.display='block';copyKey();loadKeys();
   }catch(e){showNotice(e.message,'error');}
 }
-async function revokeKey(id){if(!confirm('确定删除此密钥？'))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
+async function revokeKey(id){if(!confirm(t('Are you sure you want to delete this key?')))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
 
 // ===== Usage page =====
 let usageDays=7, ugPageNo=0, ugTotal=0;
@@ -1325,8 +1408,8 @@ async function openUseKey(id){
   useKeyId=id;
   const d=await api('/api/admin/keys');
   const rec=(d.keys||[]).find(x=>x.id===id);
-  if(!rec){showNotice('找不到密钥','error');return;}
-  $('useKeyName').textContent='当前密钥：'+rec.name+' ('+rec.prefix+')';
+  if(!rec){showNotice(t('Key not found'),'error');return;}
+  $('useKeyName').textContent=t('Current key')+': '+rec.name+' ('+rec.prefix+')';
   $('useKeyVal').value=rec.raw||'';
   $('useKeyModal').classList.add('open');
   renderUkeTabs();
@@ -1341,7 +1424,7 @@ function renderUkeTabs(){
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function ukeFile(path,content){
   return `<div class="uke-file">
-    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice('已复制','success')">Copy</button></div>
+    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice(t('Copied'),'success')">Copy</button></div>
     <pre>${esc(content)}</pre>
   </div>`;
 }
@@ -1411,8 +1494,8 @@ goals = true`;
 }
 async function copyUseKey(){
   const v=$('useKeyVal').value;
-  if(!v){showNotice('完整密钥不可用','error');return;}
-  try{await navigator.clipboard.writeText(v);showNotice('已复制','success');}catch(e){}
+  if(!v){showNotice(t('Full key unavailable'),'error');return;}
+  try{await navigator.clipboard.writeText(v);showNotice(t('Copied'),'success');}catch(e){}
 }
 
 async function loadConversations(){
@@ -1423,7 +1506,7 @@ async function loadConversations(){
       const id=String(x.conversationId||'');
       const updated=x.updateTimeUtc||x.createTimeUtc;
       return `<tr class="conv-row" data-conversation-id="${esc(id)}">
-        <td><button class="conv-link" type="button">${esc(x.chatName||'未命名对话')}</button><div class="conv-meta"><code>${esc(id)}</code></div></td>
+        <td><button class="conv-link" type="button">${esc(x.chatName||t('Unnamed conversation'))}</button><div class="conv-meta"><code>${esc(id)}</code></div></td>
         <td>${Number(x.messageCount||0)}</td>
         <td>${esc(x.accountEmail||x.accountId||'-')}</td>
         <td style="font-size:12px;color:var(--muted)">${updated?new Date(updated).toLocaleString():'-'}</td>
@@ -1447,16 +1530,16 @@ function termOpen(title){$('termTitle').textContent=title;$('termBody').innerHTM
 function termLine(msg,cls){const d=document.createElement('div');if(cls)d.className=cls;d.textContent='> '+msg;$('termBody').appendChild(d);$('termBody').scrollTop=$('termBody').scrollHeight;}
 function termClear(){$('termBody').innerHTML='';}
 
-async function deleteConv(id){if(!confirm('确定删除此对话？'))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice('已删除','success');loadConversations();}catch(e){showNotice(e.message,'error');}}
+async function deleteConv(id){if(!confirm(t('Are you sure you want to delete this conversation?')))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice(t('Deleted'),'success');loadConversations();}catch(e){showNotice(e.message,'error');}}
 async function cleanupAll(){
-  const total=confirm('确定清理所有对话？\n每条对话将逐一删除并在终端记录日志。');
+  const total=confirm(t('Are you sure you want to clean up all conversations?')+'\n'+t('Each conversation will be deleted individually and logged in the terminal.'));
   if(!total)return;
   termOpen('cleanup — m365-copilot2api');
-  termLine('开始清理所有对话…');
+  termLine(t('Starting cleanup of all conversations…'));
   let ok=0,fail=0,round=0;
   for(round=1;round<=100;round++){
     let d;
-    try{d=await api('/api/m365/conversations');}catch(e){termLine('获取对话列表失败：'+e.message,'err');break;}
+    try{d=await api('/api/m365/conversations');}catch(e){termLine(t('Failed to fetch conversation list')+': '+e.message,'err');break;}
     const c=d.data||[];
     if(!c.length){
       termLine('Round '+round+': list is empty.','dim');
@@ -1465,7 +1548,7 @@ async function cleanupAll(){
     termLine('Round '+round+': found '+c.length+' conversations (paged loading; fetch the next batch after deletion)','dim');
     for(let i=0;i<c.length;i++){
       const x=c[i];
-      const name=x.chatName||'未命名';
+      const name=x.chatName||t('Unnamed');
       termLine('['+(i+1)+'/'+c.length+'] Deleting "'+name+'" '+String(x.conversationId||'').slice(0,8)+'…');
       try{
         await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:x.conversationId})});
@@ -1476,7 +1559,7 @@ async function cleanupAll(){
     await new Promise(r=>setTimeout(r,500));
   }
   termLine('Finished: '+ok+' succeeded, '+fail+' failed, '+round+' rounds total.',fail?'warn':'ok');
-  showNotice('清理完成','success');loadConversations();
+  showNotice(t('Cleanup complete'),'success');loadConversations();
 }
 
 function proxyRow(x){
@@ -1489,7 +1572,7 @@ function proxyRow(x){
     <td style="font-size:12px;color:var(--muted)">${x.failures||0}</td>
     <td style="font-size:12px;color:var(--muted)">${x.cooldownUntil?new Date(x.cooldownUntil).toLocaleString():'-'}</td>
     <td style="text-align:right;white-space:nowrap">
-      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">检测</button>
+      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">${t('Check')}</button>
       <button class="btn-sm btn danger" onclick="proxyRemove('${esc(x.url)}')">Delete</button>
     </td>
   </tr>`;
@@ -1498,20 +1581,21 @@ async function loadProxies(){
   try{
     const d=await api('/api/admin/proxy-pool');
     const p=d.proxies||[];
+    window.proxyListCache=p;
     $('proxyRows').innerHTML=p.length?p.map(proxyRow).join(''):'<tr><td colspan="6" class="empty">No proxies; requests will connect directly</td></tr>';
   }catch(e){$('proxyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
 }
 async function proxyAdd(){
   const raw=$('proxyInput').value.trim();
-  if(!raw)return showNotice('请输入代理地址','error');
+  if(!raw)return showNotice(t('Please enter proxy address'),'error');
   try{
     const d=await api('/api/admin/proxy-pool',{method:'POST',body:JSON.stringify({urls:[raw]})});
     showNotice('Added '+d.added+' proxies','success');$('proxyInput').value='';loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyRemove(url){
-  if(!confirm('确定删除代理 '+url+'？'))return;
-  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice('已删除','success');loadProxies();}
+  if(!confirm(t('Are you sure you want to delete this proxy?')))return;
+  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice(t('Deleted'),'success');loadProxies();}
   catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckOne(url){
@@ -1519,13 +1603,13 @@ async function proxyCheckOne(url){
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT',body:JSON.stringify({url})});
     const rec=(d.proxies||[]).find(x=>x.url===url);
     if(rec&&rec.health==='reachable')showNotice('Connection healthy: '+rec.latencyMs+' ms','success');
-    else showNotice(rec&&rec.lastError?rec.lastError:'连接失败','error');
+    else showNotice(rec&&rec.lastError?rec.lastError:t('Connection failed'),'error');
     loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckAll(){
   termOpen('proxy check — m365-copilot2api');
-  termLine('正在检测所有代理…');
+  termLine(t('Checking all proxies…'));
   try{
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT'});
     const p=d.proxies||[];
@@ -1535,7 +1619,7 @@ async function proxyCheckAll(){
       else termLine('✗ '+x.url+(x.lastError?' — '+x.lastError:''),'err');
     }
     termLine('Finished: '+ok+'/'+p.length+' proxies available.',ok===p.length&&p.length?'ok':'warn');
-    showNotice('健康检查完成','success');loadProxies();
+    showNotice(t('Health check complete'),'success');loadProxies();
   }catch(e){termLine('Check failed: '+e.message,'err');}
 }
 async function proxyTest(){
@@ -1548,7 +1632,7 @@ async function loadModelTest(){
     const d=await api('/api/admin/models');
     const models=d.data||[];
     if(!models.length){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">No models available</td></tr>';return;}
-    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">点击"测试全部"</td></tr>`).join('');
+    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">${t('Click "Test all" to start')}</td></tr>`).join('');
   }catch(e){$('modelTestRows').innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`;}
 }
 async function modelTestOne(id,row){
@@ -1561,7 +1645,7 @@ async function modelTestOne(id,row){
   try{
     const d=await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model:id})});
     const ms=Math.round(performance.now()-start);
-    const content=d.reply||'（空回复）';
+    const content=d.reply||t('(empty reply)');
     badge.innerHTML='<span class="status online"><i></i>Healthy</span>';
     lat.textContent=ms+' ms';
     reply.textContent=String(content).slice(0,80);
@@ -1573,12 +1657,12 @@ async function modelTestOne(id,row){
 }
 async function modelTestAll(){
   const rows=[...document.querySelectorAll('#modelTestRows tr[data-model]')];
-  if(!rows.length){showNotice('请先加载模型列表','error');return;}
+  if(!rows.length){showNotice(t('Please load model list first'),'error');return;}
   for(let i=0;i<rows.length;i++){
     modelTestOne(rows[i].dataset.model,rows[i]);
     await new Promise(r=>setTimeout(r,250));
   }
-  showNotice('模型测试完成','success');
+  showNotice(t('Model test complete'),'success');
 }
 
 async function loadSettings(){
@@ -1597,7 +1681,7 @@ async function saveSettings(){
     if(listen)body.listenAddress=listen;
     if(timeout)body.chatTimeoutSeconds=parseInt(timeout);
     await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
-    showNotice('设置已保存','success');
+    showNotice(t('Settings saved'),'success');
   }catch(e){showNotice(e.message,'error');}
 }
 

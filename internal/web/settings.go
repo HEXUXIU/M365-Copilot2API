@@ -201,12 +201,12 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 		base, _ := json.Marshal(cur)
 		var merged map[string]any
 		if json.Unmarshal(base, &merged) != nil {
-			writeOpenAIError(w, 500, "internal_error", "marshal settings")
+			writeOpenAIError(w, 500, "internal_error", "internal_error", "marshal settings")
 			return
 		}
 		var patch map[string]any
 		if json.NewDecoder(r.Body).Decode(&patch) != nil {
-			writeOpenAIError(w, 400, "invalid_request_error", "bad json")
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_json", "bad json")
 			return
 		}
 		for k, v := range patch {
@@ -215,20 +215,20 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 		mergedJSON, _ := json.Marshal(merged)
 		var v runtimeSettings
 		if json.Unmarshal(mergedJSON, &v) != nil {
-			writeOpenAIError(w, 400, "invalid_request_error", "bad json")
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_json", "bad json")
 			return
 		}
 		if e := s.settings.save(v); e != nil {
-			writeOpenAIError(w, 400, "invalid_request_error", e.Error())
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", e.Error())
 			return
 		}
 		if e := outbound.ConfigurePool(v.ProxyPool); e != nil {
-			writeOpenAIError(w, 400, "invalid_request_error", e.Error())
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", e.Error())
 			return
 		}
 		jsonOut(w, map[string]any{"ok": true, "settings": v})
 	default:
-		writeOpenAIError(w, 405, "invalid_request_error", "method not allowed")
+		writeOpenAIError(w, 405, "invalid_request_error", "method_not_allowed", "method not allowed")
 	}
 }
 func configuredToolCallLimit(s *settingsStore) int {

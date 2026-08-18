@@ -34,7 +34,7 @@ func recoverPanics(next http.Handler) http.Handler {
 			if rec := recover(); rec != nil {
 				log.Printf("[recover] panic on %s %s: %v\n%s", r.Method, r.URL.Path, rec, debug.Stack())
 				if !sw.headerWritten {
-					writeOpenAIError(sw, 500, "internal_error", "internal error")
+					writeOpenAIError(sw, 500, "internal_error", "internal_error", "internal error")
 				}
 			}
 		}()

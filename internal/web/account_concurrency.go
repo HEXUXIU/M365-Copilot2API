@@ -85,6 +85,15 @@ func (c *accountConcurrency) Snapshot() map[string]any {
 	return map[string]any{"limit": c.limit, "inflight": inflight}
 }
 
+func (c *accountConcurrency) inflightCount(accountID string) int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.inflight[accountID]
+}
+
 func (s *Server) accountAvailable(accountID string) bool {
 	if s.tokens != nil && !s.tokens.ScheduleEnabled(accountID) {
 		return false

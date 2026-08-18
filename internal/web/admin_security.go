@@ -140,11 +140,11 @@ func (s *Server) clearLoginFailures(ip string) {
 }
 func (s *Server) adminChangePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeOpenAIError(w, 405, "invalid_request_error", "method not allowed")
+		writeOpenAIError(w, 405, "invalid_request_error", "method_not_allowed", "method not allowed")
 		return
 	}
 	if !s.validAdminSession(r) {
-		writeOpenAIError(w, 401, "auth_error", "administrator login required")
+		writeOpenAIError(w, 401, "auth_error", "invalid_api_key", "administrator login required")
 		return
 	}
 	var b struct {
@@ -152,22 +152,22 @@ func (s *Server) adminChangePassword(w http.ResponseWriter, r *http.Request) {
 		New     string `json:"new_password"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&b) != nil {
-		writeOpenAIError(w, 400, "invalid_request_error", "bad json")
+		writeOpenAIError(w, 400, "invalid_request_error", "invalid_json", "bad json")
 		return
 	}
 	s.mu.Lock()
 	current := s.adminPassword
 	s.mu.Unlock()
 	if subtle.ConstantTimeCompare([]byte(b.Current), []byte(current)) != 1 {
-		writeOpenAIError(w, 401, "auth_error", "current password is invalid")
+		writeOpenAIError(w, 401, "auth_error", "invalid_api_key", "current password is invalid")
 		return
 	}
 	if err := validNewAdminPassword(b.New); err != nil {
-		writeOpenAIError(w, 400, "invalid_request_error", err.Error())
+		writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", err.Error())
 		return
 	}
 	if err := saveAdminPassword(b.New); err != nil {
-		writeOpenAIError(w, 500, "storage_error", "administrator password could not be saved; check the persistent data directory permissions")
+		writeOpenAIError(w, 500, "storage_error", "storage_error", "administrator password could not be saved; check the persistent data directory permissions")
 		return
 	}
 	s.mu.Lock()

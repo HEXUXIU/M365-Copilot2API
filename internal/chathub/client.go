@@ -27,8 +27,16 @@ var ErrRateLimitNotice = errors.New("upstream rate-limit notice")
 
 var ErrEmptyCompletion = errors.New("upstream returned empty completion; tone may be unavailable for this tenant")
 
-// DialError carries the HTTP status and optional Retry-After from a failed
-// WebSocket dial so the web layer can route it into the correct cooldown.
+var ErrMeteringOutOfCredits = errors.New("upstream metering out of credits")
+
+var ErrContentPolicyBlocked = errors.New("upstream content policy blocked")
+
+type ThrottlingInfo struct {
+	Raw             json.RawMessage
+	MaxTurnCount    int
+	MeteringCredits any
+}
+
 type DialError struct {
 	Status     int
 	RetryAfter int
@@ -107,7 +115,7 @@ type Result struct {
 	ConversationID string
 	SessionID      string
 	RequestID      string
-	Throttling     any
+	Throttling     *ThrottlingInfo
 	RawResult      string
 	Events         []json.RawMessage
 	Normalized     []Event
@@ -316,7 +324,48 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			strings.Contains(t, "太多请求") ||
 			strings.Contains(t, "无法响应这么多请求") ||
 			strings.Contains(t, "too many requests") ||
-			strings.Contains(t, "please retry") && strings.Contains(t, "later")
+			strings.Contains(t, "please retry") && strings.Contains(t, "later") ||
+			strings.Contains(t, "customthrottlereply") ||
+			strings.Contains(t, "customlimitthrottlereply") ||
+			strings.Contains(t, "meteringoutofcredits")
+	}
+	meteringOutOfCredits := func(text string) bool {
+		return strings.Contains(strings.ToLower(text), "meteringoutofcredits")
+	}
+	contentPolicyBlocked := func(text string) bool {
+		tl := strings.ToLower(text)
+		return (strings.Contains(tl, "content policy") && strings.Contains(tl, "block")) ||
+			strings.Contains(tl, "i'm sorry, i can't respond") ||
+			strings.Contains(tl, "i'm sorry, i cannot respond") ||
+			strings.Contains(tl, "很抱歉，我无法响应") ||
+			strings.Contains(tl, "我很抱歉，我无法响应") ||
+			strings.Contains(tl, "contentfilter") ||
+			strings.Contains(tl, "safetyblocked")
+	}
+	parseThrottling := func(raw any) *ThrottlingInfo {
+		if raw == nil {
+			return nil
+		}
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil
+		}
+		info := &ThrottlingInfo{Raw: json.RawMessage(b)}
+		var m map[string]any
+		if json.Unmarshal(b, &m) == nil {
+			if v, ok := m["maxTurnCount"]; ok {
+				if f, ok := v.(float64); ok {
+					info.MaxTurnCount = int(f)
+				}
+			}
+			if _, ok := m["meteringInformation"]; ok {
+				info.MeteringCredits = m["meteringInformation"]
+			}
+			if _, ok := m["remainingAllowance"]; ok {
+				info.MeteringCredits = m["remainingAllowance"]
+			}
+		}
+		return info
 	}
 	emitSnapshot := func(snapshot string) error {
 		if snapshot == "" {
@@ -326,7 +375,13 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			log.Printf("[trace:emitSnapshot] cur=%d snapshot=%d", streamed.Len(), len(snapshot))
 		}
 		if rateLimited(snapshot) {
+			if meteringOutOfCredits(snapshot) {
+				return ErrMeteringOutOfCredits
+			}
 			return ErrRateLimitNotice
+		}
+		if contentPolicyBlocked(snapshot) {
+			return ErrContentPolicyBlocked
 		}
 		cur := streamed.String()
 		if cur == "" {
@@ -342,7 +397,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		return nil
 	}
 	var final string
-	var throttling any
+	var throttlingInfo *ThrottlingInfo
 	var rawResult string
 	var events []json.RawMessage
 	seenStreamTools := map[string]bool{}
@@ -436,7 +491,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 						}
 					}
 					if thr, ok := arg["throttling"]; ok {
-						throttling = thr
+						throttlingInfo = parseThrottling(thr)
 					}
 					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame {
 						if err := emitSnapshot(w); err != nil {
@@ -471,15 +526,23 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 				item, _ := obj["item"].(map[string]any)
 				if item != nil {
 					if thr, ok := item["throttling"]; ok {
-						throttling = thr
+						throttlingInfo = parseThrottling(thr)
 					}
 					if res, ok := item["result"].(map[string]any); ok {
 						rawResult, _ = res["value"].(string)
 				if msg, ok := res["message"].(string); ok {
 						final = msg
+						if meteringOutOfCredits(final) {
+							returnConn = false
+							return Result{}, ErrMeteringOutOfCredits
+						}
 						if rateLimited(final) {
 							returnConn = false
 							return Result{}, ErrRateLimitNotice
+						}
+						if contentPolicyBlocked(final) {
+							returnConn = false
+							return Result{}, ErrContentPolicyBlocked
 						}
 					}
 					}
@@ -503,7 +566,14 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 				}
 				if rateLimited(text) {
 					returnConn = false
+					if meteringOutOfCredits(text) {
+						return Result{}, ErrMeteringOutOfCredits
+					}
 					return Result{}, ErrRateLimitNotice
+				}
+				if contentPolicyBlocked(text) {
+					returnConn = false
+					return Result{}, ErrContentPolicyBlocked
 				}
 				if text == "" {
 					returnConn = false
@@ -515,7 +585,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					ConversationID: req.ConversationID,
 					SessionID:      req.SessionID,
 					RequestID:      requestID,
-					Throttling:     throttling,
+					Throttling:     throttlingInfo,
 					RawResult:      rawResult,
 					Events:         events,
 					Normalized:     NormalizeEvents(events),

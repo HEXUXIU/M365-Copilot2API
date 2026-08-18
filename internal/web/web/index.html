@@ -190,9 +190,9 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .copy-field .form-input{flex:1;font-family:SF Mono,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
 
 /* Modal */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:50;padding:16px;overflow-y:auto}
 .modal-overlay.open{display:flex}
-.modal{width:min(480px,calc(100vw - 32px));background:var(--surface-solid);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:28px;animation:scaleIn .25s var(--ease-out)}
+.modal{width:min(480px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow-y:auto;background:var(--surface-solid);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:28px;animation:scaleIn .25s var(--ease-out)}
 .modal h3{font-size:17px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px}
 .modal .subtitle{font-size:12px;color:var(--muted);margin-bottom:16px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
@@ -622,9 +622,14 @@ if (response.output_text) {
 <!-- Key Modal -->
 <div class="modal-overlay" id="keyModal">
   <div class="modal">
-    <h3>Create API key</h3>
-    <p class="subtitle">此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。</p>
-    <form onsubmit="createKey(event)">
+    <div class="modal-head">
+      <div>
+        <h3>Create API key</h3>
+        <p class="subtitle">此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。</p>
+      </div>
+      <button type="button" class="modal-close" onclick="closeKeyModal()" aria-label="Close" title="Close"><i data-lucide="x" style="width:15px;height:15px"></i></button>
+    </div>
+    <form id="keyForm" onsubmit="createKey(event)">
       <div class="form-group">
         <label class="form-label">Name</label>
         <input class="form-input" id="keyName" value="default" autofocus>
@@ -637,6 +642,7 @@ if (response.output_text) {
     </form>
     <div id="keyResult" style="display:none">
       <div class="highlight-box"><b>Copy and save this key now</b><div class="copy-field"><input class="form-input" id="keyValue" readonly><button class="btn-sm btn" onclick="copyKey()">Copy</button></div></div>
+      <div class="modal-actions"><button type="button" class="btn primary" onclick="closeKeyModal()">Close</button></div>
     </div>
   </div>
 </div>
@@ -833,6 +839,7 @@ const localeText={
   'Create API key': {'zh-CN':'创建 API Key','zh-TW':'建立 API Key','ja':'API キーを作成','ko':'API 키 생성','es':'Crear clave API','fr':'Créer une clé API','de':'API-Schlüssel erstellen','pt-BR':'Criar chave API','ru':'Создать API-ключ','ar':'إنشاء مفتاح API'},
   'The key is shown only once. Store it securely.': {'zh-CN':'密钥只显示一次，请妥善保存','zh-TW':'金鑰只顯示一次，請妥善保存','ja':'キーは一度だけ表示されます。安全に保管してください。','ko':'키는 한 번만 표시됩니다. 안전하게 보관하세요.','es':'La clave solo se muestra una vez. Guárdela de forma segura.','fr':'La clé n\'est affichée qu\'une fois. Conservez-la en lieu sûr.','de':'Der Schlüssel wird nur einmal angezeigt. Bewahren Sie ihn sicher auf.','pt-BR':'A chave só é mostrada uma vez. Guarde-a com segurança.','ru':'Ключ отображается только один раз. Храните его безопасно.','ar':'يظهر المفتاح مرة واحدة فقط. احفظه بأمان.'},
   'Cancel': {'zh-CN':'取消','zh-TW':'取消','ja':'キャンセル','ko':'취소','es':'Cancelar','fr':'Annuler','de':'Abbrechen','pt-BR':'Cancelar','ru':'Отмена','ar':'إلغاء'},
+  'Close': {'zh-CN':'关闭','zh-TW':'關閉','ja':'閉じる','ko':'닫기','es':'Cerrar','fr':'Fermer','de':'Schließen','pt-BR':'Fechar','ru':'Закрыть','ar':'إغلاق'},
   'Create': {'zh-CN':'创建','zh-TW':'建立','ja':'作成','ko':'생성','es':'Crear','fr':'Créer','de':'Erstellen','pt-BR':'Criar','ru':'Создать','ar':'إنشاء'},
   'Copy and save this key now': {'zh-CN':'请立即复制保存此密钥','zh-TW':'請立即複製儲存此金鑰','ja':'今すぐこのキーをコピーして保存','ko':'지금 이 키를 복사하여 저장하세요','es':'Copie y guarde esta clave ahora','fr':'Copiez et enregistrez cette clé maintenant','de':'Kopieren und speichern Sie diesen Schlüssel jetzt','pt-BR':'Copie e salve esta chave agora','ru':'Скопируйте и сохраните этот ключ сейчас','ar':'انسخ واحفظ هذا المفتاح الآن'},
   'Edit API key': {'zh-CN':'编辑 API Key','zh-TW':'編輯 API Key','ja':'API キーを編集','ko':'API 키 편집','es':'Editar clave API','fr':'Modifier la clé API','de':'API-Schlüssel bearbeiten','pt-BR':'Editar chave API','ru':'Редактировать API-ключ','ar':'تحرير مفتاح API'},
@@ -1172,14 +1179,14 @@ async function toggleKey(id,revoked){
   catch(e){showNotice(e.message,'error');}
 }
 
-function openKeyModal(){$('keyModal').classList.add('open');$('keyResult').style.display='none';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
-function closeKeyModal(){$('keyModal').classList.remove('open');}
+function openKeyModal(){$('keyModal').classList.add('open');$('keyForm').style.display='block';$('keyResult').style.display='none';$('keyValue').value='';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
+function closeKeyModal(){$('keyModal').classList.remove('open');$('keyValue').value='';}
 async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice('已复制','success');}catch(e){}}
 async function createKey(e){
   e.preventDefault();
   try{
     const d=await api('/api/admin/keys',{method:'POST',body:JSON.stringify({name:$('keyName').value||'default'})});
-    $('keyValue').value=d.key;$('keyResult').style.display='block';copyKey();loadKeys();
+    $('keyValue').value=d.key;$('keyForm').style.display='none';$('keyResult').style.display='block';copyKey();loadKeys();
   }catch(e){showNotice(e.message,'error');}
 }
 async function revokeKey(id){if(!confirm('确定删除此密钥？'))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}

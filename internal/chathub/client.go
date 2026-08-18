@@ -333,6 +333,9 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		return strings.Contains(strings.ToLower(text), "meteringoutofcredits")
 	}
 	contentPolicyBlocked := func(text string) bool {
+		if len(text) > 300 {
+			return false
+		}
 		tl := strings.ToLower(text)
 		return (strings.Contains(tl, "content policy") && strings.Contains(tl, "block")) ||
 			strings.Contains(tl, "i'm sorry, i can't respond") ||

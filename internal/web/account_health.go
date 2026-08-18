@@ -38,8 +38,10 @@ func IsRateLimited(err error) bool {
 		if httpErr.Status == 429 {
 			return true
 		}
-		if strings.Contains(strings.ToLower(httpErr.Body), "limited") {
-			return true
+		if httpErr.Status != 401 && httpErr.Status != 403 && httpErr.Status != 503 {
+			if strings.Contains(strings.ToLower(httpErr.Body), "limited") {
+				return true
+			}
 		}
 	}
 	var dialErr *chathub.DialError

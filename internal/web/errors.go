@@ -32,17 +32,17 @@ func upstreamError(err error) string {
 // rate limits stay 429 (with Retry-After when known), auth failures become 401,
 // everything else is 502. Unknown upstream failures must never leak internals.
 func upstreamStatus(err error) int {
-	if IsRateLimited(err) {
-		return http.StatusTooManyRequests
-	}
-	if IsInsufficientQuota(err) {
-		return http.StatusPaymentRequired
-	}
 	if IsPermissionDenied(err) {
 		return http.StatusForbidden
 	}
 	if IsAuthFailure(err) {
 		return http.StatusUnauthorized
+	}
+	if IsRateLimited(err) {
+		return http.StatusTooManyRequests
+	}
+	if IsInsufficientQuota(err) {
+		return http.StatusTooManyRequests
 	}
 	if IsServerUnavailable(err) {
 		return http.StatusServiceUnavailable
@@ -66,11 +66,11 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 		return
 	}
 	if IsInsufficientQuota(err) {
-		writeOpenAIError(w, http.StatusPaymentRequired, "rate_limit_error", "insufficient_quota", "account quota exhausted; check M365 subscription and Copilot license")
+		writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", "insufficient_quota", "account quota exhausted; check M365 subscription and Copilot license")
 		return
 	}
 	if IsPermissionDenied(err) {
-		writeOpenAIError(w, http.StatusForbidden, "authentication_error", "insufficient_permissions", "account not authorized for Copilot; contact your admin")
+		writeOpenAIError(w, http.StatusForbidden, "authentication_error", "insufficient_permissions", "account not authorized for Copilot; check M365 subscription and Copilot license assignment")
 		return
 	}
 	if IsServerUnavailable(err) {

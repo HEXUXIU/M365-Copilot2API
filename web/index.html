@@ -714,6 +714,7 @@ const localeText={
   'First API request': {'zh-CN':'首个 API 请求','zh-TW':'首個 API 要求','ja':'最初の API リクエスト','ko':'첫 API 요청','es':'Primera solicitud API','fr':'Première requête API','de':'Erste API-Anfrage','pt-BR':'Primeira solicitação API','ru':'Первый API-запрос','ar':'أول طلب API'},
   'OpenAI-compatible API': {'zh-CN':'OpenAI 兼容接口','zh-TW':'OpenAI 相容介面','ja':'OpenAI 互換 API','ko':'OpenAI 호환 API','es':'API compatible con OpenAI','fr':'API compatible OpenAI','de':'OpenAI-kompatible API','pt-BR':'API compatível com OpenAI','ru':'API, совместимый с OpenAI','ar':'واجهة متوافقة مع OpenAI'},
   'Copy': {'zh-CN':'复制','zh-TW':'複製','ja':'コピー','ko':'복사','es':'Copiar','fr':'Copier','de':'Kopieren','pt-BR':'Copiar','ru':'Копировать','ar':'نسخ'},
+  'Copy failed': {'zh-CN':'复制失败','zh-TW':'複製失敗','ja':'コピーに失敗しました','ko':'복사 실패','es':'Error al copiar','fr':'Échec de la copie','de':'Kopieren fehlgeschlagen','pt-BR':'Falha ao copiar','ru':'Не удалось скопировать','ar':'فشل النسخ'},
   'Gateway': {'zh-CN':'网关','zh-TW':'閘道','ja':'ゲートウェイ','ko':'게이트웨이','es':'Puerta de enlace','fr':'Passerelle','de':'Gateway','pt-BR':'Gateway','ru':'Шлюз','ar':'البوابة'},
   'Online': {'zh-CN':'在线','zh-TW':'線上','ja':'オンライン','ko':'온라인','es':'En línea','fr':'En ligne','de':'Online','pt-BR':'Online','ru':'В сети','ar':'متصل'},
   'Available accounts': {'zh-CN':'可用账号','zh-TW':'可用帳號','ja':'利用可能なアカウント','ko':'사용 가능한 계정','es':'Cuentas disponibles','fr':'Comptes disponibles','de':'Verfügbare Konten','pt-BR':'Contas disponíveis','ru':'Доступные аккаунты','ar':'الحسابات المتاحة'},
@@ -1114,6 +1115,7 @@ async function loadKeys(){
     const d=await api('/api/admin/keys');
     const k=d.keys||[];
     $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
+      ${x.raw?`<button class="btn-sm btn" onclick="copyKeyRaw('${x.raw}')">Copy</button>`:''}
       <button class="btn-sm btn" onclick="openUseKey('${x.id}')">Use key</button>
       <button class="btn-sm btn" onclick="editKey('${x.id}','${x.name.replace(/'/g,"\\'")}')">Edit</button>
       <button class="btn-sm btn ${x.revoked?'success':'danger'}" onclick="toggleKey('${x.id}',${x.revoked})">${x.revoked?'Enable':'Disable'}</button>
@@ -1139,6 +1141,7 @@ async function toggleKey(id,revoked){
 function openKeyModal(){$('keyModal').classList.add('open');$('keyResult').style.display='none';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
 function closeKeyModal(){$('keyModal').classList.remove('open');}
 async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice('Copied','success');}catch(e){}}
+async function copyKeyRaw(raw){try{await navigator.clipboard.writeText(raw);showNotice('Copied','success');}catch(e){showNotice('Copy failed','error');}}
 async function createKey(e){
   e.preventDefault();
   try{

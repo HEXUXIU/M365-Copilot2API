@@ -24,7 +24,7 @@ type apiKeyRecord struct {
 }
 type apiKeyStore struct {
 	mu      sync.Mutex
-	Path    string
+	Path    string         `json:"-"`
 	Keys    []apiKeyRecord `json:"keys"`
 	persist *persistStore
 }
@@ -44,18 +44,13 @@ func openAPIKeys() *apiKeyStore {
 	s := newAPIKeyStore(p)
 	b, e := os.ReadFile(p)
 	if e == nil && json.Unmarshal(b, s) == nil {
-		migrated := false
+		// Local extension: keep stored Raw keys so the console can re-copy
+		// them later. Upstream vanilla wipes Raw on load; we deliberately
+		// persist it (file perms 0600, admin-only API).
 		for i := range s.Keys {
-			if s.Keys[i].Raw != "" {
-				if s.Keys[i].Hash == "" {
-					s.Keys[i].Hash = keyHash(s.Keys[i].Raw)
-				}
-				s.Keys[i].Raw = ""
-				migrated = true
+			if s.Keys[i].Raw != "" && s.Keys[i].Hash == "" {
+				s.Keys[i].Hash = keyHash(s.Keys[i].Raw)
 			}
-		}
-		if migrated {
-			_ = s.flush()
 		}
 	}
 	return s
@@ -79,7 +74,7 @@ func (s *apiKeyStore) create(name string) (apiKeyRecord, string, error) {
 		return apiKeyRecord{}, "", e
 	}
 	raw := "m365_" + hex.EncodeToString(b)
-	r := apiKeyRecord{ID: hex.EncodeToString(b[:8]), Name: name, Prefix: raw[:12], Hash: keyHash(raw), CreatedAt: time.Now()}
+	r := apiKeyRecord{ID: hex.EncodeToString(b[:8]), Name: name, Prefix: raw[:12], Hash: keyHash(raw), Raw: raw, CreatedAt: time.Now()}
 	s.mu.Lock()
 	s.Keys = append(s.Keys, r)
 	s.mu.Unlock()
@@ -100,7 +95,6 @@ func (s *apiKeyStore) list() []apiKeyRecord {
 	copy(out, s.Keys)
 	for i := range out {
 		out[i].Hash = ""
-		out[i].Raw = ""
 	}
 	return out
 }

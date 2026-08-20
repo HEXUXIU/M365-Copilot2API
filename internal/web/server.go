@@ -269,9 +269,7 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/v1/models", s.openaiModels)
 	m.HandleFunc("/v1/chat/completions", s.openaiChat)
 	m.HandleFunc("/v1/responses", s.responses)
-	m.HandleFunc("/v1/mcp/sse", mcp.HandleSSE)
-	m.HandleFunc("/v1/mcp/message", mcp.HandleMessage)
-	m.HandleFunc("/v1/mcp/tools", mcp.HandleToolsList)
+	m.HandleFunc("/responses", s.responses)
 	m.HandleFunc("/v1/messages", s.anthropicMessages)
 	m.HandleFunc("/v1/images/generations", s.imageGenerations)
 	m.HandleFunc("/v1/images/edits", s.imageEdits)
@@ -290,7 +288,7 @@ func (s *Server) adminMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/v1/") {
+		if strings.HasPrefix(r.URL.Path, "/v1/") || r.URL.Path == "/responses" {
 			if !s.validAPIKey(r) {
 				http.Error(w, `{"error":{"message":"valid API key required","type":"auth_error"}}`, http.StatusUnauthorized)
 				return
@@ -1448,17 +1446,21 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	convCacheModel := firstNonEmpty(body.Model, "m365-copilot")
 	if body.ConversationID == "" && len(body.Messages) > 1 {
 		sysHash := systemPromptHash(body.Messages)
-		if cached := s.convCache.Lookup(acc.ID, convCacheModel); cached != nil && cached.SystemPrompt == sysHash {
-			if len(body.Messages) > cached.MessageCount {
-				incPrompt, incAtt := flattenPromptMessages(body.Messages[cached.MessageCount:], nil)
-				incPrompt = strings.TrimSpace(incPrompt)
-				if incPrompt != "" {
-					body.ConversationID = cached.ConversationID
-					body.SessionID = cached.SessionID
-					answerPrompt = incPrompt
-					body.Attachments = incAtt
-					convReused = true
-					log.Printf("[conv-cache] hit account=%s model=%s conversation=%s cached_msgs=%d new_msgs=%d", acc.ID, convCacheModel, cached.ConversationID, cached.MessageCount, len(body.Messages))
+		if sysHash != "" {
+			if cached := s.convCache.Lookup(acc.ID, convCacheModel); cached != nil && cached.SystemPrompt == sysHash && cached.MessageCount > 0 {
+				if len(body.Messages) > cached.MessageCount {
+					incPrompt, incAtt := flattenPromptMessages(body.Messages[cached.MessageCount:], nil)
+					incPrompt = strings.TrimSpace(incPrompt)
+					if incPrompt != "" {
+						body.ConversationID = cached.ConversationID
+						body.SessionID = cached.SessionID
+						answerPrompt = incPrompt
+						body.Attachments = incAtt
+						convReused = true
+						log.Printf("[conv-cache] hit account=%s model=%s conversation=%s cached_msgs=%d new_msgs=%d", acc.ID, convCacheModel, cached.ConversationID, cached.MessageCount, len(body.Messages))
+					}
+				} else if len(body.Messages) == cached.MessageCount {
+					log.Printf("[conv-cache] same-len account=%s model=%s msgs=%d", acc.ID, convCacheModel, len(body.Messages))
 				}
 			}
 		}

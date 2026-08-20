@@ -91,6 +91,16 @@ func systemPromptHash(messages []oaiMsg) string {
 			return hex.EncodeToString(h[:])
 		}
 	}
+	for _, m := range messages {
+		if m.Role == "user" {
+			text := contentToString(m.Content)
+			if len(text) > 200 {
+				text = text[:200]
+			}
+			h := sha256.Sum256([]byte("user:" + text))
+			return hex.EncodeToString(h[:])
+		}
+	}
 	return ""
 }
 

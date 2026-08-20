@@ -485,9 +485,6 @@ func (s *Server) validAPIKey(r *http.Request) bool {
 	if raw != "" && s.apiKeys.valid(raw) {
 		return true
 	}
-	if strings.HasPrefix(raw, "eyJ") {
-		return true
-	}
 	return false
 }
 
@@ -1061,10 +1058,6 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		Attachments:    body.Attachments,
 	})
 	if err != nil {
-		// Failover: a rate-limited or auth-failed account must not take down the
-		// request when the pool has other healthy accounts. Only auto-selected
-		// requests fail over; an explicitly chosen account is respected, and a
-		// conversation-bound chat stays on its account.
 		if body.AccountID == "" && body.ConversationID == "" && (IsRateLimited(err) || IsAuthFailure(err)) {
 			next, nerr := s.nextHealthyAccount(acc.ID)
 			if nerr == nil {
@@ -1084,13 +1077,16 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 					res = res2
 					err = nil
 				} else {
+					s.accountPool.MarkFailure(next.ID, err2, rateLimitCooldown)
 					err = err2
 				}
 			}
 		}
-		s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
-		writeUpstreamError(w, err)
-		return
+		if err != nil {
+			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			writeUpstreamError(w, err)
+			return
+		}
 	}
 	s.accountPool.MarkSuccess(acc.ID)
 	res.Text = sanitizePublicAssistantText(res.Text)

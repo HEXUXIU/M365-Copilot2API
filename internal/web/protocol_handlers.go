@@ -47,10 +47,12 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	pr, pw := io.Pipe()
 	irw := &pipeResponseWriter{h: make(http.Header), w: pw}
 	innerDone := make(chan struct{})
+	var innerPanic any
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("[responses] inner goroutine panic: %v", r)
+			if p := recover(); p != nil {
+				innerPanic = p
+				log.Printf("[responses] inner goroutine panic: %v", p)
 			}
 			_ = pw.Close()
 			close(innerDone)
@@ -109,7 +111,10 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		if rawCalls, ok := delta["tool_calls"].([]any); ok {
 			for _, raw := range rawCalls {
 				tc, _ := raw.(map[string]any)
-				idx := int(tc["index"].(float64))
+				idx := 0
+				if v, ok := tc["index"].(float64); ok {
+					idx = int(v)
+				}
 				st := calls[idx]
 				typ := "function"
 				if v, ok := tc["type"].(string); ok && v == "custom" {
@@ -144,7 +149,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	<-innerDone
-	if scanner.Err() != nil || irw.status >= http.StatusBadRequest {
+	if innerPanic != nil || scanner.Err() != nil || irw.status >= http.StatusBadRequest {
 		status := irw.status
 		if status == 0 {
 			status = http.StatusBadGateway
@@ -231,6 +236,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		writeResponsesError(w, 405, "invalid_request_error", "method not allowed")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	var body responsesRequest
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		writeResponsesError(w, 400, "invalid_request_error", "bad json")
@@ -242,6 +248,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := extractAPIKey(r)
+	if tenant == "" {
+		tenant = "default"
+	}
 	if body.PreviousResponseID != "" {
 		s.responseMu.Lock()
 		prior, ok := s.responseMessages[tenant][body.PreviousResponseID]
@@ -358,6 +367,7 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, 405, "invalid_request_error", "method not allowed")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	var body anthropicRequest
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		writeAnthropicError(w, 400, "invalid_request_error", "bad json")

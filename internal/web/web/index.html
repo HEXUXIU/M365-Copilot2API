@@ -190,9 +190,12 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .copy-field .form-input{flex:1;font-family:SF Mono,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
 
 /* Modal */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:50;padding:16px;overflow-y:auto}
 .modal-overlay.open{display:flex}
-.modal{width:min(480px,calc(100vw - 32px));background:var(--surface-solid);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:28px;animation:scaleIn .25s var(--ease-out)}
+.modal{width:min(480px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow-y:auto;background:var(--surface-solid);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:28px;animation:scaleIn .25s var(--ease-out)}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.modal-close{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;border-radius:6px;transition:background .15s}
+.modal-close:hover{background:var(--surface-hover)}
 .modal h3{font-size:17px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px}
 .modal .subtitle{font-size:12px;color:var(--muted);margin-bottom:16px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
@@ -625,9 +628,14 @@ if (response.output_text) {
 <!-- Key Modal -->
 <div class="modal-overlay" id="keyModal">
   <div class="modal">
-    <h3>Create API key</h3>
-    <p class="subtitle">此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。</p>
-    <form onsubmit="createKey(event)">
+    <div class="modal-head">
+      <div>
+        <h3>Create API key</h3>
+        <p class="subtitle">此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。</p>
+      </div>
+      <button type="button" class="modal-close" onclick="closeKeyModal()" aria-label="Close" title="Close"><i data-lucide="x" style="width:15px;height:15px"></i></button>
+    </div>
+    <form id="keyForm" onsubmit="createKey(event)">
       <div class="form-group">
         <label class="form-label">Name</label>
         <input class="form-input" id="keyName" value="default" autofocus>
@@ -640,6 +648,7 @@ if (response.output_text) {
     </form>
     <div id="keyResult" style="display:none">
       <div class="highlight-box"><b>Copy and save this key now</b><div class="copy-field"><input class="form-input" id="keyValue" readonly><button class="btn-sm btn" onclick="copyKey()">Copy</button></div></div>
+      <div class="modal-actions"><button type="button" class="btn primary" onclick="closeKeyModal()">Close</button></div>
     </div>
   </div>
 </div>
@@ -911,6 +920,55 @@ const localeText={
   '+ Manual input...': {'zh-CN':'+ 手动输入...','zh-TW':'+ 手動輸入...','ja':'+ 手動入力...','ko':'+ 수동 입력...','es':'+ Entrada manual...','fr':'+ Saisie manuelle...','de':'+ Manuelle Eingabe...','pt-BR':'+ Entrada manual...','ru':'+ Ручной ввод...','ar':'+ إدخال يدوي...'},
   'Enter proxy URL (empty to unbind):': {'zh-CN':'输入代理地址（留空解绑）：','zh-TW':'輸入代理位址（留空解綁）：','ja':'プロキシURLを入力（空で解除）：','ko':'프록시 URL 입력 (빈 칸으로 해제):','es':'URL del proxy (vacío para desvincular):','fr':'URL du proxy (vide pour détacher) :','de':'Proxy-URL (leer zum Lösen):','pt-BR':'URL do proxy (vazio para desvincular):','ru':'URL прокси (пусто для отвязки):','ar':'عنوان البروكسي (فارغ لإلغاء الربط):'}
 };
+const localeExtraRows={
+  'The default password is {password}. Change it after your first login.':['默认密码为 {password}。首次登录后请修改。','預設密碼為 {password}。首次登入後請修改。','既定のパスワードは {password} です。初回ログイン後に変更してください。','기본 비밀번호는 {password}입니다. 처음 로그인한 후 변경하세요.','La contraseña predeterminada es {password}. Cámbiela después del primer inicio de sesión.','Le mot de passe par défaut est {password}. Modifiez-le après votre première connexion.','Das Standardpasswort lautet {password}. Ändern Sie es nach der ersten Anmeldung.','A senha padrão é {password}. Altere-a após o primeiro login.','Пароль по умолчанию: {password}. Измените его после первого входа.','كلمة المرور الافتراضية هي {password}. غيّرها بعد تسجيل الدخول لأول مرة.'],
+  'Account':['账号','帳號','アカウント','계정','Cuenta','Compte','Konto','Conta','Аккаунт','الحساب'],
+  'tokens':['Token','Token','トークン','토큰','tokens','tokens','Tokens','tokens','токенов','رموز'],
+  'A label that identifies this key, such as "my-laptop" or "claude-code"':['用于标识此密钥的标签，例如 "my-laptop" 或 "claude-code"','用於識別此金鑰的標籤，例如「my-laptop」或「claude-code」','このキーを識別するラベル（例: "my-laptop"、"claude-code"）','이 키를 식별하는 레이블(예: "my-laptop", "claude-code")','Una etiqueta que identifique esta clave, como "my-laptop" o "claude-code"','Une étiquette identifiant cette clé, comme « my-laptop » ou « claude-code »','Eine Bezeichnung für diesen Schlüssel, z. B. "my-laptop" oder "claude-code"','Um rótulo que identifique esta chave, como "my-laptop" ou "claude-code"','Метка для идентификации ключа, например "my-laptop" или "claude-code"','تسمية تعرّف هذا المفتاح، مثل "my-laptop" أو "claude-code"'],
+  'Use key':['使用密钥','使用金鑰','キーを使用','키 사용','Usar clave','Utiliser la clé','Schlüssel verwenden','Usar chave','Использовать ключ','استخدام المفتاح'],
+  'Edit':['编辑','編輯','編集','편집','Editar','Modifier','Bearbeiten','Editar','Изменить','تعديل'],
+  'Disable':['禁用','停用','無効にする','비활성화','Deshabilitar','Désactiver','Deaktivieren','Desativar','Отключить','تعطيل'],
+  'Check':['检测','檢查','確認','확인','Comprobar','Vérifier','Prüfen','Verificar','Проверить','فحص'],
+  'Copied':['已复制','已複製','コピーしました','복사됨','Copiado','Copié','Kopiert','Copiado','Скопировано','تم النسخ'],
+  'Login successful':['登录成功','登入成功','ログインしました','로그인 성공','Inicio de sesión correcto','Connexion réussie','Anmeldung erfolgreich','Login realizado','Вход выполнен','تم تسجيل الدخول'],
+  'Deleted':['已删除','已刪除','削除しました','삭제됨','Eliminado','Supprimé','Gelöscht','Excluído','Удалено','تم الحذف'],
+  'Updated successfully':['已更新','已更新','更新しました','업데이트됨','Actualizado','Mis à jour','Aktualisiert','Atualizado','Обновлено','تم التحديث'],
+  'Name is required':['名称不能为空','名稱不能為空','名前を入力してください','이름은 필수입니다','El nombre es obligatorio','Le nom est obligatoire','Name ist erforderlich','O nome é obrigatório','Укажите имя','الاسم مطلوب'],
+  'Delete this account?':['确定删除此账号？','確定刪除此帳號？','このアカウントを削除しますか？','이 계정을 삭제할까요?','¿Eliminar esta cuenta?','Supprimer ce compte ?','Dieses Konto löschen?','Excluir esta conta?','Удалить этот аккаунт?','هل تريد حذف هذا الحساب؟'],
+  'Delete this API key?':['确定删除此密钥？','確定刪除此金鑰？','この API キーを削除しますか？','이 API 키를 삭제할까요?','¿Eliminar esta clave API?','Supprimer cette clé API ?','Diesen API-Schlüssel löschen?','Excluir esta chave API?','Удалить этот API-ключ?','هل تريد حذف مفتاح API هذا؟'],
+  'Delete this conversation?':['确定删除此对话？','確定刪除此對話？','この会話を削除しますか？','이 대화를 삭제할까요?','¿Eliminar esta conversación?','Supprimer cette conversation ?','Diese Unterhaltung löschen?','Excluir esta conversa?','Удалить этот разговор?','هل تريد حذف هذه المحادثة؟'],
+  'Delete proxy {url}?':['确定删除代理 {url}？','確定刪除代理 {url}？','プロキシ {url} を削除しますか？','프록시 {url}을(를) 삭제할까요?','¿Eliminar el proxy {url}?','Supprimer le proxy {url} ?','Proxy {url} löschen?','Excluir o proxy {url}?','Удалить прокси {url}?','هل تريد حذف البروكسي {url}؟'],
+  'Unnamed conversation':['未命名对话','未命名對話','無題の会話','이름 없는 대화','Conversación sin título','Conversation sans titre','Unbenannte Unterhaltung','Conversa sem título','Разговор без названия','محادثة بلا عنوان'],
+  'Current key: {key}':['当前密钥：{key}','目前金鑰：{key}','現在のキー: {key}','현재 키: {key}','Clave actual: {key}','Clé actuelle : {key}','Aktueller Schlüssel: {key}','Chave atual: {key}','Текущий ключ: {key}','المفتاح الحالي: {key}'],
+  'Full key is unavailable':['完整密钥不可用','完整金鑰無法使用','完全なキーは利用できません','전체 키를 사용할 수 없습니다','La clave completa no está disponible','La clé complète est indisponible','Der vollständige Schlüssel ist nicht verfügbar','A chave completa não está disponível','Полный ключ недоступен','المفتاح الكامل غير متاح'],
+  'Enter a proxy URL':['请输入代理地址','請輸入代理位址','プロキシ URL を入力してください','프록시 URL을 입력하세요','Introduzca una URL de proxy','Saisissez une URL de proxy','Proxy-URL eingeben','Digite uma URL de proxy','Введите URL прокси','أدخل عنوان URL للبروكسي'],
+  'Connection failed':['连接失败','連線失敗','接続に失敗しました','연결 실패','Error de conexión','Échec de la connexion','Verbindung fehlgeschlagen','Falha na conexão','Ошибка подключения','فشل الاتصال'],
+  'Health check complete':['健康检查完成','健康檢查完成','ヘルスチェックが完了しました','상태 확인 완료','Comprobación de estado completada','Vérification terminée','Integritätsprüfung abgeschlossen','Verificação de integridade concluída','Проверка состояния завершена','اكتمل فحص الحالة'],
+  'Load the model list first':['请先加载模型列表','請先載入模型清單','先にモデル一覧を読み込んでください','먼저 모델 목록을 불러오세요','Cargue primero la lista de modelos','Chargez d’abord la liste des modèles','Laden Sie zuerst die Modellliste','Carregue primeiro a lista de modelos','Сначала загрузите список моделей','حمّل قائمة النماذج أولاً'],
+  'Model test complete':['模型测试完成','模型測試完成','モデルテストが完了しました','모델 테스트 완료','Prueba de modelos completada','Test des modèles terminé','Modelltest abgeschlossen','Teste de modelos concluído','Тест моделей завершён','اكتمل اختبار النماذج'],
+  'Settings saved':['设置已保存','設定已儲存','設定を保存しました','설정 저장됨','Ajustes guardados','Paramètres enregistrés','Einstellungen gespeichert','Configurações salvas','Настройки сохранены','تم حفظ الإعدادات'],
+  'Empty reply':['空回复','空白回覆','空の応答','빈 응답','Respuesta vacía','Réponse vide','Leere Antwort','Resposta vazia','Пустой ответ','رد فارغ'],
+  'Click "Test all"':['点击"测试全部"','點擊「全部測試」','「すべてテスト」をクリック','"모두 테스트"를 클릭하세요','Haga clic en "Probar todos"','Cliquez sur « Tout tester »','Klicken Sie auf „Alle testen"','Clique em "Testar todos"','Нажмите «Тестировать все»','انقر "اختبار الكل"'],
+  'Paste the full callback URL from the popup address bar…':['粘贴弹出页地址栏中的完整回调地址…','貼上彈出頁網址列中的完整回呼位址…','ポップアップのアドレスバーから完全なコールバック URL を貼り付け…','팝업 주소창의 전체 콜백 URL을 붙여넣으세요…','Pegue la URL de devolución completa de la barra de direcciones emergente…','Collez l’URL de rappel complète depuis la barre d’adresse de la fenêtre…','Vollständige Callback-URL aus der Adressleiste des Popups einfügen…','Cole a URL de retorno completa da barra de endereço do pop-up…','Вставьте полный URL обратного вызова из адресной строки всплывающего окна…','الصق عنوان URL الكامل لإعادة التوجيه من شريط عنوان النافذة…']
+};
+Object.assign(localeExtraRows,{
+  'Popup blocked by the browser':['弹出窗口被浏览器拦截','彈出視窗被瀏覽器封鎖','ポップアップがブラウザにブロックされました','브라우저에서 팝업을 차단했습니다','El navegador bloqueó la ventana emergente','La fenêtre a été bloquée par le navigateur','Popup wurde vom Browser blockiert','O navegador bloqueou a janela pop-up','Браузер заблокировал всплывающее окно','حظر المتصفح النافذة المنبثقة'],
+  'Allow popups for this site, then start authorization again.':['请允许此网站的弹出窗口，然后重新开始授权。','請允許此網站的彈出視窗，然後重新開始授權。','このサイトのポップアップを許可し、承認をやり直してください。','이 사이트의 팝업을 허용한 후 인증을 다시 시작하세요.','Permita las ventanas emergentes de este sitio y vuelva a iniciar la autorización.','Autorisez les fenêtres pour ce site, puis recommencez l’autorisation.','Erlauben Sie Popups für diese Website und starten Sie die Autorisierung erneut.','Permita pop-ups para este site e reinicie a autorização.','Разрешите всплывающие окна для этого сайта и начните авторизацию снова.','اسمح بالنوافذ المنبثقة لهذا الموقع، ثم ابدأ التفويض مجدداً.'],
+  'Authorization page opened':['授权页面已打开','授權頁面已開啟','承認ページを開きました','인증 페이지가 열렸습니다','Página de autorización abierta','Page d’autorisation ouverte','Autorisierungsseite geöffnet','Página de autorização aberta','Страница авторизации открыта','تم فتح صفحة التفويض'],
+  'Complete sign-in in the popup, then paste its full URL below.':['请在弹出窗口中完成登录，然后将完整网址粘贴到下方。','請在彈出視窗中完成登入，然後將完整網址貼到下方。','ポップアップでサインインを完了し、完全な URL を下に貼り付けてください。','팝업에서 로그인을 완료한 후 전체 URL을 아래에 붙여넣으세요.','Complete el inicio de sesión en la ventana y pegue abajo su URL completa.','Terminez la connexion dans la fenêtre, puis collez son URL complète ci-dessous.','Schließen Sie die Anmeldung im Popup ab und fügen Sie unten die vollständige URL ein.','Conclua o login no pop-up e cole a URL completa abaixo.','Завершите вход во всплывающем окне и вставьте полный URL ниже.','أكمل تسجيل الدخول في النافذة، ثم الصق عنوان URL الكامل أدناه.'],
+  'Authorization timed out. Start again.':['授权超时，请重新开始。','授權逾時，請重新開始。','承認がタイムアウトしました。やり直してください。','인증 시간이 초과되었습니다. 다시 시작하세요.','La autorización agotó el tiempo. Inténtelo de nuevo.','L’autorisation a expiré. Recommencez.','Zeitüberschreitung bei der Autorisierung. Starten Sie erneut.','A autorização expirou. Inicie novamente.','Время авторизации истекло. Начните снова.','انتهت مهلة التفويض. ابدأ مجدداً.'],
+  'Authorization window closed before completion.':['授权窗口在完成前已关闭。','授權視窗在完成前已關閉。','完了前に承認ウィンドウが閉じられました。','완료 전에 인증 창이 닫혔습니다.','La ventana de autorización se cerró antes de terminar.','La fenêtre d’autorisation a été fermée avant la fin.','Das Autorisierungsfenster wurde vor Abschluss geschlossen.','A janela de autorização foi fechada antes da conclusão.','Окно авторизации закрыто до завершения.','أُغلقت نافذة التفويض قبل الاكتمال.'],
+  'Authorization successful':['授权成功','授權成功','承認に成功しました','인증 성공','Autorización correcta','Autorisation réussie','Autorisierung erfolgreich','Autorização concluída','Авторизация выполнена','نجح التفويض'],
+  'Account added to the pool.':['账号已加入账号池。','帳號已加入帳號池。','アカウントをプールに追加しました。','계정이 풀에 추가되었습니다.','Cuenta añadida al grupo.','Compte ajouté au pool.','Konto zum Pool hinzugefügt.','Conta adicionada ao pool.','Аккаунт добавлен в пул.','تمت إضافة الحساب إلى المجموعة.'],
+  'Authorization failed or expired':['授权失败或已过期','授權失敗或已過期','承認に失敗したか期限切れです','인증 실패 또는 만료','La autorización falló o expiró','L’autorisation a échoué ou a expiré','Autorisierung fehlgeschlagen oder abgelaufen','A autorização falhou ou expirou','Авторизация не удалась или истекла','فشل التفويض أو انتهت صلاحيته'],
+  'Paste the callback URL':['请粘贴回调地址','請貼上回呼位址','コールバック URL を貼り付けてください','콜백 URL을 붙여넣으세요','Pegue la URL de devolución','Collez l’URL de rappel','Callback-URL einfügen','Cole a URL de retorno','Вставьте URL обратного вызова','الصق عنوان URL لإعادة التوجيه'],
+  'Clean all conversations? Each conversation will be deleted individually and logged.':['确定清理所有对话？每条对话将逐一删除并记录日志。','確定清理所有對話？每條對話將逐一刪除並記錄日誌。','すべての会話を消去しますか？各会話は個別に削除され、ログに記録されます。','모든 대화를 정리할까요? 각 대화가 개별 삭제되고 기록됩니다.','¿Limpiar todas las conversaciones? Se eliminarán una a una y se registrarán.','Nettoyer toutes les conversations ? Chacune sera supprimée et journalisée.','Alle Unterhaltungen bereinigen? Jede wird einzeln gelöscht und protokolliert.','Limpar todas as conversas? Cada uma será excluída e registrada.','Очистить все разговоры? Каждый будет удалён отдельно с записью в журнал.','هل تريد تنظيف كل المحادثات؟ ستحذف كل محادثة على حدة مع تسجيلها.'],
+  'Starting conversation cleanup…':['开始清理所有对话…','開始清理所有對話…','会話のクリーンアップを開始…','대화 정리 시작…','Iniciando limpieza de conversaciones…','Démarrage du nettoyage des conversations…','Bereinigung der Unterhaltungen wird gestartet…','Iniciando limpeza das conversas…','Начинается очистка разговоров…','بدء تنظيف المحادثات…'],
+  'Conversation cleanup complete':['清理完成','清理完成','会話のクリーンアップが完了しました','대화 정리 완료','Limpieza de conversaciones completada','Nettoyage des conversations terminé','Bereinigung der Unterhaltungen abgeschlossen','Limpeza das conversas concluída','Очистка разговоров завершена','اكتمل تنظيف المحادثات'],
+  'Checking all proxies…':['正在检测所有代理…','正在檢查所有代理…','すべてのプロキシを確認中…','모든 프록시 확인 중…','Comprobando todos los proxies…','Vérification de tous les proxys…','Alle Proxys werden geprüft…','Verificando todos os proxies…','Проверка всех прокси…','جارٍ فحص كل البروكسيات…']
+});
+const localeExtraLocales=['zh-CN','zh-TW','ja','ko','es','fr','de','pt-BR','ru','ar'];
+Object.entries(localeExtraRows).forEach(([key,values])=>{localeText[key]=Object.fromEntries(localeExtraLocales.map((locale,index)=>[locale,values[index]]));});
 function preferredLocale(){
   try{
     const stored=localStorage.getItem(localeStorageKey);
@@ -960,13 +1018,11 @@ function t(key){if(currentLocale==='en')return key;return localeText[key]?.[curr
 function translateText(value){
   const trimmed=value.trim();
   if(!trimmed)return value;
-  let translated;
-  if(currentLocale==='en'){
-    translated=localeTextReverse[trimmed]||translateDynamic(trimmed,'en');
-  }else{
-    const entry=localeText[trimmed];
-    translated=(entry&&entry[currentLocale])||translateDynamic(trimmed,currentLocale)||localeText[trimmed]?.['en'];
-  }
+  const key=localeText[trimmed]?trimmed:localeTextReverse[trimmed];
+  const entry=key ? localeText[key] : null;
+  const translated=currentLocale==='en'
+    ?(key||translateDynamic(trimmed,'en'))
+    :((entry&&entry[currentLocale])||translateDynamic(trimmed,currentLocale)||(entry&&entry.en));
   if(!translated||translated===trimmed)return value;
   return value.replace(trimmed,translated);
 }
@@ -1266,14 +1322,14 @@ async function toggleKey(id,revoked){
   catch(e){showNotice(e.message,'error');}
 }
 
-function openKeyModal(){$('keyModal').classList.add('open');$('keyResult').style.display='none';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
-function closeKeyModal(){$('keyModal').classList.remove('open');}
+function openKeyModal(){$('keyModal').classList.add('open');$('keyForm').style.display='block';$('keyResult').style.display='none';$('keyValue').value='';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
+function closeKeyModal(){$('keyModal').classList.remove('open');$('keyValue').value='';}
 async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice(t('Copied'),'success');}catch(e){}}
 async function createKey(e){
   e.preventDefault();
   try{
     const d=await api('/api/admin/keys',{method:'POST',body:JSON.stringify({name:$('keyName').value||'default'})});
-    $('keyValue').value=d.key;$('keyResult').style.display='block';copyKey();loadKeys();
+    $('keyValue').value=d.key;$('keyForm').style.display='none';$('keyResult').style.display='block';copyKey();loadKeys();
   }catch(e){showNotice(e.message,'error');}
 }
 async function revokeKey(id){if(!confirm(t('Are you sure you want to delete this key?')))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}

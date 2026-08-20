@@ -29,6 +29,8 @@ var ErrEmptyCompletion = errors.New("upstream returned empty completion; tone ma
 
 var ErrMeteringOutOfCredits = errors.New("upstream metering out of credits")
 
+const gatewayCustomInstructions = `You have access to real tools on the caller's machine. Call tools directly when needed. Do not say tools are unavailable.`
+
 var ErrContentPolicyBlocked = errors.New("upstream content policy blocked")
 
 type ThrottlingInfo struct {
@@ -89,9 +91,7 @@ type Request struct {
 	Attachments    []Attachment
 	Tools          []Tool
 	ToolChoice     any
-	MCPServerURL   string // URL of the MCP HTTP SSE server for tool discovery
-	// Started is true only for the first turn of a ChatHub conversation.
-	Started bool
+	Started        bool
 }
 
 // StreamEvent is the protocol-neutral event exposed while ChatHub is still
@@ -271,7 +271,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		}
 	}
 
-	payload := chatPayload(req.Text, req.SessionID, req.ConversationID, requestID, req.Tone, firstTurn, req.Attachments, req.Tools, req.ToolChoice, req.MCPServerURL)
+	payload := chatPayload(req.Text, req.SessionID, req.ConversationID, requestID, req.Tone, firstTurn, req.Attachments, req.Tools, req.ToolChoice)
 	log.Printf("chathub prompt-trace text=%d tools=%d payload=%d", len(req.Text), len(req.Tools), len(payload))
 	if c.Trace != nil {
 		meta := map[string]any{"stage": "chathub_payload", "attachment_count": len(req.Attachments), "payload_has_attachments": strings.Contains(payload, `"attachments"`), "attachments": []map[string]any{}}
@@ -757,8 +757,8 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 	return nil
 }
 
-func chatPayload(text, sessionID, conversationID, requestID, tone string, firstTurn bool, attachments []Attachment, tools []Tool, toolChoice any, mcpServerURL string) string {
-	text = toolProtocolPrompt(text, tools, toolChoice, len(clientPlugins(tools, mcpServerURL)) > 0)
+func chatPayload(text, sessionID, conversationID, requestID, tone string, firstTurn bool, attachments []Attachment, tools []Tool, toolChoice any) string {
+	text = toolProtocolPrompt(text, tools, toolChoice)
 	message := map[string]any{
 		"author":                "user",
 		"attachments":           attachments,
@@ -863,8 +863,9 @@ func chatPayload(text, sessionID, conversationID, requestID, tone string, firstT
 				"streamingMode": "ConciseWithPadding",
 				"message":       message,
 
-				"plugins":    clientPlugins(tools, mcpServerURL),
-				"toolChoice": toolChoice,
+				"plugins":            clientPlugins(tools),
+				"toolChoice":         toolChoice,
+				"customInstructions": gatewayCustomInstructions,
 			},
 		},
 		"invocationId": "0",

@@ -5,46 +5,23 @@ import (
 	"log"
 	"net/http"
 	"sync"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-type pooledConn struct {
-	conn    *websocket.Conn
-	created time.Time
-}
-
 type ConnPool struct {
-	mu      sync.Mutex
-	conns   map[string]*pooledConn // key = oid|tid
-	dialer  *websocket.Dialer
-	header  http.Header
-	baseURL string // pre-built URL without session/conversation IDs
+	mu     sync.Mutex
+	dialer *websocket.Dialer
+	header http.Header
 }
 
 func NewConnPool(dialer *websocket.Dialer, header http.Header) *ConnPool {
-	p := &ConnPool{
-		conns:  make(map[string]*pooledConn),
-		dialer: dialer,
-		header: header,
-	}
-	go p.gcLoop()
-	return p
+	return &ConnPool{dialer: dialer, header: header}
 }
-
-func (p *ConnPool) key(oid, tid string) string { return oid + "|" + tid }
 
 func (p *ConnPool) Take(ctx context.Context, oid, tid string, wsURL string) (*websocket.Conn, bool, error) {
 	p.mu.Lock()
-	pc := p.conns[p.key(oid, tid)]
-	if pc != nil {
-		delete(p.conns, p.key(oid, tid))
-		p.mu.Unlock()
-		pc.conn.Close()
-	} else {
-		p.mu.Unlock()
-	}
+	p.mu.Unlock()
 	conn, resp, err := p.dialer.DialContext(ctx, wsURL, p.header.Clone())
 	if err != nil {
 		if resp != nil {
@@ -67,28 +44,6 @@ func (p *ConnPool) Discard(oid, tid string, conn *websocket.Conn) {
 	}
 }
 
-func (p *ConnPool) GC() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	now := time.Now()
-	for k, pc := range p.conns {
-		if now.Sub(pc.created) > 5*time.Minute {
-			pc.conn.Close()
-			delete(p.conns, k)
-		}
-	}
-}
-
 func (p *ConnPool) Stats() map[string]any {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return map[string]any{"pooled_connections": len(p.conns)}
-}
-
-func (p *ConnPool) gcLoop() {
-	ticker := time.NewTicker(2 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		p.GC()
-	}
+	return map[string]any{"pooled_connections": 0}
 }

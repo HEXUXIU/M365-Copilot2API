@@ -65,3 +65,43 @@ func TestScheduleEnabledPersists(t *testing.T) {
 		t.Fatal("scheduling state was not persisted")
 	}
 }
+
+func TestPriorityPersistsAcrossUpsertAndReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens.json")
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := TokenSet{AccessToken: "a", RefreshToken: "r", Email: "a@example.com", HomeOID: "oid-1", ExpiresAt: time.Now().Add(time.Hour)}
+	if _, err := store.Upsert(token); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPriority("oid-1", 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upsert(token); err != nil {
+		t.Fatal(err)
+	}
+	acc, ok := store.Get("oid-1")
+	if !ok || acc.Priority != 10 {
+		t.Fatalf("upsert reset priority: %+v", acc)
+	}
+	reopened, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc, ok = reopened.Get("oid-1")
+	if !ok || acc.Priority != 10 {
+		t.Fatalf("priority was not persisted: %+v", acc)
+	}
+}
+
+func TestSetPriorityRejectsNegativeValue(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "tokens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPriority("missing", -1); err == nil {
+		t.Fatal("negative priority was accepted")
+	}
+}

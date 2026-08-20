@@ -21,17 +21,20 @@ func answerRequestTestBody() oaiReq {
 }
 
 func TestBuildAnswerRequestRouterOmitsNativePlugins(t *testing.T) {
-	req := buildAnswerRequest("[user]\nhello", "magic", answerRequestTestBody(), agentLedger{}, "router", "")
+	req := buildAnswerRequest("[user]\nhello", "magic", answerRequestTestBody(), agentLedger{}, "router")
 	if len(req.Tools) != 0 || req.ToolChoice != nil {
 		t.Fatalf("router answer leaked native tools: tools=%d choice=%#v", len(req.Tools), req.ToolChoice)
 	}
-	if req.Text != "[user]\nhello" {
-		t.Fatalf("empty ledger changed answer prompt: %q", req.Text)
+	if !strings.Contains(req.Text, "[user]\nhello") {
+		t.Fatalf("answer prompt lost original text: %q", req.Text)
+	}
+	if !strings.Contains(req.Text, "PARTIAL COMPLETION") {
+		t.Fatalf("answer prompt missing behavior directive")
 	}
 }
 
 func TestBuildAnswerRequestNativeForwardsTools(t *testing.T) {
-	req := buildAnswerRequest("[user]\nhello", "magic", answerRequestTestBody(), agentLedger{}, "native", "")
+	req := buildAnswerRequest("[user]\nhello", "magic", answerRequestTestBody(), agentLedger{}, "native")
 	if len(req.Tools) != 1 || req.ToolChoice != "auto" {
 		t.Fatalf("native answer lost tools: tools=%d choice=%#v", len(req.Tools), req.ToolChoice)
 	}
@@ -39,20 +42,10 @@ func TestBuildAnswerRequestNativeForwardsTools(t *testing.T) {
 
 func TestBuildAnswerRequestAddsCompletedEvidence(t *testing.T) {
 	ledger := agentLedger{Completed: []toolEvidence{{ID: "call_1", Name: "read_file", Arguments: `{}`, Result: "ok"}}}
-	req := buildAnswerRequest("[user]\nsummarize", "magic", answerRequestTestBody(), ledger, "router", "")
+	req := buildAnswerRequest("[user]\nsummarize", "magic", answerRequestTestBody(), ledger, "router")
 	for _, want := range []string{"EVIDENCE_LEDGER:", "Report only actions supported by completed tool results"} {
 		if !strings.Contains(req.Text, want) {
 			t.Fatalf("answer prompt missing %q: %s", want, req.Text)
 		}
-	}
-}
-
-func TestBuildAnswerRequestMCPForwardsTools(t *testing.T) {
-	req := buildAnswerRequest("[user]\nhello", "magic", answerRequestTestBody(), agentLedger{}, "router", "http://127.0.0.1:4142/v1/mcp/sse")
-	if len(req.Tools) != 1 || req.ToolChoice != "auto" {
-		t.Fatalf("MCP answer lost tools: tools=%d choice=%#v", len(req.Tools), req.ToolChoice)
-	}
-	if req.MCPServerURL != "http://127.0.0.1:4142/v1/mcp/sse" {
-		t.Fatalf("MCP URL not set: %q", req.MCPServerURL)
 	}
 }

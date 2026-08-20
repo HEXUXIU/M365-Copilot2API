@@ -24,6 +24,7 @@ type AccountToken struct {
 	TID              string    `json:"tid,omitempty"`
 	ClientID         string    `json:"clientId,omitempty"`
 	BoundProxy       string    `json:"boundProxy,omitempty"`
+	Priority         int       `json:"priority,omitempty"`
 }
 
 type Cache struct {
@@ -206,6 +207,7 @@ func (s *Store) Upsert(tok TokenSet) (AccountToken, error) {
 				acc.OID = existing.OID
 			}
 			acc.ScheduleDisabled = existing.ScheduleDisabled
+			acc.Priority = existing.Priority
 			if acc.BoundProxy == "" {
 				acc.BoundProxy = existing.BoundProxy
 			}
@@ -218,6 +220,22 @@ func (s *Store) Upsert(tok TokenSet) (AccountToken, error) {
 		s.data.Accounts = append(s.data.Accounts, acc)
 	}
 	return acc, s.saveLocked()
+}
+
+func (s *Store) SetPriority(id string, priority int) error {
+	if priority < 0 {
+		return errors.New("priority must be non-negative")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.data.Accounts {
+		if s.data.Accounts[i].ID == id {
+			s.data.Accounts[i].Priority = priority
+			s.data.Accounts[i].UpdatedAt = time.Now()
+			return s.saveLocked()
+		}
+	}
+	return errors.New("account not found")
 }
 
 func (s *Store) Delete(id string) error {

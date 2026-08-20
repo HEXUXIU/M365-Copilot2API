@@ -49,8 +49,6 @@ func (s *Server) markAccountResult(accountID string, err error) {
 	s.accountPool.MarkSuccess(accountID)
 }
 
-
-
 type Server struct {
 	mu                  sync.Mutex
 	tokens              *auth.Store
@@ -92,11 +90,11 @@ func (s *Server) clientForProxy(proxyURL string) *chathub.Client {
 		return s.chat
 	}
 	c := &chathub.Client{
-		HTTPHeader:  make(http.Header),
-		HTTPClient:  clients.HTTP,
-		Dialer:      clients.WebSocket,
-		Pool:        chathub.NewConnPool(clients.WebSocket, make(http.Header)),
-		Trace:       s.chat.Trace,
+		HTTPHeader: make(http.Header),
+		HTTPClient: clients.HTTP,
+		Dialer:     clients.WebSocket,
+		Pool:       chathub.NewConnPool(clients.WebSocket, make(http.Header)),
+		Trace:      s.chat.Trace,
 	}
 	c.HTTPHeader.Set("Origin", "https://m365.cloud.microsoft")
 	c.HTTPHeader.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0")
@@ -209,6 +207,7 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/api/accounts", s.accounts)
 	m.HandleFunc("/api/accounts/refresh", s.refreshAccount)
 	m.HandleFunc("/api/accounts/schedule", s.scheduleAccount)
+	m.HandleFunc("/api/accounts/priority", s.priorityAccount)
 	m.HandleFunc("/api/accounts/token-health", s.tokenHealth)
 	m.HandleFunc("/api/accounts/clear-cooldown", s.clearCooldown)
 	m.HandleFunc("/api/accounts/delete", s.deleteAccount)
@@ -236,9 +235,6 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/v1/models", s.openaiModels)
 	m.HandleFunc("/v1/chat/completions", s.openaiChat)
 	m.HandleFunc("/v1/responses", s.responses)
-	m.HandleFunc("/v1/mcp/sse", mcp.HandleSSE)
-	m.HandleFunc("/v1/mcp/message", mcp.HandleMessage)
-	m.HandleFunc("/v1/mcp/tools", mcp.HandleToolsList)
 	m.HandleFunc("/v1/messages", s.anthropicMessages)
 	m.HandleFunc("/v1/images/generations", s.imageGenerations)
 	m.HandleFunc("/v1/images/edits", s.imageEdits)
@@ -499,6 +495,7 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt       time.Time  `json:"expiresAt,omitempty"`
 		UpdatedAt       time.Time  `json:"updatedAt,omitempty"`
 		BoundProxy      string     `json:"boundProxy,omitempty"`
+		Priority        int        `json:"priority"`
 	}
 	out := make([]view, 0, len(list))
 	for _, a := range list {
@@ -516,12 +513,41 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, view{
 			ID: a.ID, Email: a.Email, DisplayName: a.DisplayName,
-			Status: status, ScheduleEnabled: !a.ScheduleDisabled, CallCount: callCount, RateLimited: rateLimited,
+			Status: status, ScheduleEnabled: !a.ScheduleDisabled, CallCount: callCount, RateLimited: rateLimited, Priority: a.Priority,
 			CooldownUntil: cooldownUntil, OID: a.OID, TID: a.TID,
 			ExpiresAt: a.ExpiresAt, UpdatedAt: a.UpdatedAt, BoundProxy: a.BoundProxy,
 		})
 	}
 	jsonOut(w, map[string]any{"accounts": out, "health": s.accountPool.Snapshot()})
+}
+
+func (s *Server) priorityAccount(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		ID       string `json:"id"`
+		Priority int    `json:"priority"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	body.ID = strings.TrimSpace(body.ID)
+	if body.ID == "" {
+		http.Error(w, "account id is required", http.StatusBadRequest)
+		return
+	}
+	if body.Priority < 0 {
+		http.Error(w, "priority must be a non-negative integer", http.StatusBadRequest)
+		return
+	}
+	if err := s.tokens.SetPriority(body.ID, body.Priority); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	jsonOut(w, map[string]any{"status": "ok", "id": body.ID, "priority": body.Priority})
 }
 
 func (s *Server) refreshAccount(w http.ResponseWriter, r *http.Request) {
@@ -858,8 +884,10 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 	if accountID == "" {
 		bestID := ""
+		bestPriority := -1
 		bestInflight := int(1e9)
-		for i := 0; i < maxAccountProbe; i++ {
+		probeCount := len(s.tokens.List())
+		for i := 0; i < probeCount; i++ {
 			acc, ok := s.tokens.Next()
 			if !ok {
 				break
@@ -868,12 +896,10 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 				continue
 			}
 			inflight := s.accountConcurrency.inflightCount(acc.ID)
-			if inflight < bestInflight {
+			if acc.Priority > bestPriority || (acc.Priority == bestPriority && inflight < bestInflight) {
+				bestPriority = acc.Priority
 				bestInflight = inflight
 				bestID = acc.ID
-			}
-			if inflight == 0 {
-				break
 			}
 		}
 		if bestID == "" {
@@ -904,11 +930,15 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 	return s.tokens.EnsureValid(accountID)
 }
 
-// nextHealthyAccount returns the next round-robin account that is still
-// healthy, skipping the given id first, and validates its token. Used by the
-// failover path after a rate-limited or auth-failed attempt.
+// nextHealthyAccount returns the highest-priority healthy account, using the
+// store's round-robin cursor to distribute calls among accounts with the same
+// priority. Lower-priority accounts remain available as failover candidates.
 func (s *Server) nextHealthyAccount(avoidID string) (auth.AccountToken, error) {
-	for i := 0; i < maxAccountProbe; i++ {
+	var best auth.AccountToken
+	bestInflight := int(1e9)
+	found := false
+	probeCount := len(s.tokens.List())
+	for i := 0; i < probeCount; i++ {
 		acc, ok := s.tokens.Next()
 		if !ok {
 			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
@@ -919,7 +949,15 @@ func (s *Server) nextHealthyAccount(avoidID string) (auth.AccountToken, error) {
 		if !s.accountAvailable(acc.ID) {
 			continue
 		}
-		return s.tokens.EnsureValid(acc.ID)
+		inflight := s.accountConcurrency.inflightCount(acc.ID)
+		if !found || acc.Priority > best.Priority || (acc.Priority == best.Priority && inflight < bestInflight) {
+			best = acc
+			bestInflight = inflight
+			found = true
+		}
+	}
+	if found {
+		return s.tokens.EnsureValid(best.ID)
 	}
 	return auth.AccountToken{}, fmt.Errorf("no healthy account available for failover")
 }
@@ -1262,23 +1300,20 @@ func normalizeLegacyTools(body *oaiReq) {
 	}
 }
 
-func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedger, planningMode string, mcpServerURL string) chathub.Request {
+func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedger, planningMode string) chathub.Request {
 	if len(ledger.Completed) > 0 || len(ledger.Pending) > 0 {
 		answerPrompt += "\n" + ledger.RouterContext()
 	}
 	if len(ledger.Completed) > 0 {
 		answerPrompt += "\nFINAL ANSWER RULE: Report only actions supported by completed tool results. If the goal is not fully verified, state exactly what remains unconfirmed."
 	}
+	if len(body.Tools) > 0 {
+		answerPrompt += mcp.McpSessionInstructions
+	}
 	req := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments}
 	if planningMode == "native" {
 		req.Tools = body.Tools
 		req.ToolChoice = body.ToolChoice
-	}
-	if mcpServerURL != "" {
-		req.Tools = body.Tools
-		if req.ToolChoice == nil {
-			req.ToolChoice = body.ToolChoice
-		}
 	}
 	if len(body.Tools) > 0 {
 		mcpTools := make([]mcp.Tool, 0, len(body.Tools))
@@ -1300,7 +1335,6 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 			mcp.GlobalToolRegistry.MergeTools(mcpTools)
 		}
 	}
-	req.MCPServerURL = mcpServerURL
 	return req
 }
 
@@ -1352,6 +1386,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	ledger := buildAgentLedger(body.Messages)
 	activeLedger := buildAgentLedger(activeMessages(body.Messages))
 	if err := activeLedger.CanContinue(maxToolRounds()); err != nil {
+		log.Printf("[tool-limit] id=%s rounds=%d max=%d completed=%d pending=%d stuck=%v repeatFail=%v err=%v", requestID, activeLedger.ToolRounds, maxToolRounds(), len(activeLedger.Completed), len(activeLedger.Pending), activeLedger.StuckLoop, activeLedger.RepeatedFailure, err)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "tool_round_limit", "message": err.Error(), "completed_calls": len(activeLedger.Completed)}})
@@ -1467,14 +1502,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if body.ToolChoice == nil && len(toolMaps) > 0 {
 		body.ToolChoice = "auto"
 	}
-	var mcpServerURL string
 	if len(toolMaps) > 0 {
-		scheme := "http"
-		if r.TLS != nil {
-			scheme = "https"
-		}
-		mcpServerURL = fmt.Sprintf("%s://%s/v1/mcp/sse", scheme, r.Host)
-		log.Printf("[mcp] tools=%d mcp_gateway=%s", len(toolMaps), mcpServerURL)
+		log.Printf("[mcp] tools=%d", len(toolMaps))
 	}
 	validateCalls := func(stage string, calls []detectedToolCall) ([]detectedToolCall, int) {
 		valid, rejected := validateDetectedToolCalls(calls, toolMaps, body.ToolChoice)
@@ -1539,9 +1568,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Stream {
-		answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL)
+		answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode)
 		answerPrompt = answerReq.Text
-		log.Printf("[req-trace] id=%s stage=answer_start prompt_len=%d native_tools=%d mcp=%s", requestID, len(answerPrompt), len(answerReq.Tools), mcpServerURL)
+		log.Printf("[req-trace] id=%s stage=answer_start prompt_len=%d native_tools=%d", requestID, len(answerPrompt), len(answerReq.Tools))
 		id := "chatcmpl-" + uuid.NewString()
 		model := firstNonEmpty(body.Model, "m365-copilot")
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -1698,31 +1727,31 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if convReused {
 				s.invalidateConvCache(acc.ID, convCacheModel)
 			}
-		msg := upstreamError(err)
-		code := "upstream_error"
-		if IsRateLimited(err) {
-			msg = "rate limited by upstream; retry after the indicated cool-down period"
-			code = "rate_limit"
-		} else if IsInsufficientQuota(err) {
-			msg = "account quota exhausted; check M365 subscription and Copilot license"
-			code = "insufficient_quota"
-		} else if IsPermissionDenied(err) {
-			msg = "account not authorized for Copilot; contact your admin"
-			code = "insufficient_permissions"
-		} else if IsServerUnavailable(err) {
-			msg = "upstream service temporarily unavailable; retry later"
-			code = "service_unavailable"
-		} else if IsTimeout(err) {
-			msg = "upstream request timed out"
-			code = "timeout"
-		} else if IsContentBlocked(err) {
-			msg = "content policy blocked this request"
-			code = "content_policy_violation"
-		}
-		msg = sanitizePublicInternalText(msg)
-		_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": code}})+"\n\n")
-		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
-		return
+			msg := upstreamError(err)
+			code := "upstream_error"
+			if IsRateLimited(err) {
+				msg = "rate limited by upstream; retry after the indicated cool-down period"
+				code = "rate_limit"
+			} else if IsInsufficientQuota(err) {
+				msg = "account quota exhausted; check M365 subscription and Copilot license"
+				code = "insufficient_quota"
+			} else if IsPermissionDenied(err) {
+				msg = "account not authorized for Copilot; contact your admin"
+				code = "insufficient_permissions"
+			} else if IsServerUnavailable(err) {
+				msg = "upstream service temporarily unavailable; retry later"
+				code = "service_unavailable"
+			} else if IsTimeout(err) {
+				msg = "upstream request timed out"
+				code = "timeout"
+			} else if IsContentBlocked(err) {
+				msg = "content policy blocked this request"
+				code = "content_policy_violation"
+			}
+			msg = sanitizePublicInternalText(msg)
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": code}})+"\n\n")
+			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
+			return
 		}
 		s.accountPool.MarkSuccess(acc.ID)
 		if text.Len() == 0 && strings.TrimSpace(res.Text) != "" {
@@ -1843,6 +1872,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+			if routeRes.ConversationID != "" {
+				s.bindConversation(acc, &body, r, routeRes, answerPrompt, startedAt)
+				s.storeConvCache(acc.ID, convCacheModel, routeRes, tone, body.Messages, convReused)
+			}
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, routeRes)
 			return
 		}
@@ -1862,6 +1895,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 					}
 					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+					if retryRes.ConversationID != "" {
+						s.bindConversation(acc, &body, r, retryRes, answerPrompt, startedAt)
+						s.storeConvCache(acc.ID, convCacheModel, retryRes, tone, body.Messages, convReused)
+					}
 					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, retryRes)
 					return
 				}
@@ -1870,7 +1907,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			return
 		}
 	}
-	answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL)
+	answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode)
 	answerPrompt = answerReq.Text
 	var res chathub.Result
 	if body.Stream {
@@ -1970,31 +2007,31 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			if convReused {
 				s.invalidateConvCache(acc.ID, convCacheModel)
 			}
-		msg := upstreamError(err)
-		code := "upstream_error"
-		if IsRateLimited(err) {
-			msg = "rate limited by upstream; retry after the indicated cool-down period"
-			code = "rate_limit"
-		} else if IsInsufficientQuota(err) {
-			msg = "account quota exhausted; check M365 subscription and Copilot license"
-			code = "insufficient_quota"
-		} else if IsPermissionDenied(err) {
-			msg = "account not authorized for Copilot; contact your admin"
-			code = "insufficient_permissions"
-		} else if IsServerUnavailable(err) {
-			msg = "upstream service temporarily unavailable; retry later"
-			code = "service_unavailable"
-		} else if IsTimeout(err) {
-			msg = "upstream request timed out"
-			code = "timeout"
-		} else if IsContentBlocked(err) {
-			msg = "content policy blocked this request"
-			code = "content_policy_violation"
+			msg := upstreamError(err)
+			code := "upstream_error"
+			if IsRateLimited(err) {
+				msg = "rate limited by upstream; retry after the indicated cool-down period"
+				code = "rate_limit"
+			} else if IsInsufficientQuota(err) {
+				msg = "account quota exhausted; check M365 subscription and Copilot license"
+				code = "insufficient_quota"
+			} else if IsPermissionDenied(err) {
+				msg = "account not authorized for Copilot; contact your admin"
+				code = "insufficient_permissions"
+			} else if IsServerUnavailable(err) {
+				msg = "upstream service temporarily unavailable; retry later"
+				code = "service_unavailable"
+			} else if IsTimeout(err) {
+				msg = "upstream request timed out"
+				code = "timeout"
+			} else if IsContentBlocked(err) {
+				msg = "content policy blocked this request"
+				code = "content_policy_violation"
+			}
+			msg = sanitizePublicInternalText(msg)
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": code}})+"\n\n")
 		}
-		msg = sanitizePublicInternalText(msg)
-		_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": code}})+"\n\n")
-	}
-	pt := EstimateTokens(prompt)
+		pt := EstimateTokens(prompt)
 		ct := EstimateTokens(res.Text)
 		log.Printf("[usage] stream id=%s pt=%d ct=%d res.Text=%d", id, pt, ct, len(res.Text))
 		if err == nil && ct == 0 {
@@ -2105,6 +2142,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		invalidDetectedTool = rejected > 0
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+			if res.ConversationID != "" {
+				s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
+				s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
+			}
 			_ = writeToolResponse(w, id, model, body.Stream, calls, res)
 			return
 		}
@@ -2114,6 +2155,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		invalidDetectedTool = invalidDetectedTool || rejected > 0
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+			if res.ConversationID != "" {
+				s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
+				s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
+			}
 			_ = writeToolResponse(w, id, model, body.Stream, calls, res)
 			return
 		}
@@ -2138,6 +2183,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+				if routeRes.ConversationID != "" {
+					s.bindConversation(acc, &body, r, routeRes, answerPrompt, startedAt)
+					s.storeConvCache(acc.ID, convCacheModel, routeRes, tone, body.Messages, convReused)
+				}
 				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes)
 				return
 			}

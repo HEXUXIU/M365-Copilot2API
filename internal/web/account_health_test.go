@@ -24,9 +24,9 @@ func TestUpstreamErrorClassification(t *testing.T) {
 		status   int
 	}{
 		{&UpstreamHTTPError{Status: 429, RetryAfter: 90}, true, false, 90, http.StatusTooManyRequests},
-		{&UpstreamHTTPError{Status: 503}, true, false, 0, http.StatusTooManyRequests},
+		{&UpstreamHTTPError{Status: 503}, false, false, 0, http.StatusServiceUnavailable},
 		{&UpstreamHTTPError{Status: 401}, false, true, 0, http.StatusUnauthorized},
-		{&UpstreamHTTPError{Status: 403}, false, true, 0, http.StatusUnauthorized},
+		{&UpstreamHTTPError{Status: 403}, false, false, 0, http.StatusForbidden},
 		{&UpstreamHTTPError{Status: 502}, false, false, 0, http.StatusBadGateway},
 		{&UpstreamHTTPError{Status: 502, Body: "account is limited"}, true, false, 0, http.StatusTooManyRequests},
 		{fmt.Errorf("upstream http 429"), true, false, 0, http.StatusTooManyRequests},

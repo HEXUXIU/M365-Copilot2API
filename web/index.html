@@ -677,6 +677,45 @@ if (response.output_text) {
   </div>
 </div>
 
+<div class="modal-overlay" id="keyUsageModal">
+  <div class="modal wide">
+    <div class="modal-head">
+      <div>
+        <h3>Usage detail</h3>
+        <p class="subtitle" id="kuKeyName"></p>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="seg" id="kuRange">
+          <button data-days="7" class="active" onclick="setKuRange(7)">7 days</button>
+          <button data-days="30" onclick="setKuRange(30)">30 days</button>
+        </div>
+        <button class="modal-close" onclick="closeKeyUsage()"><i data-lucide="x" style="width:15px;height:15px"></i></button>
+      </div>
+    </div>
+    <div class="stats" style="margin-bottom:14px">
+      <div class="stat"><span class="stat-label">Total requests</span><span class="stat-value" id="ku-req">0</span><span class="stat-sub" id="ku-req-sub"></span></div>
+      <div class="stat"><span class="stat-label">Total tokens</span><span class="stat-value" id="ku-tok">0</span><span class="stat-sub" id="ku-tok-sub"></span></div>
+      <div class="stat"><span class="stat-label">Cached tokens</span><span class="stat-value" id="ku-cache">0</span><span class="stat-unit">tokens</span></div>
+      <div class="stat"><span class="stat-label">Average latency</span><span class="stat-value" id="ku-ms">0</span><span class="stat-unit">ms</span></div>
+    </div>
+    <div class="chart" style="margin-bottom:14px">
+      <div class="chart-title">Token usage trend</div>
+      <div id="kuTrendWrap"></div>
+    </div>
+    <div class="chart-grid">
+      <div class="chart">
+        <div class="chart-title">Model distribution</div>
+        <div id="kuModels"></div>
+      </div>
+      <div class="chart">
+        <div class="chart-title">Endpoint distribution</div>
+        <div id="kuEndpoints"></div>
+      </div>
+    </div>
+    <div id="kuStatus" class="chart-empty" style="display:none"></div>
+  </div>
+</div>
+
 <div class="notice" id="notice" style="display:none"></div>
 
 <script>
@@ -693,6 +732,7 @@ const localeText={
   'Overview': {'zh-CN':'概览','zh-TW':'總覽','ja':'概要','ko':'개요','es':'Resumen','fr':'Aperçu','de':'Übersicht','pt-BR':'Visão geral','ru':'Обзор','ar':'نظرة عامة'},
   'Dashboard': {'zh-CN':'仪表盘','zh-TW':'儀表板','ja':'ダッシュボード','ko':'대시보드','es':'Panel de control','fr':'Tableau de bord','de':'Dashboard','pt-BR':'Painel','ru':'Панель управления','ar':'لوحة المعلومات'},
   'Usage': {'zh-CN':'用量','zh-TW':'用量','ja':'使用量','ko':'사용량','es':'Uso','fr':'Utilisation','de':'Nutzung','pt-BR':'Uso','ru':'Использование','ar':'الاستخدام'},
+  'Usage detail': {'zh-CN':'用量详情','zh-TW':'用量詳情','ja':'使用量の詳細','ko':'사용량 상세','es':'Detalle de uso','fr':'Détails de l\'utilisation','de':'Nutzungsdetails','pt-BR':'Detalhes de uso','ru':'Детали использования','ar':'تفاصيل الاستخدام'},
   'Management': {'zh-CN':'管理','zh-TW':'管理','ja':'管理','ko':'관리','es':'Gestión','fr':'Gestion','de':'Verwaltung','pt-BR':'Gerenciamento','ru':'Управление','ar':'الإدارة'},
   'Accounts': {'zh-CN':'账号','zh-TW':'帳號','ja':'アカウント','ko':'계정','es':'Cuentas','fr':'Comptes','de':'Konten','pt-BR':'Contas','ru':'Аккаунты','ar':'الحسابات'},
   'API Keys': {'zh-CN':'API Keys','zh-TW':'API Keys','ja':'API キー','ko':'API 키','es':'Claves API','fr':'Clés API','de':'API-Schlüssel','pt-BR':'Chaves API','ru':'API-ключи','ar':'مفاتيح API'},
@@ -1125,6 +1165,7 @@ async function loadKeys(){
     $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px">${tok[x.id]!=null?fmtTok(tok[x.id]):'-'}</td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
       ${x.raw?`<button class="btn-sm btn" onclick="copyKeyRaw('${x.raw}')">Copy</button>`:''}
       <button class="btn-sm btn" onclick="openUseKey('${x.id}')">Use key</button>
+      <button class="btn-sm btn" onclick="openKeyUsage('${x.id}','${x.name.replace(/'/g,"\\'")}','${x.prefix}')">Usage</button>
       <button class="btn-sm btn" onclick="editKey('${x.id}','${x.name.replace(/'/g,"\\'")}')">Edit</button>
       <button class="btn-sm btn ${x.revoked?'success':'danger'}" onclick="toggleKey('${x.id}',${x.revoked})">${x.revoked?'Enable':'Disable'}</button>
       <button class="btn-sm btn danger" onclick="revokeKey('${x.id}')">Delete</button>
@@ -1193,7 +1234,7 @@ async function loadUsage(){
     $('ug-tok-sub').textContent='Input '+(s.input||0)+' · Output '+(s.output||0);
     $('ug-cache').textContent=fmtTok(s.cache);
     $('ug-ms').textContent=(s.avg_ms||0).toLocaleString();
-    renderTrend((d.stats||{}).trend||[]);
+    renderTrend('ugTrendWrap',(d.stats||{}).trend||[]);
     renderBars('ugModels',(d.stats||{}).models||[],m=>m.name,'tokens');
     renderBars('ugEndpoints',(d.stats||{}).endpoints||[],m=>m.endpoint,'tokens');
     renderBars('ugKeys',(d.stats||{}).keys||[],m=>m.api_key_name||m.api_key_prefix,'requests');
@@ -1203,8 +1244,8 @@ async function loadUsage(){
   }
 }
 
-function renderTrend(trend){
-  const wrap=$('ugTrendWrap');
+function renderTrend(wrapId, trend){
+  const wrap=$(wrapId);
   if(!trend||!trend.length){if(wrap)wrap.innerHTML='<div class="chart-empty"><i data-lucide="line-chart"></i>No trend data yet; it will appear after requests are made.</div>';try{lucide.createIcons();}catch(e){}return;}
   const W=560,H=160,P=8;
   const max=Math.max(...trend.map(t=>t.tokens),1);
@@ -1214,7 +1255,7 @@ function renderTrend(trend){
     const t=trend[0];
     const cx=W/2;
     const cy=H-P-(t.tokens/max)*(H-2*P);
-    wrap.innerHTML=`<svg id="ugTrend" viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px">
+    wrap.innerHTML=`<svg viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px">
       <circle cx="${cx}" cy="${cy}" r="4" fill="var(--accent)"><title>${t.date} · ${t.tokens.toLocaleString()} tokens</title></circle>
       <text x="${cx}" y="${H-2}" text-anchor="middle" font-size="9" fill="var(--muted)">${t.date}</text></svg>`;
     try{lucide.createIcons();}catch(e){}return;
@@ -1228,8 +1269,9 @@ function renderTrend(trend){
   });
   if(trend.length===2)path='M'+P+' '+(H-P-(trend[0].tokens/max)*(H-2*P))+' L'+(W-P)+' '+(H-P-(trend[1].tokens/max)*(H-2*P));
   area+='L'+(W-P)+' '+(H-P)+' L'+P+' '+(H-P)+' Z';
-  const gid='ugGrad';
-  wrap.innerHTML=`<svg id="ugTrend" viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
+  // The gradient id is derived from the container id, to avoid duplication when the dashboard and modal coexist.
+  const gid=wrapId+'Grad';
+  wrap.innerHTML=`<svg viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
     <path d="${area}" fill="url(#${gid})"/>
     <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     ${trend.map((t,i)=>{
@@ -1308,6 +1350,44 @@ async function openUseKey(id){
   renderUkeFiles();
 }
 function closeUseKey(){$('useKeyModal').classList.remove('open');}
+
+// Per-key usage detail modal: fetches on demand (open / range switch only) and
+// reuses the dashboard renderers, so the metrics stay identical.
+let kuDays=7,kuKeyId='';
+function openKeyUsage(id,name,prefix){
+  kuKeyId=id;
+  $('kuKeyName').textContent=name+' ('+prefix+')';
+  $('keyUsageModal').classList.add('open');
+  loadKeyUsage();
+}
+function closeKeyUsage(){$('keyUsageModal').classList.remove('open');}
+function setKuRange(days){
+  kuDays=days;
+  document.querySelectorAll('#kuRange button').forEach(b=>b.classList.toggle('active',+b.dataset.days===days));
+  loadKeyUsage();
+}
+async function loadKeyUsage(){
+  if(!kuKeyId)return;
+  const status=$('kuStatus');
+  status.style.display='flex';
+  status.textContent='Loading...';
+  try{
+    const d=await api('/api/usage/key?id='+encodeURIComponent(kuKeyId)+'&days='+kuDays);
+    status.style.display='none';
+    const s=(d.stats||{}).summary||{};
+    $('ku-req').textContent=fmtNum(s.requests);
+    $('ku-req-sub').textContent='Today +'+(s.today_requests||0);
+    $('ku-tok').textContent=fmtTok(s.tokens);
+    $('ku-tok-sub').textContent='Input '+(s.input||0)+' · Output '+(s.output||0);
+    $('ku-cache').textContent=fmtTok(s.cache);
+    $('ku-ms').textContent=(s.avg_ms||0).toLocaleString();
+    renderTrend('kuTrendWrap',(d.stats||{}).trend||[]);
+    renderBars('kuModels',(d.stats||{}).models||[],m=>m.name,'tokens');
+    renderBars('kuEndpoints',(d.stats||{}).endpoints||[],m=>m.endpoint,'tokens');
+  }catch(e){
+    status.textContent=e.message;
+  }
+}
 function renderUkeTabs(){
   $('useKeyClients').innerHTML=ukeClients.map(c=>`<button class="uke-tab ${c.id===ukeClient?'active':''}" onclick="ukeClient='${c.id}';renderUkeTabs();renderUkeFiles()"><i data-lucide="${c.id==='codex'?'terminal':c.id==='curl'?'square-terminal':c.id==='claude'?'sparkles':'braces'}"></i>${c.label}</button>`).join('');
   $('useKeyOs').innerHTML=ukeOs.map(o=>`<button class="uke-tab ${o.id===ukeOsSel?'active':''}" onclick="ukeOsSel='${o.id}';renderUkeFiles()">${o.label}</button>`).join('');

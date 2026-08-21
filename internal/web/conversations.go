@@ -152,6 +152,12 @@ func (s *Server) handleM365Conversations(w http.ResponseWriter, r *http.Request)
 		row["conversationId"] = session.ConversationID
 		row["sessionId"] = session.SessionID
 		row["accountId"] = session.AccountID
+		if session.APIKeyID != "" {
+			row["apiKeyId"] = session.APIKeyID
+			if name := s.apiKeyName(session.APIKeyID, ""); name != "" {
+				row["apiKeyName"] = name
+			}
+		}
 		row["createTimeUtc"] = session.CreatedAt.UnixMilli()
 		row["updateTimeUtc"] = session.LastUsedAt.UnixMilli()
 		row["messageCount"] = len(session.ContextHistory)
@@ -203,6 +209,8 @@ func (s *Server) handleM365ConversationDetail(w http.ResponseWriter, r *http.Req
 		"conversationId": session.ConversationID,
 		"sessionId":      session.SessionID,
 		"accountId":      session.AccountID,
+		"apiKeyId":       session.APIKeyID,
+		"apiKeyName":     s.apiKeyName(session.APIKeyID, ""),
 		"accountEmail":   accountEmail,
 		"chatName":       conversationTitle(session.ContextHistory),
 		"createdAt":      session.CreatedAt,

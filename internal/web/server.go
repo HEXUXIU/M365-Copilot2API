@@ -2046,9 +2046,11 @@ func (s *Server) writePublicIdentityChatResponse(w http.ResponseWriter, r *http.
 	outputTokens := EstimateTokens(answer)
 	usage := map[string]any{"prompt_tokens": inputTokens, "completion_tokens": outputTokens, "total_tokens": inputTokens + outputTokens}
 	if s.usage != nil {
+		apiKeyID, apiKeyPrefix := s.resolveAPIKey(r)
 		s.usage.record(UsageRecord{
 			Time:         time.Now(),
-			APIKeyPrefix: extractAPIKey(r),
+			APIKeyID:     apiKeyID,
+			APIKeyPrefix: apiKeyPrefix,
 			Model:        model,
 			Endpoint:     "/v1/chat/completions",
 			InputTokens:  inputTokens,
@@ -2109,13 +2111,16 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	if res.ConversationID == "" {
 		return
 	}
+	// 一次解析请求的 key 身份：ID 传给会话归因，截断前缀继续喂 cacheStats
+	// （stats.json 按前缀记账，保持既有统计连续）。
+	apiKeyID, apiKey := s.resolveAPIKey(r)
 	historyBody := *body
 	historyBody.Messages = append(cloneMessages(body.Messages), oaiMsg{
 		Role:             "assistant",
 		Content:          res.Text,
 		ReasoningContent: res.Reasoning,
 	})
-	s.sessionResolver.Bind(res.SessionID, res.ConversationID, acc.ID, &historyBody, "", r)
+	s.sessionResolver.Bind(res.SessionID, res.ConversationID, acc.ID, apiKeyID, &historyBody, "", r)
 	s.conversationManager.Record(res.ConversationID, acc.ID, prompt)
 	if s.conversationManager.ShouldCleanup() {
 		if cleaned := s.conversationManager.Cleanup(); len(cleaned) > 0 {
@@ -2123,7 +2128,6 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 		}
 	}
 
-	apiKey := extractAPIKey(r)
 	historyTokens := int64(0)
 	upper := len(body.Messages) - 1
 	if upper < 0 {
@@ -2137,6 +2141,7 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	cacheStats.RecordRequest(apiKey, historyTokens > 0, newTokens, historyTokens, len(sessions))
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
+		APIKeyID:     apiKeyID,
 		APIKeyPrefix: apiKey,
 		AccountEmail: acc.Email,
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
@@ -2150,19 +2155,52 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	})
 }
 
-func extractAPIKey(r *http.Request) string {
+// rawAPIKey 返回请求头里的完整 key（X-API-Key 优先，其次 Bearer）。
+func rawAPIKey(r *http.Request) string {
 	key := strings.TrimSpace(r.Header.Get("X-API-Key"))
 	if key != "" {
 		return key
 	}
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		key = strings.TrimSpace(auth[7:])
+		return strings.TrimSpace(auth[7:])
 	}
+	return ""
+}
+
+func truncateAPIKey(key string) string {
 	if len(key) > 8 {
 		return key[:8] + "..."
 	}
 	return key
+}
+
+// extractAPIKey 的输出同时被用作 responseMessages 的内存 tenant 键
+// （protocol_handlers.go），截断语义不可变。
+func extractAPIKey(r *http.Request) string {
+	return truncateAPIKey(rawAPIKey(r))
+}
+
+// resolveAPIKey 解析请求的 key 身份：store 记录 ID（JWT/未知 key 为 ""）
+// 与截断展示前缀。
+func (s *Server) resolveAPIKey(r *http.Request) (keyID, displayPrefix string) {
+	raw := rawAPIKey(r)
+	displayPrefix = truncateAPIKey(raw)
+	if s.apiKeys != nil {
+		if rec, ok := s.apiKeys.lookup(raw); ok {
+			return rec.ID, displayPrefix
+		}
+	}
+	return "", displayPrefix
+}
+
+// apiKeyName 把 key ID（或旧版截断前缀）解析成当前名称；解析失败返回 ""。
+// s.apiKeys 为 nil（部分测试构造的 Server）时安全返回空。
+func (s *Server) apiKeyName(keyID, legacyPrefix string) string {
+	if s.apiKeys == nil {
+		return ""
+	}
+	return s.apiKeys.resolveName(keyID, legacyPrefix)
 }
 
 func firstNonEmpty(vals ...string) string {

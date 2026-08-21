@@ -190,9 +190,11 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		data = append(data, map[string]string{"url": generatedImageURL(r, id)})
 	}
 
+	apiKeyID, apiKeyPrefix := s.resolveAPIKey(r)
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
-		APIKeyPrefix: extractAPIKey(r),
+		APIKeyID:     apiKeyID,
+		APIKeyPrefix: apiKeyPrefix,
 		AccountEmail: acc.Email,
 		Model:        firstNonEmpty(b.Model, "gpt-image-2"),
 		Endpoint:     endpoint,

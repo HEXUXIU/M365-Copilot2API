@@ -13,6 +13,7 @@ import (
 
 type UsageRecord struct {
 	Time         time.Time `json:"time"`
+	APIKeyID     string    `json:"api_key_id,omitempty"`
 	APIKeyPrefix string    `json:"api_key_prefix"`
 	AccountEmail string    `json:"account_email"`
 	Model        string    `json:"model"`
@@ -132,7 +133,7 @@ func (s *usageLog) snapshot(days int) map[string]any {
 		todayReq, todayTok                   int64
 		h24Req, h24Tok                       int64
 	)
-	keyCounts := map[string]*usageCountStat{}
+	keyCounts := map[string]*usageKeyStat{}
 	modelCounts := map[string]*usageCountStat{}
 	endpointCounts := map[string]*usageCountStat{}
 	trendMap := map[string]*usageTrendPoint{}
@@ -155,10 +156,14 @@ func (s *usageLog) snapshot(days int) map[string]any {
 			h24Req++
 			h24Tok += reqTok
 		}
-		key := rec.APIKeyPrefix
+		// 按 key ID 聚合；升级前的旧记录没有 ID，按截断前缀独立成桶。
+		key := rec.APIKeyID
+		if key == "" {
+			key = "prefix:" + rec.APIKeyPrefix
+		}
 		ks, ok := keyCounts[key]
 		if !ok {
-			ks = &usageCountStat{}
+			ks = &usageKeyStat{prefix: rec.APIKeyPrefix, id: rec.APIKeyID}
 			keyCounts[key] = ks
 		}
 		ks.Requests++
@@ -202,8 +207,8 @@ func (s *usageLog) snapshot(days int) map[string]any {
 	sort.Slice(ep, func(i, j int) bool { return ep[i]["tokens"].(int64) > ep[j]["tokens"].(int64) })
 
 	keys := make([]map[string]any, 0, len(keyCounts))
-	for k, c := range keyCounts {
-		keys = append(keys, map[string]any{"api_key_prefix": k, "requests": c.Requests, "tokens": c.Tokens})
+	for _, c := range keyCounts {
+		keys = append(keys, map[string]any{"api_key_id": c.id, "api_key_prefix": c.prefix, "requests": c.Requests, "tokens": c.Tokens})
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i]["requests"].(int64) > keys[j]["requests"].(int64) })
 
@@ -262,6 +267,14 @@ func (s *usageLog) logs(limit, offset int) map[string]any {
 }
 
 type usageCountStat struct {
+	Requests int64
+	Tokens   int64
+}
+
+// usageKeyStat 是按 key 维度聚合的桶：id 为空表示旧版前缀桶。
+type usageKeyStat struct {
+	id       string
+	prefix   string
 	Requests int64
 	Tokens   int64
 }

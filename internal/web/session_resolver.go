@@ -19,14 +19,17 @@ import (
 // sessionBinding 璁板綍涓€娆″唴瀹归敭澶嶇敤鐨勪細璇濄€侷dentity 瀛楁锛圛P/user锛変粎浣?
 // 璇婃柇鍏冩暟鎹繚鐣欙紝鍖归厤鍒ゅ畾鍙緷璧栦笂涓嬫枃鍐呭锛岃 Resolve 鐨勫唴瀹归敭閫昏緫銆?
 type sessionBinding struct {
-	SessionID      string    `json:"sessionId"`
-	ConversationID string    `json:"conversationId"`
-	AccountID      string    `json:"accountId"`
-	CreatedAt      time.Time `json:"createdAt"`
-	LastUsedAt     time.Time `json:"lastUsedAt"`
-	IPFingerprint  string    `json:"ipFingerprint,omitempty"`
-	UserField      string    `json:"userField,omitempty"`
-	ContextFinger  string    `json:"contextFinger,omitempty"`
+	SessionID      string `json:"sessionId"`
+	ConversationID string `json:"conversationId"`
+	AccountID      string `json:"accountId"`
+	// APIKeyID 记录最近一次发起请求的 API Key（JWT/未知 key 为空，不抹掉旧值），
+	// 供控制台按 key 筛选对话。
+	APIKeyID      string    `json:"apiKeyId,omitempty"`
+	CreatedAt     time.Time `json:"createdAt"`
+	LastUsedAt    time.Time `json:"lastUsedAt"`
+	IPFingerprint string    `json:"ipFingerprint,omitempty"`
+	UserField     string    `json:"userField,omitempty"`
+	ContextFinger string    `json:"contextFinger,omitempty"`
 	// ContextHistory 鎸佷箙鍖栦繚瀛樻渶杩戜竴娆″崗璁殑瀹屾暣娑堟伅锛屼緵閲嶅惎鍚庣户缁仛
 	// 鍐呭鍓嶇紑鍖归厤锛岄伩鍏嶈繘绋嬮噸鍚鑷存墍鏈変細璇濋敭鍏ㄩ儴澶辨晥銆?
 	ContextHistory []oaiMsg `json:"contextHistory,omitempty"`
@@ -407,7 +410,7 @@ func toolCallEqual(x, y map[string]any) bool {
 	return xa == ya
 }
 
-func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, body *oaiReq, assistantText string, r *http.Request) {
+func (sr *sessionResolver) Bind(sessionID, conversationID, accountID, apiKeyID string, body *oaiReq, assistantText string, r *http.Request) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
 	sr.evictLocked()
@@ -423,10 +426,14 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 	}
 	// 同一云端对话只保留一条记录：内容键命中后增量轮次更新已存在会话，
 	// 而不是每次 Bind 都新建一条，避免 sessions.json 膨胀。
+	// 空 apiKeyID（JWT/未知 key）不覆盖已记录的归因。
 	if sessionID != "" {
 		if sess, ok := sr.sessions[sessionID]; ok {
 			sess.ConversationID = conversationID
 			sess.AccountID = accountID
+			if apiKeyID != "" {
+				sess.APIKeyID = apiKeyID
+			}
 			sess.LastUsedAt = now
 			sess.UserField = body.User
 			sess.IPFingerprint = clientIPFingerprint(r)
@@ -443,6 +450,9 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 			if sess.ConversationID == conversationID {
 				sess.LastUsedAt = now
 				sess.AccountID = accountID
+				if apiKeyID != "" {
+					sess.APIKeyID = apiKeyID
+				}
 				sess.UserField = body.User
 				sess.IPFingerprint = clientIPFingerprint(r)
 				sess.ContextFinger = contextFingerprint(history)
@@ -460,6 +470,7 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 		SessionID:      sessionID,
 		ConversationID: conversationID,
 		AccountID:      accountID,
+		APIKeyID:       apiKeyID,
 		CreatedAt:      now,
 		LastUsedAt:     now,
 		IPFingerprint:  clientIPFingerprint(r),

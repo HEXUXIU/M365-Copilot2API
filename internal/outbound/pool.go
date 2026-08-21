@@ -96,6 +96,12 @@ func (p *Pool) WebSocketDialer() *websocket.Dialer {
 	base.NetDialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		mu.Lock()
 		e := sticky
+		if e != nil {
+			if p.entryByRaw(e.raw) == nil {
+				sticky = nil
+				e = nil
+			}
+		}
 		if e == nil {
 			e = p.pick()
 			sticky = e
@@ -139,6 +145,17 @@ func (p *Pool) Remove(raw string) {
 			return
 		}
 	}
+}
+
+func (p *Pool) entryByRaw(raw string) *poolEntry {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, e := range p.entries {
+		if e.raw == raw {
+			return e
+		}
+	}
+	return nil
 }
 
 type poolRoundTripper struct {

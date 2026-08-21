@@ -112,6 +112,8 @@ type Server struct {
 
 const maxResponsesPerTenant = 256
 
+const maxResponseTenants = 1024
+
 func (s *Server) clientForProxy(proxyURL string) *chathub.Client {
 	if proxyURL == "" {
 		return s.chat
@@ -275,7 +277,18 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/v1/images/edits", s.imageEdits)
 	m.HandleFunc("/v1/images/files/", s.generatedImageFile)
 	m.HandleFunc("/", s.rootPage)
-	return recoverPanics(requestID(httpTrace(securityHeaders(s.adminMiddleware(s.debugMiddleware(m))))))
+	return recoverPanics(requestID(httpTrace(securityHeaders(s.adminMiddleware(s.debugMiddleware(maxBodyLimit(m)))))))
+}
+
+const maxAdminBodyBytes = 50 << 20
+
+func maxBodyLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch {
+			r.Body = http.MaxBytesReader(w, r.Body, maxAdminBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) adminMiddleware(next http.Handler) http.Handler {
@@ -490,7 +503,9 @@ func (s *Server) validAPIKey(r *http.Request) bool {
 
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("jsonOut encode error: %v", err)
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -747,6 +762,11 @@ func (s *Server) startPKCE(w http.ResponseWriter, _ *http.Request) {
 	state := hex.EncodeToString(b)
 	redirectURI := auth.RedirectURI()
 	s.mu.Lock()
+	for k, v := range s.pkce {
+		if time.Since(v.Created) > 10*time.Minute {
+			delete(s.pkce, k)
+		}
+	}
 	s.pkce[state] = pendingPKCE{Verifier: v, Created: time.Now(), Status: "pending", RedirectURI: redirectURI}
 	s.mu.Unlock()
 	jsonOut(w, map[string]string{
@@ -897,7 +917,7 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 			}
 			accountID = acc.ID
 		}
-		if !s.tokens.ScheduleEnabled(accountID) {
+		if !s.tokens.ScheduleEnabled(accountID) || !s.accountAvailable(accountID) {
 			return auth.AccountToken{}, fmt.Errorf("no accounts enabled for scheduling")
 		}
 		if !s.accountPool.Available(accountID) {
@@ -1637,9 +1657,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			return nil
 		})
 		if err != nil && text.Len() == 0 && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
-			// A throttled stream may retry on the next healthy account: only the
-			// ": connected" preamble reached the client, so the retried stream is
-			// indistinguishable from a fresh request.
+			s.invalidateConvCache(acc.ID, convCacheModel)
 			next, nerr := s.nextHealthyAccount(acc.ID)
 			if nerr != nil {
 				// no healthy alternative
@@ -1790,10 +1808,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.accountPool.MarkFailure(acc.ID, routeErr, rateLimitCooldown)
 			if IsRateLimited(routeErr) || IsAuthFailure(routeErr) {
 				next, nerr := s.nextHealthyAccount(acc.ID)
-				if nerr == nil {
-					ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
-					defer cancel2()
-					if res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments}); err2 == nil {
+			if nerr == nil {
+				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
+				defer cancel2()
+				if res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments}); err2 == nil {
 						routeRes, routeErr = res2, nil
 						acc = next
 						account = chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}

@@ -280,6 +280,17 @@ func (s *Store) Next() (AccountToken, bool) {
 }
 
 func (s *Store) EnsureValid(id string) (AccountToken, error) {
+	s.mu.Lock()
+	if s.inflight == nil {
+		s.inflight = map[string]*inflightRefresh{}
+	}
+	if f, ok := s.inflight[id]; ok {
+		s.mu.Unlock()
+		<-f.done
+		return f.acc, f.err
+	}
+	s.mu.Unlock()
+
 	acc, ok := s.Get(id)
 	if !ok {
 		return AccountToken{}, os.ErrNotExist

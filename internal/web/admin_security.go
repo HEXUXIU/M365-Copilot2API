@@ -114,13 +114,16 @@ func (s *Server) recordLoginFailure(ip string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, exists := s.loginAttempts[ip]; !exists && len(s.loginAttempts) >= maxLoginAttemptEntries {
+		var oldestKey string
+		var oldestTime time.Time
 		for key, attempt := range s.loginAttempts {
-			if now.Sub(attempt.WindowStart) > 15*time.Minute && now.After(attempt.LockedUntil) {
-				delete(s.loginAttempts, key)
+			if oldestKey == "" || attempt.WindowStart.Before(oldestTime) {
+				oldestKey = key
+				oldestTime = attempt.WindowStart
 			}
 		}
-		if len(s.loginAttempts) >= maxLoginAttemptEntries {
-			return
+		if oldestKey != "" {
+			delete(s.loginAttempts, oldestKey)
 		}
 	}
 	a := s.loginAttempts[ip]

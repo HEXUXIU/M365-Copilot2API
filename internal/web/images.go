@@ -53,6 +53,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b imageGenerationRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	if json.NewDecoder(r.Body).Decode(&b) != nil || strings.TrimSpace(b.Prompt) == "" {
 		http.Error(w, `{"error":{"message":"prompt is required","type":"invalid_request_error"}}`, 400)
 		return

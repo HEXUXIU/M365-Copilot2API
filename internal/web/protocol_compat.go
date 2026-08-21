@@ -210,7 +210,11 @@ func (r anthropicRequest) openAI() (oaiReq, error) {
 			}
 		}
 		if len(text) > 0 || len(calls) > 0 {
-			o.Messages = append(o.Messages, oaiMsg{Role: m.Role, Content: text, ToolCalls: calls})
+			content := any(text)
+			if len(text) == 0 {
+				content = nil
+			}
+			o.Messages = append(o.Messages, oaiMsg{Role: m.Role, Content: content, ToolCalls: calls})
 		}
 	}
 	for _, t := range r.Tools {

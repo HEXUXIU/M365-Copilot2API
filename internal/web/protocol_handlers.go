@@ -214,6 +214,9 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	estimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, usageOutput)
 	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": estimate.Values, "m365": localUsageMetadata(estimate.Source)}
 	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
+	if _, err := fmt.Fprintf(w, "data: [DONE]\n\n"); err == nil {
+		flusher.Flush()
+	}
 }
 
 func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []byte, int, error) {
@@ -308,6 +311,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		out["m365_response_id"] = publicID
 		stored := append([]oaiMsg(nil), o.Messages...)
 		if msg, _ := openAIChoice(out); msg != nil {
+			text, _ := msg["content"].(string)
 			if calls, ok := msg["tool_calls"].([]any); ok && len(calls) > 0 {
 				converted := make([]map[string]any, 0, len(calls))
 				for _, call := range calls {
@@ -315,14 +319,32 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 						converted = append(converted, m)
 					}
 				}
-				stored = append(stored, oaiMsg{Role: "assistant", ToolCalls: converted})
-			} else {
-				if text, _ := msg["content"].(string); text != "" {
-					stored = append(stored, oaiMsg{Role: "assistant", Content: text})
+				asstMsg := oaiMsg{Role: "assistant", ToolCalls: converted}
+				if text != "" {
+					asstMsg.Content = text
 				}
+				stored = append(stored, asstMsg)
+			} else if text != "" {
+				stored = append(stored, oaiMsg{Role: "assistant", Content: text})
 			}
 		}
 		s.responseMu.Lock()
+		if len(s.responseMessages) >= maxResponseTenants {
+			var oldestTenant string
+			var oldestTime time.Time
+			for t, b := range s.responseMessages {
+				for _, h := range b {
+					if oldestTenant == "" || h.At.Before(oldestTime) {
+						oldestTenant = t
+						oldestTime = h.At
+					}
+					break
+				}
+			}
+			if oldestTenant != "" {
+				delete(s.responseMessages, oldestTenant)
+			}
+		}
 		bucket := s.responseMessages[tenant]
 		if bucket == nil {
 			bucket = map[string]respHistory{}
@@ -332,6 +354,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			if time.Since(h.At) > time.Hour {
 				delete(bucket, k)
 			}
+		}
+		if len(bucket) == 0 {
+			delete(s.responseMessages, tenant)
 		}
 		if len(bucket) >= maxResponsesPerTenant {
 			var oldestKey string

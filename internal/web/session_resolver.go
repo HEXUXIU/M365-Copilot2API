@@ -114,6 +114,17 @@ func (sr *sessionResolver) flush() error {
 }
 
 func (sr *sessionResolver) reindexLocked(s sessionBinding) {
+	if old, ok := sr.sessions[s.SessionID]; ok {
+		if old.UserField != "" && sr.byUserField[old.UserField] == s.SessionID {
+			delete(sr.byUserField, old.UserField)
+		}
+		if old.IPFingerprint != "" && sr.byIPFinger[old.IPFingerprint] == s.SessionID {
+			delete(sr.byIPFinger, old.IPFingerprint)
+		}
+		if old.ContextFinger != "" && sr.byContext[old.ContextFinger] == s.SessionID {
+			delete(sr.byContext, old.ContextFinger)
+		}
+	}
 	sr.sessions[s.SessionID] = s
 	if s.UserField != "" {
 		sr.byUserField[s.UserField] = s.SessionID
@@ -123,6 +134,12 @@ func (sr *sessionResolver) reindexLocked(s sessionBinding) {
 	}
 	if s.ContextFinger != "" {
 		sr.byContext[s.ContextFinger] = s.SessionID
+	}
+}
+
+func (sr *sessionResolver) reindexExplicitLocked(sessionID, explicitID string) {
+	if explicitID != "" {
+		sr.byExplicit[explicitID] = sessionID
 	}
 }
 
@@ -434,6 +451,7 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 			sess.ContextHistory = history
 			sr.sessions[sessionID] = sess
 			sr.reindexLocked(sess)
+			sr.reindexExplicitLocked(sessionID, explicitID)
 			sr.persist.markDirty()
 			return
 		}
@@ -449,6 +467,7 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 				sess.ContextHistory = history
 				sr.sessions[sid] = sess
 				sr.reindexLocked(sess)
+				sr.reindexExplicitLocked(sid, explicitID)
 				sr.persist.markDirty()
 				return
 			}
@@ -469,6 +488,7 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 	}
 
 	sr.reindexLocked(sess)
+	sr.reindexExplicitLocked(sessionID, explicitID)
 	sr.persist.markDirty()
 }
 
@@ -562,5 +582,18 @@ func cloneMessages(msgs []oaiMsg) []oaiMsg {
 	}
 	out := make([]oaiMsg, len(msgs))
 	copy(out, msgs)
+	for i := range out {
+		if len(msgs[i].ToolCalls) > 0 {
+			tc := make([]map[string]any, len(msgs[i].ToolCalls))
+			for j := range msgs[i].ToolCalls {
+				m := make(map[string]any, len(msgs[i].ToolCalls[j]))
+				for k, v := range msgs[i].ToolCalls[j] {
+					m[k] = v
+				}
+				tc[j] = m
+			}
+			out[i].ToolCalls = tc
+		}
+	}
 	return out
 }

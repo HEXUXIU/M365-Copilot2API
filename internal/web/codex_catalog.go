@@ -126,7 +126,7 @@ func fetchUpstreamTones() []string {
 	if err != nil {
 		return nil
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	resp.Body.Close()
 	re := regexp.MustCompile(`main\.[a-f0-9]{8}\.js`)
 	m := re.FindString(string(body))
@@ -138,7 +138,7 @@ func fetchUpstreamTones() []string {
 	if err != nil {
 		return nil
 	}
-	bundle, _ := io.ReadAll(resp2.Body)
+	bundle, _ := io.ReadAll(io.LimitReader(resp2.Body, 10<<20))
 	resp2.Body.Close()
 	toneRe := regexp.MustCompile(`(?:Gpt_[0-9]_[0-9]_[A-Za-z_]+|Claude_[A-Za-z0-9_]+|Magic)`)
 	matches := toneRe.FindAllString(string(bundle), -1)

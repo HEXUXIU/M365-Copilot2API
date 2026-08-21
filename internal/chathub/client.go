@@ -14,7 +14,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -53,6 +55,9 @@ var chTrace = os.Getenv("M365_TRACE") == "1"
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "..."
 }
@@ -260,8 +265,15 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	_ = conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 	_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 
+	var writeMu sync.Mutex
+	wsWrite := func(msgType int, data []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteMessage(msgType, data)
+	}
+
 	if !reused {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"protocol":"json","version":1}`+rs)); err != nil {
+		if err := wsWrite(websocket.TextMessage, []byte(`{"protocol":"json","version":1}`+rs)); err != nil {
 			returnConn = false
 			return Result{}, fmt.Errorf("handshake send: %w", err)
 		}
@@ -282,7 +294,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	}
 	log.Printf("chathub timing handshake_ms=%d", time.Since(dialStarted).Milliseconds())
 	payloadSentAt := time.Now()
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
+	if err := wsWrite(websocket.TextMessage, []byte(payload)); err != nil {
 		returnConn = false
 		return Result{}, fmt.Errorf("chat send: %w", err)
 	}
@@ -423,6 +435,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		select {
 		case <-ctx.Done():
 			returnConn = false
+			conn.Close()
 			return Result{}, ctx.Err()
 		case read = <-readCh:
 		}
@@ -451,7 +464,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 
 			// SignalR ping
 			if int(t) == 6 {
-				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":6}`+rs))
+				_ = wsWrite(websocket.TextMessage, []byte(`{"type":6}`+rs))
 				continue
 			}
 
@@ -641,21 +654,24 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		// For non-data URLs, download the image first
 		imageData := a.URL
 		if !strings.HasPrefix(a.URL, "data:") {
-			if err := validateRemoteDownloadURL(a.URL); err != nil {
-				return err
+			if err := ValidateDownloadURL(a.URL); err != nil {
+				return fmt.Errorf("attachment %d: %w", i, err)
 			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
 			if err != nil {
-				continue
+				return fmt.Errorf("attachment %d: create request: %w", i, err)
 			}
 			resp, err := c.HTTPClient.Do(req)
 			if err != nil {
-				continue
+				return fmt.Errorf("attachment %d: download: %w", i, err)
 			}
 			body, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentMiB<<20))
 			resp.Body.Close()
-			if err != nil || resp.StatusCode != http.StatusOK {
-				continue
+			if err != nil {
+				return fmt.Errorf("attachment %d: read body: %w", i, err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("attachment %d: HTTP %d", i, resp.StatusCode)
 			}
 			mimeType := resp.Header.Get("Content-Type")
 			if mimeType == "" {

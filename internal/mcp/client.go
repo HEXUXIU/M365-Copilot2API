@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -137,6 +138,7 @@ func (c *Client) readSSE(body io.ReadCloser) {
 				select {
 				case c.msgCh <- msg:
 				default:
+					log.Printf("[mcp] msgCh overflow, dropping message for session %s", c.sessionID)
 				}
 			}
 		}
@@ -229,6 +231,9 @@ func (c *Client) sendRequest(ctx context.Context, method string, params any) err
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("MCP server returned HTTP %d", resp.StatusCode)
+	}
 	return nil
 }
 

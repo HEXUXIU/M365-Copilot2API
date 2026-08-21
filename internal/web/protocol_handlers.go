@@ -47,10 +47,12 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	pr, pw := io.Pipe()
 	irw := &pipeResponseWriter{h: make(http.Header), w: pw}
 	innerDone := make(chan struct{})
+	var innerPanic any
 	go func() {
 		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("[responses] inner goroutine panic: %v", r)
+			if p := recover(); p != nil {
+				innerPanic = p
+				log.Printf("[responses] inner goroutine panic: %v", p)
 			}
 			_ = pw.Close()
 			close(innerDone)
@@ -67,7 +69,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	}
 	id := "resp_" + uuid.NewString()
 	created := time.Now().Unix()
-	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "status": "in_progress", "model": model, "output": []any{}}})
+	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}})
 
 	var text strings.Builder
 	messageID := "msg_" + uuid.NewString()
@@ -79,9 +81,10 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	}
 	calls := map[int]*tcState{}
 	scanner := bufio.NewScanner(pr)
-	scanner.Buffer(make([]byte, 4096), 2<<20)
+	scanner.Buffer(make([]byte, 4096), 10<<20)
 	for scanner.Scan() {
 		if r.Context().Err() != nil {
+			pr.Close()
 			return
 		}
 		line := scanner.Text()
@@ -109,7 +112,10 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		if rawCalls, ok := delta["tool_calls"].([]any); ok {
 			for _, raw := range rawCalls {
 				tc, _ := raw.(map[string]any)
-				idx := int(tc["index"].(float64))
+				idx := 0
+				if v, ok := tc["index"].(float64); ok {
+					idx = int(v)
+				}
 				st := calls[idx]
 				typ := "function"
 				if v, ok := tc["type"].(string); ok && v == "custom" {
@@ -144,7 +150,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	<-innerDone
-	if scanner.Err() != nil || irw.status >= http.StatusBadRequest {
+	if innerPanic != nil || scanner.Err() != nil || irw.status >= http.StatusBadRequest {
 		status := irw.status
 		if status == 0 {
 			status = http.StatusBadGateway
@@ -193,15 +199,13 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
 		}
 	} else {
-		item := map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{map[string]any{"type": "output_text", "id": contentID, "text": "", "annotations": []any{}}}}
-		output = append(output, item)
 		if !textStarted {
-			emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": 0, "item": item})
+			emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{map[string]any{"type": "output_text", "id": contentID, "text": "", "annotations": []any{}}}}})
 			emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "item_id": messageID, "delta": text.String()})
 		}
 		emit("response.output_text.done", map[string]any{"type": "response.output_text.done", "output_index": 0, "content_index": 0, "item_id": messageID, "text": text.String()})
-		item["status"] = "completed"
-		item["content"] = []any{map[string]any{"type": "output_text", "id": contentID, "text": text.String(), "annotations": []any{}}}
+		item := map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "id": contentID, "text": text.String(), "annotations": []any{}}}}
+		output = append(output, item)
 		emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": 0, "item": item})
 	}
 	usageOutput := text.String()
@@ -211,6 +215,9 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	estimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, usageOutput)
 	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": estimate.Values, "m365": localUsageMetadata(estimate.Source)}
 	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
+	if _, err := fmt.Fprintf(w, "data: [DONE]\n\n"); err == nil {
+		flusher.Flush()
+	}
 }
 
 func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []byte, int, error) {
@@ -233,6 +240,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		writeResponsesError(w, 405, "invalid_request_error", "method_not_allowed", "method not allowed")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	var body responsesRequest
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		writeResponsesError(w, 400, "invalid_request_error", "invalid_json", "bad json")
@@ -244,6 +252,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := extractAPIKey(r)
+	if tenant == "" {
+		tenant = "default"
+	}
 	if body.PreviousResponseID != "" {
 		s.responseMu.Lock()
 		prior, ok := s.responseMessages[tenant][body.PreviousResponseID]
@@ -288,8 +299,8 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		APIKeyPrefix: extractAPIKey(r),
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
 		Endpoint:     "/v1/responses",
-		InputTokens:  int64(estimate.Values["input_tokens"].(int)),
-		OutputTokens: int64(estimate.Values["output_tokens"].(int)),
+		InputTokens:  safeInt64(estimate.Values["input_tokens"]),
+		OutputTokens: safeInt64(estimate.Values["output_tokens"]),
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})
@@ -301,6 +312,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		out["m365_response_id"] = publicID
 		stored := append([]oaiMsg(nil), o.Messages...)
 		if msg, _ := openAIChoice(out); msg != nil {
+			text, _ := msg["content"].(string)
 			if calls, ok := msg["tool_calls"].([]any); ok && len(calls) > 0 {
 				converted := make([]map[string]any, 0, len(calls))
 				for _, call := range calls {
@@ -308,14 +320,32 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 						converted = append(converted, m)
 					}
 				}
-				stored = append(stored, oaiMsg{Role: "assistant", ToolCalls: converted})
-			} else {
-				if text, _ := msg["content"].(string); text != "" {
-					stored = append(stored, oaiMsg{Role: "assistant", Content: text})
+				asstMsg := oaiMsg{Role: "assistant", ToolCalls: converted}
+				if text != "" {
+					asstMsg.Content = text
 				}
+				stored = append(stored, asstMsg)
+			} else if text != "" {
+				stored = append(stored, oaiMsg{Role: "assistant", Content: text})
 			}
 		}
 		s.responseMu.Lock()
+		if len(s.responseMessages) >= maxResponseTenants {
+			var oldestTenant string
+			var oldestTime time.Time
+			for t, b := range s.responseMessages {
+				for _, h := range b {
+					if oldestTenant == "" || h.At.Before(oldestTime) {
+						oldestTenant = t
+						oldestTime = h.At
+					}
+					break
+				}
+			}
+			if oldestTenant != "" {
+				delete(s.responseMessages, oldestTenant)
+			}
+		}
 		bucket := s.responseMessages[tenant]
 		if bucket == nil {
 			bucket = map[string]respHistory{}
@@ -325,6 +355,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			if time.Since(h.At) > time.Hour {
 				delete(bucket, k)
 			}
+		}
+		if len(bucket) == 0 {
+			delete(s.responseMessages, tenant)
 		}
 		if len(bucket) >= maxResponsesPerTenant {
 			var oldestKey string
@@ -360,6 +393,7 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, 405, "invalid_request_error", "method_not_allowed", "method not allowed")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	var body anthropicRequest
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
 		writeAnthropicError(w, 400, "invalid_request_error", "invalid_json", "bad json")
@@ -385,10 +419,23 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		APIKeyPrefix: extractAPIKey(r),
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
 		Endpoint:     "/v1/messages",
-		InputTokens:  int64(estimate.Values["input_tokens"].(int)),
-		OutputTokens: int64(estimate.Values["output_tokens"].(int)),
+		InputTokens:  safeInt64(estimate.Values["input_tokens"]),
+		OutputTokens: safeInt64(estimate.Values["output_tokens"]),
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})
 	writeAnthropicResult(w, firstNonEmpty(body.Model, "m365-copilot"), body.Stream, out)
+}
+
+func safeInt64(v any) int64 {
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	default:
+		return 0
+	}
 }

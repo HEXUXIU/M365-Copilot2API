@@ -2,15 +2,12 @@ package chathub
 
 import (
 	"context"
-	"log"
 	"net/http"
-	"sync"
 
 	"github.com/gorilla/websocket"
 )
 
 type ConnPool struct {
-	mu     sync.Mutex
 	dialer *websocket.Dialer
 	header http.Header
 }
@@ -20,15 +17,11 @@ func NewConnPool(dialer *websocket.Dialer, header http.Header) *ConnPool {
 }
 
 func (p *ConnPool) Take(ctx context.Context, oid, tid string, wsURL string) (*websocket.Conn, bool, error) {
-	p.mu.Lock()
-	p.mu.Unlock()
 	conn, resp, err := p.dialer.DialContext(ctx, wsURL, p.header.Clone())
 	if err != nil {
-		if resp != nil {
-			log.Printf("[connpool] dial failed oid=%s status=%d", oid, resp.StatusCode)
-		}
 		return nil, false, err
 	}
+	_ = resp
 	return conn, false, nil
 }
 

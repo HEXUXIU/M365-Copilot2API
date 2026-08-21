@@ -53,6 +53,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b imageGenerationRequest
+	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 	if json.NewDecoder(r.Body).Decode(&b) != nil || strings.TrimSpace(b.Prompt) == "" {
 		http.Error(w, `{"error":{"message":"prompt is required","type":"invalid_request_error"}}`, 400)
 		return
@@ -414,8 +415,9 @@ func (s *Server) generatedImageFile(w http.ResponseWriter, r *http.Request) {
 		delete(s.generatedImages, id)
 		ok = false
 	}
+	var data []byte
 	if ok {
-		item.Data = append([]byte(nil), item.Data...)
+		data = append([]byte(nil), item.Data...)
 	}
 	s.mu.Unlock()
 	if !ok {
@@ -424,8 +426,8 @@ func (s *Server) generatedImageFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", item.ContentType)
 	w.Header().Set("Cache-Control", "private, max-age=300")
-	w.Header().Set("Content-Length", fmt.Sprint(len(item.Data)))
-	_, _ = w.Write(item.Data)
+	w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+	_, _ = w.Write(data)
 }
 
 func isImageQuotaRefusal(text string) bool {
@@ -488,6 +490,9 @@ func downloadImageAsBase64(url string) (b64, contentType string, err error) {
 }
 
 func downloadImageAsBase64WithToken(url, token string) (b64, contentType string, err error) {
+	if err := chathub.ValidateDownloadURL(url); err != nil {
+		return "", "", fmt.Errorf("url not allowed: %w", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -497,7 +502,7 @@ func downloadImageAsBase64WithToken(url, token string) (b64, contentType string,
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := outbound.HTTPClient().Do(req)
 	if err != nil {
 		return "", "", err
 	}

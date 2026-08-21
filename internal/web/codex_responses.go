@@ -29,7 +29,7 @@ func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src 
 	} else {
 		text, _ := msg["content"].(string)
 		messageID := "msg_" + uuid.NewString()
-		output = append(output, map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}})
+		output = append(output, map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "id": "txt_" + uuid.NewString(), "text": text, "annotations": []any{}}}})
 	}
 	usage, _ := src["usage"].(map[string]any)
 	usageSource, _ := src["m365_usage_source"].(string)

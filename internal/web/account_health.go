@@ -159,6 +159,7 @@ func (h *accountHealth) cleanupExpiredCooldownLocked(accountID string) {
 	rateLimited := h.limited[accountID]
 	delete(h.cooldown, accountID)
 	delete(h.limited, accountID)
+	delete(h.authFail, accountID)
 	if rateLimited {
 		delete(h.calls, accountID)
 	}
@@ -206,7 +207,7 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 			cooldown = 2 * time.Minute
 		}
 		h.cooldown[accountID] = time.Now().Add(cooldown)
-		delete(h.authFail, accountID)
+		h.authFail[accountID] = true
 		delete(h.limited, accountID)
 		return
 	}
@@ -264,10 +265,10 @@ func (h *accountHealth) MarkSuccess(accountID string) {
 func (h *accountHealth) Available(accountID string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.cleanupExpiredCooldownLocked(accountID)
 	if h.authFail[accountID] {
 		return false
 	}
-	h.cleanupExpiredCooldownLocked(accountID)
 	if until, ok := h.cooldown[accountID]; ok && time.Now().Before(until) {
 		return false
 	}

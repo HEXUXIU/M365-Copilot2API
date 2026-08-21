@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"m365-copilot2api/internal/outbound"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ type M365CloudClient struct {
 	accessToken  string
 	expiresAt    time.Time
 	httpClient   *http.Client
+	onRefresh    func(newRefreshToken string)
 }
 
 func NewM365CloudClient(clientID, tenantID, refreshToken string) *M365CloudClient {
@@ -27,7 +29,7 @@ func NewM365CloudClient(clientID, tenantID, refreshToken string) *M365CloudClien
 		clientID:     clientID,
 		tenantID:     tenantID,
 		refreshToken: refreshToken,
-		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		httpClient:   outbound.HTTPClient(),
 	}
 }
 
@@ -40,14 +42,6 @@ func (c *M365CloudClient) updateRefreshToken(newToken string) {
 }
 
 func (c *M365CloudClient) getAccessToken() (string, error) {
-	c.mu.Lock()
-	if c.accessToken != "" && time.Now().Before(c.expiresAt.Add(-2*time.Minute)) {
-		token := c.accessToken
-		c.mu.Unlock()
-		return token, nil
-	}
-	c.mu.Unlock()
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -93,6 +87,9 @@ func (c *M365CloudClient) getAccessToken() (string, error) {
 	c.expiresAt = time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
 	if result.RefreshToken != "" {
 		c.refreshToken = result.RefreshToken
+		if c.onRefresh != nil {
+			c.onRefresh(result.RefreshToken)
+		}
 	}
 
 	log.Printf("[m365-cloud] token refreshed, expires in %ds", result.ExpiresIn)

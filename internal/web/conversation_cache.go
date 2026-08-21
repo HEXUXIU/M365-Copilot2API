@@ -91,6 +91,16 @@ func systemPromptHash(messages []oaiMsg) string {
 			return hex.EncodeToString(h[:])
 		}
 	}
+	for _, m := range messages {
+		if m.Role == "user" {
+			text := contentToString(m.Content)
+			if len(text) > 200 {
+				text = text[:200]
+			}
+			h := sha256.Sum256([]byte("user:" + text))
+			return hex.EncodeToString(h[:])
+		}
+	}
 	return ""
 }
 
@@ -108,12 +118,17 @@ func (s *Server) storeConvCache(accID, model string, res chathub.Result, tone st
 		return
 	}
 	cached := s.convCache.Lookup(accID, model)
+	newHash := systemPromptHash(messages)
+	if cached != nil && cached.ConversationID == res.ConversationID && cached.SystemPrompt != newHash {
+		s.convCache.Invalidate(accID, model)
+		return
+	}
 	entry := &cachedConversation{
 		ConversationID: res.ConversationID,
 		SessionID:      res.SessionID,
 		Tone:           tone,
 		MessageCount:   len(messages),
-		SystemPrompt:   systemPromptHash(messages),
+		SystemPrompt:   newHash,
 	}
 	if cached != nil && cached.ConversationID == res.ConversationID {
 		entry.TurnCount = cached.TurnCount + 1

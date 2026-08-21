@@ -190,9 +190,12 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .copy-field .form-input{flex:1;font-family:SF Mono,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
 
 /* Modal */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:50}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.3);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:50;padding:16px;overflow-y:auto}
 .modal-overlay.open{display:flex}
-.modal{width:min(480px,calc(100vw - 32px));background:var(--surface-solid);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:28px;animation:scaleIn .25s var(--ease-out)}
+.modal{width:min(480px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow-y:auto;background:var(--surface-solid);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);box-shadow:var(--shadow-lg);padding:28px;animation:scaleIn .25s var(--ease-out)}
+.modal-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}
+.modal-close{background:none;border:none;color:var(--muted);cursor:pointer;padding:4px;border-radius:6px;transition:background .15s}
+.modal-close:hover{background:var(--surface-hover)}
 .modal h3{font-size:17px;font-weight:700;letter-spacing:-0.01em;margin-bottom:4px}
 .modal .subtitle{font-size:12px;color:var(--muted);margin-bottom:16px}
 .modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
@@ -274,6 +277,9 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .uke-file pre{margin:0;padding:12px;font-family:SF Mono,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;line-height:1.65;white-space:pre-wrap;word-break:break-all;color:var(--text);max-height:240px;overflow:auto}
 .uke-file pre .c{color:var(--muted)}
 .modal.wide{width:min(720px,calc(100vw - 32px))}
+.proxy-select{width:100%;max-width:160px;font-size:11px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--text);outline:0;cursor:pointer;font-family:inherit}
+.proxy-select:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(0,113,227,0.1)}
+@media(prefers-color-scheme:dark){.proxy-select{background:var(--surface-solid)}}
 </style>
 </head>
 <body>
@@ -390,27 +396,27 @@ if (response.output_text) {
         <div class="usage-overview">
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="flame"></i> Last 24 hours</div>
-            <span class="usage-overview-value" id="ov24hTok">0<small>tokens</small></span>
+            <span class="usage-overview-value"><span id="ov24hTok">0</span><small>tokens</small></span>
             <span class="usage-overview-sub" id="ov24hReq">0 requests</span>
           </div>
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="trending-up"></i> All-time usage</div>
-            <span class="usage-overview-value" id="ovTotalTok">0<small>tokens</small></span>
+            <span class="usage-overview-value"><span id="ovTotalTok">0</span><small>tokens</small></span>
             <span class="usage-overview-sub" id="ovTotalReq">0 requests</span>
           </div>
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="activity"></i> Request count</div>
-            <span class="usage-overview-value" id="ovTodayTok">0<small>tokens</small></span>
-            <span class="usage-overview-sub" id="ovTodayReq">0 requests today</span>
+            <span class="usage-overview-value"><span id="ovTodayReq">0</span><small>requests</small></span>
+            <span class="usage-overview-sub" id="ovTodayTok">0 tokens today</span>
           </div>
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="piggy-bank"></i> Cache hits</div>
-            <span class="usage-overview-value" id="ovCacheHits">0<small>tokens</small></span>
+            <span class="usage-overview-value"><span id="ovCacheHits">0</span><small>hits</small></span>
             <span class="usage-overview-sub" id="ovCacheRate">Hit rate 0%</span>
           </div>
         </div>
         <div class="stats">
-          <div class="stat"><span class="stat-label">Total sessions</span><span class="stat-value" id="stat-sessions">0</span><span class="stat-unit">total</span></div>
+          <div class="stat"><span class="stat-label">Total requests</span><span class="stat-value" id="stat-sessions">0</span><span class="stat-unit">total</span></div>
           <div class="stat"><span class="stat-label">Cache hits</span><span class="stat-value" id="stat-hits">0</span><span class="stat-unit">hits</span></div>
           <div class="stat"><span class="stat-label">Hit rate</span><span class="stat-value" id="stat-rate">0</span><span class="stat-unit">%</span></div>
           <div class="stat"><span class="stat-label">Tokens saved</span><span class="stat-value" id="stat-saved">0</span><span class="stat-unit" style="font-size:12px">saved</span></div>
@@ -537,7 +543,7 @@ if (response.output_text) {
               </div>
             </div>
           </div>
-          <table class="table"><thead><tr><th>Account</th><th>Calls</th><th>Status</th><th>Updated</th><th>Scheduling</th><th>Proxy</th><th>Actions</th></tr></thead><tbody id="accountRows"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody></table>
+          <table class="table"><thead><tr><th>Account</th><th>Calls</th><th>Status</th><th>Updated</th><th>Priority</th><th>Scheduling</th><th>Proxy</th><th>Actions</th></tr></thead><tbody id="accountRows"><tr><td colspan="8" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
@@ -549,7 +555,7 @@ if (response.output_text) {
         </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Key list</span><span style="font-size:11px;color:var(--muted)">The full key is shown only once after creation</span></div>
-          <table class="table"><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Status</th><th>Last used</th><th style="text-align:right">Actions</th></tr></thead><tbody id="keyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
+          <table class="table"><thead><tr><th>Name</th><th>Prefix</th><th>Tokens (7d)</th><th>Created</th><th>Status</th><th>Last used</th><th style="text-align:right">Actions</th></tr></thead><tbody id="keyRows"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
@@ -570,8 +576,10 @@ if (response.output_text) {
           <div class="term-body" id="termBody"></div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">Conversation list</span></div>
-          <table class="table"><thead><tr><th>Name</th><th>Messages</th><th>Account</th><th>Last updated</th><th>Actions</th></tr></thead><tbody id="convRows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table>
+          <div class="card-head"><span class="card-title">Conversation list</span>
+            <select id="convKeyFilter" style="width:190px;padding:6px 10px;font-size:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);color:var(--fg)" aria-label="Filter by API key" onchange="setConvKeyFilter(this.value)"><option value="">All keys</option></select>
+          </div>
+          <table class="table"><thead><tr><th>Name</th><th>Messages</th><th>Account</th><th>API Key</th><th>Last updated</th><th>Actions</th></tr></thead><tbody id="convRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
@@ -622,9 +630,14 @@ if (response.output_text) {
 <!-- Key Modal -->
 <div class="modal-overlay" id="keyModal">
   <div class="modal">
-    <h3>Create API key</h3>
-    <p class="subtitle">此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。</p>
-    <form onsubmit="createKey(event)">
+    <div class="modal-head">
+      <div>
+        <h3>Create API key</h3>
+        <p class="subtitle">此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。</p>
+      </div>
+      <button type="button" class="modal-close" onclick="closeKeyModal()" aria-label="Close" title="Close"><i data-lucide="x" style="width:15px;height:15px"></i></button>
+    </div>
+    <form id="keyForm" onsubmit="createKey(event)">
       <div class="form-group">
         <label class="form-label">Name</label>
         <input class="form-input" id="keyName" value="default" autofocus>
@@ -637,6 +650,7 @@ if (response.output_text) {
     </form>
     <div id="keyResult" style="display:none">
       <div class="highlight-box"><b>Copy and save this key now</b><div class="copy-field"><input class="form-input" id="keyValue" readonly><button class="btn-sm btn" onclick="copyKey()">Copy</button></div></div>
+      <div class="modal-actions"><button type="button" class="btn primary" onclick="closeKeyModal()">Close</button></div>
     </div>
   </div>
 </div>
@@ -677,6 +691,45 @@ if (response.output_text) {
   </div>
 </div>
 
+<div class="modal-overlay" id="keyUsageModal">
+  <div class="modal wide">
+    <div class="modal-head">
+      <div>
+        <h3>Usage detail</h3>
+        <p class="subtitle" id="kuKeyName"></p>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="seg" id="kuRange">
+          <button data-days="7" class="active" onclick="setKuRange(7)">7 days</button>
+          <button data-days="30" onclick="setKuRange(30)">30 days</button>
+        </div>
+        <button class="modal-close" onclick="closeKeyUsage()"><i data-lucide="x" style="width:15px;height:15px"></i></button>
+      </div>
+    </div>
+    <div class="stats" style="margin-bottom:14px">
+      <div class="stat"><span class="stat-label">Total requests</span><span class="stat-value" id="ku-req">0</span><span class="stat-sub" id="ku-req-sub"></span></div>
+      <div class="stat"><span class="stat-label">Total tokens</span><span class="stat-value" id="ku-tok">0</span><span class="stat-sub" id="ku-tok-sub"></span></div>
+      <div class="stat"><span class="stat-label">Cached tokens</span><span class="stat-value" id="ku-cache">0</span><span class="stat-unit">tokens</span></div>
+      <div class="stat"><span class="stat-label">Average latency</span><span class="stat-value" id="ku-ms">0</span><span class="stat-unit">ms</span></div>
+    </div>
+    <div class="chart" style="margin-bottom:14px">
+      <div class="chart-title">Token usage trend</div>
+      <div id="kuTrendWrap"></div>
+    </div>
+    <div class="chart-grid">
+      <div class="chart">
+        <div class="chart-title">Model distribution</div>
+        <div id="kuModels"></div>
+      </div>
+      <div class="chart">
+        <div class="chart-title">Endpoint distribution</div>
+        <div id="kuEndpoints"></div>
+      </div>
+    </div>
+    <div id="kuStatus" class="chart-empty" style="display:none"></div>
+  </div>
+</div>
+
 <div class="notice" id="notice" style="display:none"></div>
 
 <script>
@@ -693,6 +746,7 @@ const localeText={
   'Overview': {'zh-CN':'概览','zh-TW':'總覽','ja':'概要','ko':'개요','es':'Resumen','fr':'Aperçu','de':'Übersicht','pt-BR':'Visão geral','ru':'Обзор','ar':'نظرة عامة'},
   'Dashboard': {'zh-CN':'仪表盘','zh-TW':'儀表板','ja':'ダッシュボード','ko':'대시보드','es':'Panel de control','fr':'Tableau de bord','de':'Dashboard','pt-BR':'Painel','ru':'Панель управления','ar':'لوحة المعلومات'},
   'Usage': {'zh-CN':'用量','zh-TW':'用量','ja':'使用量','ko':'사용량','es':'Uso','fr':'Utilisation','de':'Nutzung','pt-BR':'Uso','ru':'Использование','ar':'الاستخدام'},
+  'Usage detail': {'zh-CN':'用量详情','zh-TW':'用量詳情','ja':'使用量の詳細','ko':'사용량 상세','es':'Detalle de uso','fr':'Détails de l\'utilisation','de':'Nutzungsdetails','pt-BR':'Detalhes de uso','ru':'Детали использования','ar':'تفاصيل الاستخدام'},
   'Management': {'zh-CN':'管理','zh-TW':'管理','ja':'管理','ko':'관리','es':'Gestión','fr':'Gestion','de':'Verwaltung','pt-BR':'Gerenciamento','ru':'Управление','ar':'الإدارة'},
   'Accounts': {'zh-CN':'账号','zh-TW':'帳號','ja':'アカウント','ko':'계정','es':'Cuentas','fr':'Comptes','de':'Konten','pt-BR':'Contas','ru':'Аккаунты','ar':'الحسابات'},
   'API Keys': {'zh-CN':'API Keys','zh-TW':'API Keys','ja':'API キー','ko':'API 키','es':'Claves API','fr':'Clés API','de':'API-Schlüssel','pt-BR':'Chaves API','ru':'API-ключи','ar':'مفاتيح API'},
@@ -716,6 +770,7 @@ const localeText={
   'First API request': {'zh-CN':'首个 API 请求','zh-TW':'首個 API 要求','ja':'最初の API リクエスト','ko':'첫 API 요청','es':'Primera solicitud API','fr':'Première requête API','de':'Erste API-Anfrage','pt-BR':'Primeira solicitação API','ru':'Первый API-запрос','ar':'أول طلب API'},
   'OpenAI-compatible API': {'zh-CN':'OpenAI 兼容接口','zh-TW':'OpenAI 相容介面','ja':'OpenAI 互換 API','ko':'OpenAI 호환 API','es':'API compatible con OpenAI','fr':'API compatible OpenAI','de':'OpenAI-kompatible API','pt-BR':'API compatível com OpenAI','ru':'API, совместимый с OpenAI','ar':'واجهة متوافقة مع OpenAI'},
   'Copy': {'zh-CN':'复制','zh-TW':'複製','ja':'コピー','ko':'복사','es':'Copiar','fr':'Copier','de':'Kopieren','pt-BR':'Copiar','ru':'Копировать','ar':'نسخ'},
+  'Copy failed': {'zh-CN':'复制失败','zh-TW':'複製失敗','ja':'コピーに失敗しました','ko':'복사 실패','es':'Error al copiar','fr':'Échec de la copie','de':'Kopieren fehlgeschlagen','pt-BR':'Falha ao copiar','ru':'Не удалось скопировать','ar':'فشل النسخ'},
   'Gateway': {'zh-CN':'网关','zh-TW':'閘道','ja':'ゲートウェイ','ko':'게이트웨이','es':'Puerta de enlace','fr':'Passerelle','de':'Gateway','pt-BR':'Gateway','ru':'Шлюз','ar':'البوابة'},
   'Online': {'zh-CN':'在线','zh-TW':'線上','ja':'オンライン','ko':'온라인','es':'En línea','fr':'En ligne','de':'Online','pt-BR':'Online','ru':'В сети','ar':'متصل'},
   'Available accounts': {'zh-CN':'可用账号','zh-TW':'可用帳號','ja':'利用可能なアカウント','ko':'사용 가능한 계정','es':'Cuentas disponibles','fr':'Comptes disponibles','de':'Verfügbare Konten','pt-BR':'Contas disponíveis','ru':'Доступные аккаунты','ar':'الحسابات المتاحة'},
@@ -727,6 +782,8 @@ const localeText={
   'Total sessions': {'zh-CN':'总会话数','zh-TW':'總會話數','ja':'セッション総数','ko':'총 세션 수','es':'Sesiones totales','fr':'Sessions totales','de':'Gesamtsitzungen','pt-BR':'Sessões totais','ru':'Всего сессий','ar':'إجمالي الجلسات'},
   'total': {'zh-CN':'个','zh-TW':'個','ja':'件','ko':'개','es':'total','fr':'total','de':'gesamt','pt-BR':'total','ru':'шт.','ar':'إجمالي'},
   'hits': {'zh-CN':'次','zh-TW':'次','ja':'回','ko':'회','es':'aciertos','fr':'hits','de':'Treffer','pt-BR':'acertos','ru':'раз','ar':'مرة'},
+  'requests': {'zh-CN':'次请求','zh-TW':'次要求','ja':'リクエスト','ko':'요청','es':'solicitudes','fr':'requêtes','de':'Anfragen','pt-BR':'solicitações','ru':'запросов','ar':'طلب'},
+  'tokens': {'zh-CN':'Token','zh-TW':'Token','ja':'トークン','ko':'토큰','es':'tokens','fr':'tokens','de':'Tokens','pt-BR':'tokens','ru':'токенов','ar':'رمز'},
   'Hit rate': {'zh-CN':'命中率','zh-TW':'命中率','ja':'ヒット率','ko':'적중률','es':'Tasa de aciertos','fr':'Taux de hits','de':'Trefferquote','pt-BR':'Taxa de acertos','ru':'Частота попаданий','ar':'معدل الإصابات'},
   'Tokens saved': {'zh-CN':'节省 Token','zh-TW':'節省 Token','ja':'節約されたトークン','ko':'절약된 토큰','es':'Tokens ahorrados','fr':'Tokens économisés','de':'Gesparte Tokens','pt-BR':'Tokens economizados','ru':'Сэкономленные токены','ar':'الرموز الموفرة'},
   'saved': {'zh-CN':'节省','zh-TW':'節省','ja':'節約','ko':'절약','es':'ahorrados','fr':'économisés','de':'gespart','pt-BR':'economizados','ru':'сэкономлено','ar':'تم التوفير'},
@@ -860,8 +917,107 @@ const localeText={
   'Not checked': {'zh-CN':'未检测','zh-TW':'未檢測','ja':'未確認','ko':'확인 안 됨','es':'Sin comprobar','fr':'Non vérifié','de':'Nicht geprüft','pt-BR':'Não verificado','ru':'Не проверено','ar':'لم يتم التحقق'},
   'Cooling down': {'zh-CN':'冷却中','zh-TW':'冷卻中','ja':'クールダウン中','ko':'쿨다운 중','es':'Enfriando','fr':'En attente','de':'Wird abgekühlt','pt-BR':'Resfriando','ru':'Ожидание','ar':'جارٍ التهدئة'},
   'Testing…': {'zh-CN':'测试中…','zh-TW':'測試中…','ja':'テスト中…','ko':'테스트 중…','es':'Probando…','fr':'Test en cours…','de':'Wird getestet…','pt-BR':'Testando…','ru':'Тестирование…','ar':'جارٍ الاختبار…'},
-  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'}
+  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'},
+  'curl copied': {'zh-CN':'curl 已复制','zh-TW':'curl 已複製','ja':'curl をコピーしました','ko':'curl 복사됨','es':'curl copiado','fr':'curl copié','de':'curl kopiert','pt-BR':'curl copiado','ru':'curl скопирован','ar':'تم نسخ curl'},
+  'Login successful': {'zh-CN':'登录成功','zh-TW':'登入成功','ja':'ログイン成功','ko':'로그인 성공','es':'Inicio de sesión exitoso','fr':'Connexion réussie','de':'Anmeldung erfolgreich','pt-BR':'Login bem-sucedido','ru':'Вход выполнен','ar':'تسجيل الدخول ناجح'},
+  'Are you sure you want to delete this account?': {'zh-CN':'确定删除此账号？','zh-TW':'確定刪除此帳號？','ja':'このアカウントを削除しますか？','ko':'이 계정을 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar esta cuenta?','fr':'Voulez-vous vraiment supprimer ce compte ?','de':'Möchten Sie dieses Konto wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir esta conta?','ru':'Вы уверены, что хотите удалить этот аккаунт?','ar':'هل أنت متأكد من حذف هذا الحساب؟'},
+  'Deleted': {'zh-CN':'已删除','zh-TW':'已刪除','ja':'削除しました','ko':'삭제됨','es':'Eliminado','fr':'Supprimé','de':'Gelöscht','pt-BR':'Excluído','ru':'Удалено','ar':'تم الحذف'},
+  'Popup blocked by browser': {'zh-CN':'弹出窗口被浏览器拦截','zh-TW':'彈出視窗被瀏覽器攔截','ja':'ポップアップがブラウザにブロックされました','ko':'팝업이 브라우저에 차단됨','es':'Ventana emergente bloqueada por el navegador','fr':'Fenêtre contextuelle bloquée par le navigateur','de':'Popup vom Browser blockiert','pt-BR':'Pop-up bloqueado pelo navegador','ru':'Всплывающее окно заблокировано браузером','ar':'تم حظر النافذة المنبثقة بواسطة المتصفح'},
+  'Please allow popups for this site, then click "Start authorization" again.': {'zh-CN':'请允许此网站的弹出窗口，然后重新点击"开始授权"。','zh-TW':'請允許此網站的彈出視窗，然後重新點擊「開始授權」。','ja':'このサイトのポップアップを許可してから、「承認を開始」を再度クリックしてください。','ko':'이 사이트의 팝업을 허용한 후 "인증 시작"을 다시 클릭하세요.','es':'Permita las ventanas emergentes de este sitio y haga clic en "Iniciar autorización" de nuevo.','fr':'Autorisez les fenêtres contextuelles de ce site, puis cliquez à nouveau sur « Démarrer l\'autorisation ».','de':'Erlauben Sie Popups für diese Seite und klicken Sie erneut auf „Autorisierung starten".','pt-BR':'Permita pop-ups para este site e clique em "Iniciar autorização" novamente.','ru':'Разрешите всплывающие окна для этого сайта и снова нажмите «Начать авторизацию».','ar':'اسمح بالنوافذ المنبثقة لهذا الموقع، ثم انقر "بدء التفويض" مرة أخرى.'},
+  'Authorization page opened in new window': {'zh-CN':'授权页面已在新窗口打开','zh-TW':'授權頁面已在新視窗開啟','ja':'承認ページが新しいウィンドウで開きました','ko':'인증 페이지가 새 창에서 열렸습니다','es':'Página de autorización abierta en nueva ventana','fr':'Page d\'autorisation ouverte dans une nouvelle fenêtre','de':'Autorisierungsseite in neuem Fenster geöffnet','pt-BR':'Página de autorização aberta em nova janela','ru':'Страница авторизации открыта в новом окне','ar':'تم فتح صفحة التفويض في نافذة جديدة'},
+  'Please complete login in the popup. After login, the page may show blank or error — this is normal. Copy the <b>full URL</b> from the popup address bar and paste it into the "Callback URL" input below.': {'zh-CN':'请在弹出窗口中完成登录。登录后弹出页会显示空白或错误——这是正常的。复制弹出页地址栏的<b>完整网址</b>，粘贴到下方"回调地址"输入框。','zh-TW':'請在彈出視窗中完成登入。登入後彈出頁會顯示空白或錯誤——這是正常的。複製彈出頁網址列的<b>完整網址</b>，貼上到下方「回呼位址」輸入框。','ja':'ポップアップでログインを完了してください。ログイン後、空白やエラーが表示されますが—これは正常です。ポップアップのアドレスバーから<b>完全な URL</b> をコピーし、下の「コールバック URL」入力欄に貼り付けてください。','ko':'팝업 창에서 로그인을 완료하세요. 로그인 후 빈 페이지나 오류가 표시되지만 — 이는 정상입니다. 팝업 주소창의 <b>전체 URL</b>을 복사하여 아래 "콜백 URL" 입력란에 붙여넣으세요.','es':'Complete el inicio de sesión en la ventana emergente. Después, la página puede estar en blanco o mostrar un error — esto es normal. Copie la <b>URL completa</b> de la barra de direcciones y péguela en el campo "URL de devolución" de abajo.','fr':'Connectez-vous dans la fenêtre contextuelle. Après, la page peut être vide ou afficher une erreur — c\'est normal. Copiez l\'<b>URL complète</b> depuis la barre d\'adresse et collez-la dans le champ « URL de rappel » ci-dessous.','de':'Schließen Sie die Anmeldung im Popup ab. Danach kann die Seite leer sein oder einen Fehler anzeigen — das ist normal. Kopieren Sie die <b>vollständige URL</b> aus der Adressleiste und fügen Sie sie in das Feld „Callback-URL" unten ein.','pt-BR':'Complete o login na janela pop-up. Após, a página pode ficar em branco ou mostrar erro — isso é normal. Copie a <b>URL completa</b> da barra de endereços e cole no campo "URL de retorno" abaixo.','ru':'Войдите во всплывающем окне. После входа страница может быть пустой или с ошибкой — это нормально. Скопируйте <b>полный URL</b> из адресной строки и вставьте в поле «URL обратного вызова» ниже.','ar':'أكمل تسجيل الدخول في النافذة المنبثقة. بعد ذلك، قد تكون الصفحة فارغة أو خطأ — هذا طبيعي. انسخ <b>عنوان URL الكامل</b> من شريط العنوان والصقه في حقل "عنوان URL لإعادة التوجيه" أدناه.'},
+  'Paste the full callback URL from the popup address bar…': {'zh-CN':'粘贴弹出页地址栏中的完整回调地址…','zh-TW':'貼上彈出頁網址列中的完整回呼位址…','ja':'ポップアップのアドレスバーから完全なコールバック URL を貼り付けてください…','ko':'팝업 주소창의 전체 콜백 URL을 붙여넣으세요…','es':'Pegue la URL de devolución completa de la barra de direcciones de la ventana emergente…','fr':'Collez l\'URL de rappel complète depuis la barre d\'adresse de la fenêtre contextuelle…','de':'Vollständige Callback-URL aus der Popup-Adressleiste einfügen…','pt-BR':'Cole a URL de retorno completa da barra de endereços do pop-up…','ru':'Вставьте полный URL обратного вызова из адресной строки всплывающего окна…','ar':'الصق عنوان URL الكامل لإعادة التوجيه من شريط عنوان النافذة المنبثقة…'},
+  'Authorization timed out, please start over.': {'zh-CN':'授权超时，请重新开始授权。','zh-TW':'授權逾時，請重新開始授權。','ja':'承認がタイムアウトしました。最初からやり直してください。','ko':'인증 시간이 초과되었습니다. 다시 시작하세요.','es':'Autorización agotada, por favor vuelva a empezar.','fr':'Autorisation expirée, veuillez recommencer.','de':'Autorisierung abgelaufen, bitte starten Sie erneut.','pt-BR':'Autorização expirada, por favor comece novamente.','ru':'Время авторизации истекло, начните заново.','ar':'انتهت مهلة التفويض، يرجى البدء من جديد.'},
+  'Authorization window was closed before completion.': {'zh-CN':'授权窗口在完成前已关闭。','zh-TW':'授權視窗在完成前已關閉。','ja':'承認ウィンドウが完了前に閉じられました。','ko':'인증 창이 완료 전에 닫혔습니다.','es':'La ventana de autorización se cerró antes de completarse.','fr':'La fenêtre d\'autorisation a été fermée avant la fin.','de':'Das Autorisierungsfenster wurde vor Abschluss geschlossen.','pt-BR':'A janela de autorização foi fechada antes da conclusão.','ru':'Окно авторизации закрыто до завершения.','ar':'تم إغلاق نافذة التفويض قبل الاكتمال.'},
+  'Authorization successful': {'zh-CN':'授权成功','zh-TW':'授權成功','ja':'承認成功','ko':'인증 성공','es':'Autorización exitosa','fr':'Autorisation réussie','de':'Autorisierung erfolgreich','pt-BR':'Autorização bem-sucedida','ru':'Авторизация успешна','ar':'تفويض ناجح'},
+  'Account has been added to the pool.': {'zh-CN':'账号已加入账号池。','zh-TW':'帳號已加入帳號池。','ja':'アカウントがプールに追加されました。','ko':'계정이 풀에 추가되었습니다.','es':'La cuenta se ha añadido al grupo.','fr':'Le compte a été ajouté au pool.','de':'Das Konto wurde zum Pool hinzugefügt.','pt-BR':'A conta foi adicionada ao pool.','ru':'Аккаунт добавлен в пул.','ar':'تمت إضافة الحساب إلى المجموعة.'},
+  'Authorization failed or expired': {'zh-CN':'授权失败或已过期','zh-TW':'授權失敗或已過期','ja':'承認に失敗したか期限切れです','ko':'인증 실패 또는 만료됨','es':'Autorización fallida o expirada','fr':'Autorisation échouée ou expirée','de':'Autorisierung fehlgeschlagen oder abgelaufen','pt-BR':'Autorização falhou ou expirou','ru':'Авторизация не удалась или истекла','ar':'فشل التفويض أو انتهت صلاحيته'},
+  'Please paste the callback URL': {'zh-CN':'请粘贴回调地址','zh-TW':'請貼上回呼位址','ja':'コールバック URL を貼り付けてください','ko':'콜백 URL을 붙여넣으세요','es':'Pegue la URL de devolución','fr':'Collez l\'URL de rappel','de':'Callback-URL einfügen','pt-BR':'Cole a URL de retorno','ru':'Вставьте URL обратного вызова','ar':'الصق عنوان URL لإعادة التوجيه'},
+  'Name cannot be empty': {'zh-CN':'名称不能为空','zh-TW':'名稱不能為空','ja':'名前は空にできません','ko':'이름은 비워둘 수 없습니다','es':'El nombre no puede estar vacío','fr':'Le nom ne peut pas être vide','de':'Der Name darf nicht leer sein','pt-BR':'O nome não pode estar vazio','ru':'Имя не может быть пустым','ar':'لا يمكن أن يكون الاسم فارغًا'},
+  'Key updated': {'zh-CN':'已更新','zh-TW':'已更新','ja':'更新しました','ko':'업데이트됨','es':'Actualizado','fr':'Mis à jour','de':'Aktualisiert','pt-BR':'Atualizado','ru':'Обновлено','ar':'تم التحديث'},
+  'Copied': {'zh-CN':'已复制','zh-TW':'已複製','ja':'コピーしました','ko':'복사됨','es':'Copiado','fr':'Copié','de':'Kopiert','pt-BR':'Copiado','ru':'Скопировано','ar':'تم النسخ'},
+  'Are you sure you want to delete this key?': {'zh-CN':'确定删除此密钥？','zh-TW':'確定刪除此金鑰？','ja':'このキーを削除しますか？','ko':'이 키를 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar esta clave?','fr':'Voulez-vous vraiment supprimer cette clé ?','de':'Möchten Sie diesen Schlüssel wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir esta chave?','ru':'Вы уверены, что хотите удалить этот ключ?','ar':'هل أنت متأكد من حذف هذا المفتاح؟'},
+  'Key not found': {'zh-CN':'找不到密钥','zh-TW':'找不到金鑰','ja':'キーが見つかりません','ko':'키를 찾을 수 없음','es':'Clave no encontrada','fr':'Clé introuvable','de':'Schlüssel nicht gefunden','pt-BR':'Chave não encontrada','ru':'Ключ не найден','ar':'لم يتم العثور على المفتاح'},
+  'Current key': {'zh-CN':'当前密钥','zh-TW':'目前金鑰','ja':'現在のキー','ko':'현재 키','es':'Clave actual','fr':'Clé actuelle','de':'Aktueller Schlüssel','pt-BR':'Chave atual','ru':'Текущий ключ','ar':'المفتاح الحالي'},
+  'Full key unavailable': {'zh-CN':'完整密钥不可用','zh-TW':'完整金鑰不可用','ja':'完全なキーは利用できません','ko':'전체 키를 사용할 수 없음','es':'Clave completa no disponible','fr':'Clé complète indisponible','de':'Vollständiger Schlüssel nicht verfügbar','pt-BR':'Chave completa indisponível','ru':'Полный ключ недоступен','ar':'المفتاح الكامل غير متاح'},
+  'Unnamed conversation': {'zh-CN':'未命名对话','zh-TW':'未命名對話','ja':'名前なしの会話','ko':'이름 없는 대화','es':'Conversación sin nombre','fr':'Conversation sans nom','de':'Unbenannte Unterhaltung','pt-BR':'Conversa sem nome','ru':'Безымянный разговор','ar':'محادثة بدون اسم'},
+  'Are you sure you want to delete this conversation?': {'zh-CN':'确定删除此对话？','zh-TW':'確定刪除此對話？','ja':'この会話を削除しますか？','ko':'이 대화를 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar esta conversación?','fr':'Voulez-vous vraiment supprimer cette conversation ?','de':'Möchten Sie diese Unterhaltung wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir esta conversa?','ru':'Вы уверены, что хотите удалить этот разговор?','ar':'هل أنت متأكد من حذف هذه المحادثة؟'},
+  'Are you sure you want to clean up all conversations?': {'zh-CN':'确定清理所有对话？','zh-TW':'確定清理全部對話？','ja':'すべての会話をクリーンアップしますか？','ko':'모든 대화를 정리하시겠습니까？','es':'¿Está seguro de que desea limpiar todas las conversaciones?','fr':'Voulez-vous vraiment nettoyer toutes les conversations ?','de':'Möchten Sie wirklich alle Unterhaltungen bereinigen?','pt-BR':'Tem certeza de que deseja limpar todas as conversas?','ru':'Вы уверены, что хотите очистить все разговоры?','ar':'هل أنت متأكد من تنظيف جميع المحادثات؟'},
+  'Each conversation will be deleted individually and logged in the terminal.': {'zh-CN':'每条对话将逐一删除并在终端记录日志。','zh-TW':'每條對話將逐一刪除並在終端記錄日誌。','ja':'各会話は個別に削除され、ターミナルに記録されます。','ko':'각 대화는 개별적으로 삭제되며 터미널에 기록됩니다.','es':'Cada conversación se eliminará individualmente y se registrará en la terminal.','fr':'Chaque conversation sera supprimée individuellement et journalisée dans le terminal.','de':'Jede Unterhaltung wird einzeln gelöscht und im Terminal protokolliert.','pt-BR':'Cada conversa será excluída individualmente e registrada no terminal.','ru':'Каждый разговор будет удалён по одному и записан в терминал.','ar':'سيتم حذف كل محادثة على حدة وتسجيلها في الطرفية.'},
+  'Starting cleanup of all conversations…': {'zh-CN':'开始清理所有对话…','zh-TW':'開始清理全部對話…','ja':'すべての会話のクリーンアップを開始…','ko':'모든 대화 정리 시작…','es':'Iniciando limpieza de todas las conversaciones…','fr':'Début du nettoyage de toutes les conversations…','de':'Bereinigung aller Unterhaltungen gestartet…','pt-BR':'Iniciando limpeza de todas as conversas…','ru':'Начинаем очистку всех разговоров…','ar':'جارٍ بدء تنظيف جميع المحادثات…'},
+  'Failed to fetch conversation list': {'zh-CN':'获取对话列表失败','zh-TW':'取得對話列表失敗','ja':'会話リストの取得に失敗','ko':'대화 목록 가져오기 실패','es':'Error al obtener la lista de conversaciones','fr':'Échec de récupération de la liste des conversations','de':'Fehler beim Abrufen der Unterhaltungsliste','pt-BR':'Falha ao buscar lista de conversas','ru':'Не удалось получить список разговоров','ar':'فشل في جلب قائمة المحادثات'},
+  'Unnamed': {'zh-CN':'未命名','zh-TW':'未命名','ja':'名前なし','ko':'이름 없음','es':'Sin nombre','fr':'Sans nom','de':'Unbenannt','pt-BR':'Sem nome','ru':'Безымянный','ar':'بدون اسم'},
+  'Cleanup complete': {'zh-CN':'清理完成','zh-TW':'清理完成','ja':'クリーンアップ完了','ko':'정리 완료','es':'Limpieza completa','fr':'Nettoyage terminé','de':'Bereinigung abgeschlossen','pt-BR':'Limpeza concluída','ru':'Очистка завершена','ar':'اكتمل التنظيف'},
+  'Check': {'zh-CN':'检测','zh-TW':'檢測','ja':'チェック','ko':'확인','es':'Comprobar','fr':'Vérifier','de':'Prüfen','pt-BR':'Verificar','ru':'Проверить','ar':'فحص'},
+  'Please enter proxy address': {'zh-CN':'请输入代理地址','zh-TW':'請輸入代理位址','ja':'プロキシアドレスを入力してください','ko':'프록시 주소를 입력하세요','es':'Introduzca la dirección del proxy','fr':'Saisissez l\'adresse du proxy','de':'Proxy-Adresse eingeben','pt-BR':'Digite o endereço do proxy','ru':'Введите адрес прокси','ar':'أدخل عنوان البروكسي'},
+  'Are you sure you want to delete this proxy?': {'zh-CN':'确定删除此代理？','zh-TW':'確定刪除此代理？','ja':'このプロキシを削除しますか？','ko':'이 프록시를 삭제하시겠습니까？','es':'¿Está seguro de que desea eliminar este proxy?','fr':'Voulez-vous vraiment supprimer ce proxy ?','de':'Möchten Sie diesen Proxy wirklich löschen?','pt-BR':'Tem certeza de que deseja excluir este proxy?','ru':'Вы уверены, что хотите удалить этот прокси?','ar':'هل أنت متأكد من حذف هذا البروكسي؟'},
+  'Connection failed': {'zh-CN':'连接失败','zh-TW':'連線失敗','ja':'接続失敗','ko':'연결 실패','es':'Conexión fallida','fr':'Échec de connexion','de':'Verbindung fehlgeschlagen','pt-BR':'Conexão falhou','ru':'Ошибка соединения','ar':'فشل الاتصال'},
+  'Checking all proxies…': {'zh-CN':'正在检测所有代理…','zh-TW':'正在檢測所有代理…','ja':'すべてのプロキシをチェック中…','ko':'모든 프록시 확인 중…','es':'Comprobando todos los proxies…','fr':'Vérification de tous les proxys…','de':'Alle Proxys werden geprüft…','pt-BR':'Verificando todos os proxies…','ru':'Проверка всех прокси…','ar':'جارٍ فحص جميع البروكسي…'},
+  'Health check complete': {'zh-CN':'健康检查完成','zh-TW':'健康檢查完成','ja':'ヘルスチェック完了','ko':'상태 확인 완료','es':'Comprobación de salud completada','fr':'Vérification de santé terminée','de':'Gesundheitsprüfung abgeschlossen','pt-BR':'Verificação de integridade concluída','ru':'Проверка работоспособности завершена','ar':'اكتمل فحص الصحة'},
+  'Click "Test all" to start': {'zh-CN':'点击"测试全部"','zh-TW':'點擊「測試全部」','ja':'「すべてテスト」をクリック','ko':'"모두 테스트" 클릭','es':'Haga clic en "Probar todo" para iniciar','fr':'Cliquez sur « Tout tester » pour commencer','de':'Klicken Sie auf „Alle testen" zum Starten','pt-BR':'Clique em "Testar tudo" para iniciar','ru':'Нажмите «Протестировать все» для запуска','ar':'انقر "اختبار الكل" للبدء'},
+  '(empty reply)': {'zh-CN':'（空回复）','zh-TW':'（空回覆）','ja':'（空の返信）','ko':'(빈 답변)','es':'(respuesta vacía)','fr':'(réponse vide)','de':'(leere Antwort)','pt-BR':'(resposta vazia)','ru':'(пустой ответ)','ar':'(رد فارغ)'},
+  'Please load model list first': {'zh-CN':'请先加载模型列表','zh-TW':'請先載入模型列表','ja':'先にモデルリストを読み込んでください','ko':'먼저 모델 목록을 로드하세요','es':'Cargue la lista de modelos primero','fr':'Chargez d\'abord la liste des modèles','de':'Modellliste zuerst laden','pt-BR':'Carregue a lista de modelos primeiro','ru':'Сначала загрузите список моделей','ar':'قم بتحميل قائمة النماذج أولاً'},
+  'Model test complete': {'zh-CN':'模型测试完成','zh-TW':'模型測試完成','ja':'モデルテスト完了','ko':'모델 테스트 완료','es':'Prueba de modelos completada','fr':'Test de modèles terminé','de':'Modelltest abgeschlossen','pt-BR':'Teste de modelos concluído','ru':'Тест моделей завершён','ar':'اكتمل اختبار النماذج'},
+  'Settings saved': {'zh-CN':'设置已保存','zh-TW':'設定已儲存','ja':'設定を保存しました','ko':'설정 저장됨','es':'Ajustes guardados','fr':'Paramètres enregistrés','de':'Einstellungen gespeichert','pt-BR':'Configurações salvas','ru':'Настройки сохранены','ar':'تم حفظ الإعدادات'},
+  'Proxy bound': {'zh-CN':'代理已绑定','zh-TW':'代理已綁定','ja':'プロキシをバインドしました','ko':'프록시 바인딩됨','es':'Proxy vinculado','fr':'Proxy lié','de':'Proxy gebunden','pt-BR':'Proxy vinculado','ru':'Прокси привязан','ar':'تم ربط البروكسي'},
+  'Proxy unbound': {'zh-CN':'代理已解绑','zh-TW':'代理已解綁','ja':'プロキシをアンバインドしました','ko':'프록시 바인딩 해제됨','es':'Proxy desvinculado','fr':'Proxy délié','de':'Proxy entbunden','pt-BR':'Proxy desvinculado','ru':'Прокси отвязан','ar':'تم إلغاء ربط البروكسي'},
+  'Direct (no proxy)': {'zh-CN':'直连（无代理）','zh-TW':'直連（無代理）','ja':'直接（プロキシなし）','ko':'직접 (프록시 없음)','es':'Directo (sin proxy)','fr':'Direct (sans proxy)','de':'Direkt (ohne Proxy)','pt-BR':'Direto (sem proxy)','ru':'Напрямую (без прокси)','ar':'مباشر (بدون بروكسي)'},
+  '+ Manual input...': {'zh-CN':'+ 手动输入...','zh-TW':'+ 手動輸入...','ja':'+ 手動入力...','ko':'+ 수동 입력...','es':'+ Entrada manual...','fr':'+ Saisie manuelle...','de':'+ Manuelle Eingabe...','pt-BR':'+ Entrada manual...','ru':'+ Ручной ввод...','ar':'+ إدخال يدوي...'},
+  'Enter proxy URL (empty to unbind):': {'zh-CN':'输入代理地址（留空解绑）：','zh-TW':'輸入代理位址（留空解綁）：','ja':'プロキシURLを入力（空で解除）：','ko':'프록시 URL 입력 (빈 칸으로 해제):','es':'URL del proxy (vacío para desvincular):','fr':'URL du proxy (vide pour détacher) :','de':'Proxy-URL (leer zum Lösen):','pt-BR':'URL do proxy (vazio para desvincular):','ru':'URL прокси (пусто для отвязки):','ar':'عنوان البروكسي (فارغ لإلغاء الربط):'},
+  'All keys': {'zh-CN':'全部密钥','zh-TW':'全部金鑰','ja':'すべてのキー','ko':'모든 키','es':'Todas las claves','fr':'Toutes les clés','de':'Alle Schlüssel','pt-BR':'Todas as chaves','ru':'Все ключи','ar':'كل المفاتيح'},
+  'Filter by API key': {'zh-CN':'按 API Key 筛选','zh-TW':'按 API Key 篩選','ja':'API キーで絞り込み','ko':'API 키로 필터','es':'Filtrar por clave API','fr':'Filtrer par clé API','de':'Nach API-Schlüssel filtern','pt-BR':'Filtrar por chave API','ru':'Фильтр по API-ключу','ar':'تصفية حسب مفتاح API'},
+  'Tokens (7d)': {'zh-CN':'近7天 Token','zh-TW':'近7天 Token','ja':'7日間のトークン','ko':'7일 토큰','es':'Tokens (7 días)','fr':'Tokens (7 jours)','de':'Tokens (7 Tage)','pt-BR':'Tokens (7 dias)','ru':'Токены (7 дн.)','ar':'الرموز (7 أيام)'},
+  'Unknown key': {'zh-CN':'未知密钥','zh-TW':'未知金鑰','ja':'不明なキー','ko':'알 수 없는 키','es':'Clave desconocida','fr':'Clé inconnue','de':'Unbekannter Schlüssel','pt-BR':'Chave desconhecida','ru':'Неизвестный ключ','ar':'مفتاح غير معروف'}
 };
+const localeExtraRows={
+  'The default password is {password}. Change it after your first login.':['默认密码为 {password}。首次登录后请修改。','預設密碼為 {password}。首次登入後請修改。','既定のパスワードは {password} です。初回ログイン後に変更してください。','기본 비밀번호는 {password}입니다. 처음 로그인한 후 변경하세요.','La contraseña predeterminada es {password}. Cámbiela después del primer inicio de sesión.','Le mot de passe par défaut est {password}. Modifiez-le après votre première connexion.','Das Standardpasswort lautet {password}. Ändern Sie es nach der ersten Anmeldung.','A senha padrão é {password}. Altere-a após o primeiro login.','Пароль по умолчанию: {password}. Измените его после первого входа.','كلمة المرور الافتراضية هي {password}. غيّرها بعد تسجيل الدخول لأول مرة.'],
+  'Account':['账号','帳號','アカウント','계정','Cuenta','Compte','Konto','Conta','Аккаунт','الحساب'],
+  'tokens':['Token','Token','トークン','토큰','tokens','tokens','Tokens','tokens','токенов','رموز'],
+  'A label that identifies this key, such as "my-laptop" or "claude-code"':['用于标识此密钥的标签，例如 "my-laptop" 或 "claude-code"','用於識別此金鑰的標籤，例如「my-laptop」或「claude-code」','このキーを識別するラベル（例: "my-laptop"、"claude-code"）','이 키를 식별하는 레이블(예: "my-laptop", "claude-code")','Una etiqueta que identifique esta clave, como "my-laptop" o "claude-code"','Une étiquette identifiant cette clé, comme « my-laptop » ou « claude-code »','Eine Bezeichnung für diesen Schlüssel, z. B. "my-laptop" oder "claude-code"','Um rótulo que identifique esta chave, como "my-laptop" ou "claude-code"','Метка для идентификации ключа, например "my-laptop" или "claude-code"','تسمية تعرّف هذا المفتاح، مثل "my-laptop" أو "claude-code"'],
+  'Use key':['使用密钥','使用金鑰','キーを使用','키 사용','Usar clave','Utiliser la clé','Schlüssel verwenden','Usar chave','Использовать ключ','استخدام المفتاح'],
+  'Edit':['编辑','編輯','編集','편집','Editar','Modifier','Bearbeiten','Editar','Изменить','تعديل'],
+  'Disable':['禁用','停用','無効にする','비활성화','Deshabilitar','Désactiver','Deaktivieren','Desativar','Отключить','تعطيل'],
+  'Check':['检测','檢查','確認','확인','Comprobar','Vérifier','Prüfen','Verificar','Проверить','فحص'],
+  'Copied':['已复制','已複製','コピーしました','복사됨','Copiado','Copié','Kopiert','Copiado','Скопировано','تم النسخ'],
+  'Login successful':['登录成功','登入成功','ログインしました','로그인 성공','Inicio de sesión correcto','Connexion réussie','Anmeldung erfolgreich','Login realizado','Вход выполнен','تم تسجيل الدخول'],
+  'Deleted':['已删除','已刪除','削除しました','삭제됨','Eliminado','Supprimé','Gelöscht','Excluído','Удалено','تم الحذف'],
+  'Updated successfully':['已更新','已更新','更新しました','업데이트됨','Actualizado','Mis à jour','Aktualisiert','Atualizado','Обновлено','تم التحديث'],
+  'Name is required':['名称不能为空','名稱不能為空','名前を入力してください','이름은 필수입니다','El nombre es obligatorio','Le nom est obligatoire','Name ist erforderlich','O nome é obrigatório','Укажите имя','الاسم مطلوب'],
+  'Delete this account?':['确定删除此账号？','確定刪除此帳號？','このアカウントを削除しますか？','이 계정을 삭제할까요?','¿Eliminar esta cuenta?','Supprimer ce compte ?','Dieses Konto löschen?','Excluir esta conta?','Удалить этот аккаунт?','هل تريد حذف هذا الحساب؟'],
+  'Delete this API key?':['确定删除此密钥？','確定刪除此金鑰？','この API キーを削除しますか？','이 API 키를 삭제할까요?','¿Eliminar esta clave API?','Supprimer cette clé API ?','Diesen API-Schlüssel löschen?','Excluir esta chave API?','Удалить этот API-ключ?','هل تريد حذف مفتاح API هذا؟'],
+  'Delete this conversation?':['确定删除此对话？','確定刪除此對話？','この会話を削除しますか？','이 대화를 삭제할까요?','¿Eliminar esta conversación?','Supprimer cette conversation ?','Diese Unterhaltung löschen?','Excluir esta conversa?','Удалить этот разговор?','هل تريد حذف هذه المحادثة؟'],
+  'Delete proxy {url}?':['确定删除代理 {url}？','確定刪除代理 {url}？','プロキシ {url} を削除しますか？','프록시 {url}을(를) 삭제할까요?','¿Eliminar el proxy {url}?','Supprimer le proxy {url} ?','Proxy {url} löschen?','Excluir o proxy {url}?','Удалить прокси {url}?','هل تريد حذف البروكسي {url}؟'],
+  'Unnamed conversation':['未命名对话','未命名對話','無題の会話','이름 없는 대화','Conversación sin título','Conversation sans titre','Unbenannte Unterhaltung','Conversa sem título','Разговор без названия','محادثة بلا عنوان'],
+  'Current key: {key}':['当前密钥：{key}','目前金鑰：{key}','現在のキー: {key}','현재 키: {key}','Clave actual: {key}','Clé actuelle : {key}','Aktueller Schlüssel: {key}','Chave atual: {key}','Текущий ключ: {key}','المفتاح الحالي: {key}'],
+  'Full key is unavailable':['完整密钥不可用','完整金鑰無法使用','完全なキーは利用できません','전체 키를 사용할 수 없습니다','La clave completa no está disponible','La clé complète est indisponible','Der vollständige Schlüssel ist nicht verfügbar','A chave completa não está disponível','Полный ключ недоступен','المفتاح الكامل غير متاح'],
+  'Enter a proxy URL':['请输入代理地址','請輸入代理位址','プロキシ URL を入力してください','프록시 URL을 입력하세요','Introduzca una URL de proxy','Saisissez une URL de proxy','Proxy-URL eingeben','Digite uma URL de proxy','Введите URL прокси','أدخل عنوان URL للبروكسي'],
+  'Connection failed':['连接失败','連線失敗','接続に失敗しました','연결 실패','Error de conexión','Échec de la connexion','Verbindung fehlgeschlagen','Falha na conexão','Ошибка подключения','فشل الاتصال'],
+  'Health check complete':['健康检查完成','健康檢查完成','ヘルスチェックが完了しました','상태 확인 완료','Comprobación de estado completada','Vérification terminée','Integritätsprüfung abgeschlossen','Verificação de integridade concluída','Проверка состояния завершена','اكتمل فحص الحالة'],
+  'Load the model list first':['请先加载模型列表','請先載入模型清單','先にモデル一覧を読み込んでください','먼저 모델 목록을 불러오세요','Cargue primero la lista de modelos','Chargez d’abord la liste des modèles','Laden Sie zuerst die Modellliste','Carregue primeiro a lista de modelos','Сначала загрузите список моделей','حمّل قائمة النماذج أولاً'],
+  'Model test complete':['模型测试完成','模型測試完成','モデルテストが完了しました','모델 테스트 완료','Prueba de modelos completada','Test des modèles terminé','Modelltest abgeschlossen','Teste de modelos concluído','Тест моделей завершён','اكتمل اختبار النماذج'],
+  'Settings saved':['设置已保存','設定已儲存','設定を保存しました','설정 저장됨','Ajustes guardados','Paramètres enregistrés','Einstellungen gespeichert','Configurações salvas','Настройки сохранены','تم حفظ الإعدادات'],
+  'Empty reply':['空回复','空白回覆','空の応答','빈 응답','Respuesta vacía','Réponse vide','Leere Antwort','Resposta vazia','Пустой ответ','رد فارغ'],
+  'Click "Test all"':['点击"测试全部"','點擊「全部測試」','「すべてテスト」をクリック','"모두 테스트"를 클릭하세요','Haga clic en "Probar todos"','Cliquez sur « Tout tester »','Klicken Sie auf „Alle testen"','Clique em "Testar todos"','Нажмите «Тестировать все»','انقر "اختبار الكل"'],
+  'Paste the full callback URL from the popup address bar…':['粘贴弹出页地址栏中的完整回调地址…','貼上彈出頁網址列中的完整回呼位址…','ポップアップのアドレスバーから完全なコールバック URL を貼り付け…','팝업 주소창의 전체 콜백 URL을 붙여넣으세요…','Pegue la URL de devolución completa de la barra de direcciones emergente…','Collez l’URL de rappel complète depuis la barre d’adresse de la fenêtre…','Vollständige Callback-URL aus der Adressleiste des Popups einfügen…','Cole a URL de retorno completa da barra de endereço do pop-up…','Вставьте полный URL обратного вызова из адресной строки всплывающего окна…','الصق عنوان URL الكامل لإعادة التوجيه من شريط عنوان النافذة…']
+};
+Object.assign(localeExtraRows,{
+  'Popup blocked by the browser':['弹出窗口被浏览器拦截','彈出視窗被瀏覽器封鎖','ポップアップがブラウザにブロックされました','브라우저에서 팝업을 차단했습니다','El navegador bloqueó la ventana emergente','La fenêtre a été bloquée par le navigateur','Popup wurde vom Browser blockiert','O navegador bloqueou a janela pop-up','Браузер заблокировал всплывающее окно','حظر المتصفح النافذة المنبثقة'],
+  'Allow popups for this site, then start authorization again.':['请允许此网站的弹出窗口，然后重新开始授权。','請允許此網站的彈出視窗，然後重新開始授權。','このサイトのポップアップを許可し、承認をやり直してください。','이 사이트의 팝업을 허용한 후 인증을 다시 시작하세요.','Permita las ventanas emergentes de este sitio y vuelva a iniciar la autorización.','Autorisez les fenêtres pour ce site, puis recommencez l’autorisation.','Erlauben Sie Popups für diese Website und starten Sie die Autorisierung erneut.','Permita pop-ups para este site e reinicie a autorização.','Разрешите всплывающие окна для этого сайта и начните авторизацию снова.','اسمح بالنوافذ المنبثقة لهذا الموقع، ثم ابدأ التفويض مجدداً.'],
+  'Authorization page opened':['授权页面已打开','授權頁面已開啟','承認ページを開きました','인증 페이지가 열렸습니다','Página de autorización abierta','Page d’autorisation ouverte','Autorisierungsseite geöffnet','Página de autorização aberta','Страница авторизации открыта','تم فتح صفحة التفويض'],
+  'Complete sign-in in the popup, then paste its full URL below.':['请在弹出窗口中完成登录，然后将完整网址粘贴到下方。','請在彈出視窗中完成登入，然後將完整網址貼到下方。','ポップアップでサインインを完了し、完全な URL を下に貼り付けてください。','팝업에서 로그인을 완료한 후 전체 URL을 아래에 붙여넣으세요.','Complete el inicio de sesión en la ventana y pegue abajo su URL completa.','Terminez la connexion dans la fenêtre, puis collez son URL complète ci-dessous.','Schließen Sie die Anmeldung im Popup ab und fügen Sie unten die vollständige URL ein.','Conclua o login no pop-up e cole a URL completa abaixo.','Завершите вход во всплывающем окне и вставьте полный URL ниже.','أكمل تسجيل الدخول في النافذة، ثم الصق عنوان URL الكامل أدناه.'],
+  'Authorization timed out. Start again.':['授权超时，请重新开始。','授權逾時，請重新開始。','承認がタイムアウトしました。やり直してください。','인증 시간이 초과되었습니다. 다시 시작하세요.','La autorización agotó el tiempo. Inténtelo de nuevo.','L’autorisation a expiré. Recommencez.','Zeitüberschreitung bei der Autorisierung. Starten Sie erneut.','A autorização expirou. Inicie novamente.','Время авторизации истекло. Начните снова.','انتهت مهلة التفويض. ابدأ مجدداً.'],
+  'Authorization window closed before completion.':['授权窗口在完成前已关闭。','授權視窗在完成前已關閉。','完了前に承認ウィンドウが閉じられました。','완료 전에 인증 창이 닫혔습니다.','La ventana de autorización se cerró antes de terminar.','La fenêtre d’autorisation a été fermée avant la fin.','Das Autorisierungsfenster wurde vor Abschluss geschlossen.','A janela de autorização foi fechada antes da conclusão.','Окно авторизации закрыто до завершения.','أُغلقت نافذة التفويض قبل الاكتمال.'],
+  'Authorization successful':['授权成功','授權成功','承認に成功しました','인증 성공','Autorización correcta','Autorisation réussie','Autorisierung erfolgreich','Autorização concluída','Авторизация выполнена','نجح التفويض'],
+  'Account added to the pool.':['账号已加入账号池。','帳號已加入帳號池。','アカウントをプールに追加しました。','계정이 풀에 추가되었습니다.','Cuenta añadida al grupo.','Compte ajouté au pool.','Konto zum Pool hinzugefügt.','Conta adicionada ao pool.','Аккаунт добавлен в пул.','تمت إضافة الحساب إلى المجموعة.'],
+  'Authorization failed or expired':['授权失败或已过期','授權失敗或已過期','承認に失敗したか期限切れです','인증 실패 또는 만료','La autorización falló o expiró','L’autorisation a échoué ou a expiré','Autorisierung fehlgeschlagen oder abgelaufen','A autorização falhou ou expirou','Авторизация не удалась или истекла','فشل التفويض أو انتهت صلاحيته'],
+  'Paste the callback URL':['请粘贴回调地址','請貼上回呼位址','コールバック URL を貼り付けてください','콜백 URL을 붙여넣으세요','Pegue la URL de devolución','Collez l’URL de rappel','Callback-URL einfügen','Cole a URL de retorno','Вставьте URL обратного вызова','الصق عنوان URL لإعادة التوجيه'],
+  'Clean all conversations? Each conversation will be deleted individually and logged.':['确定清理所有对话？每条对话将逐一删除并记录日志。','確定清理所有對話？每條對話將逐一刪除並記錄日誌。','すべての会話を消去しますか？各会話は個別に削除され、ログに記録されます。','모든 대화를 정리할까요? 각 대화가 개별 삭제되고 기록됩니다.','¿Limpiar todas las conversaciones? Se eliminarán una a una y se registrarán.','Nettoyer toutes les conversations ? Chacune sera supprimée et journalisée.','Alle Unterhaltungen bereinigen? Jede wird einzeln gelöscht und protokolliert.','Limpar todas as conversas? Cada uma será excluída e registrada.','Очистить все разговоры? Каждый будет удалён отдельно с записью в журнал.','هل تريد تنظيف كل المحادثات؟ ستحذف كل محادثة على حدة مع تسجيلها.'],
+  'Starting conversation cleanup…':['开始清理所有对话…','開始清理所有對話…','会話のクリーンアップを開始…','대화 정리 시작…','Iniciando limpieza de conversaciones…','Démarrage du nettoyage des conversations…','Bereinigung der Unterhaltungen wird gestartet…','Iniciando limpeza das conversas…','Начинается очистка разговоров…','بدء تنظيف المحادثات…'],
+  'Conversation cleanup complete':['清理完成','清理完成','会話のクリーンアップが完了しました','대화 정리 완료','Limpieza de conversaciones completada','Nettoyage des conversations terminé','Bereinigung der Unterhaltungen abgeschlossen','Limpeza das conversas concluída','Очистка разговоров завершена','اكتمل تنظيف المحادثات'],
+  'Checking all proxies…':['正在检测所有代理…','正在檢查所有代理…','すべてのプロキシを確認中…','모든 프록시 확인 중…','Comprobando todos los proxies…','Vérification de tous les proxys…','Alle Proxys werden geprüft…','Verificando todos os proxies…','Проверка всех прокси…','جارٍ فحص كل البروكسيات…']
+});
+const localeExtraLocales=['zh-CN','zh-TW','ja','ko','es','fr','de','pt-BR','ru','ar'];
+Object.entries(localeExtraRows).forEach(([key,values])=>{localeText[key]=Object.fromEntries(localeExtraLocales.map((locale,index)=>[locale,values[index]]));});
 function preferredLocale(){
   try{
     const stored=localStorage.getItem(localeStorageKey);
@@ -880,6 +1036,7 @@ function translateDynamic(value,locale){
     let m=value.match(/^Called (\d+) times$/);if(m)return locale==='zh-TW'?'已呼叫'+m[1]+'次':'已调用'+m[1]+'次';
     m=value.match(/^Limited after (\d+) calls$/);if(m)return locale==='zh-TW'?'呼叫'+m[1]+'次限流':'调用'+m[1]+'次限流';
     m=value.match(/^(\d+) requests today$/);if(m)return '今日 '+m[1]+' 次请求';
+    m=value.match(/^([\d.,]+[KM]?) tokens today$/);if(m)return '今日 '+m[1]+' Token';
     m=value.match(/^(\d+) requests$/);if(m)return m[1]+' 次请求';
     m=value.match(/^Hit rate (.+)$/);if(m)return '命中率 '+m[1];
     m=value.match(/^Today \+(\d+)$/);if(m)return '今日 +'+m[1];
@@ -895,6 +1052,7 @@ function translateDynamic(value,locale){
     m=value.match(/^调用(\d+)次限流$/);if(m)return 'Limited after '+m[1]+' calls';
     m=value.match(/^呼叫(\d+)次限流$/);if(m)return 'Limited after '+m[1]+' calls';
     m=value.match(/^今日 (\d+) 次请求$/);if(m)return m[1]+' requests today';
+    m=value.match(/^今日 ([\d.,]+[KM]?) Token$/);if(m)return m[1]+' tokens today';
     m=value.match(/^(\d+) 次请求$/);if(m)return m[1]+' requests';
     m=value.match(/^命中率 (.+)$/);if(m)return 'Hit rate '+m[1];
     m=value.match(/^今日 \+(\d+)$/);if(m)return 'Today +'+m[1];
@@ -907,16 +1065,15 @@ function translateDynamic(value,locale){
   }
   return value;
 }
+function t(key){if(currentLocale==='en')return key;return localeText[key]?.[currentLocale]||key;}
 function translateText(value){
   const trimmed=value.trim();
   if(!trimmed)return value;
-  let translated;
-  if(currentLocale==='en'){
-    translated=localeTextReverse[trimmed]||translateDynamic(trimmed,'en');
-  }else{
-    const entry=localeText[trimmed];
-    translated=(entry&&entry[currentLocale])||translateDynamic(trimmed,currentLocale)||localeText[trimmed]?.['en'];
-  }
+  const key=localeText[trimmed]?trimmed:localeTextReverse[trimmed];
+  const entry=key ? localeText[key] : null;
+  const translated=currentLocale==='en'
+    ?(key||translateDynamic(trimmed,'en'))
+    :((entry&&entry[currentLocale])||translateDynamic(trimmed,currentLocale)||(entry&&entry.en));
   if(!translated||translated===trimmed)return value;
   return value.replace(trimmed,translated);
 }
@@ -985,7 +1142,7 @@ function buildCurl(keyPrefix){
   return `curl ${base}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${keyPrefix}..." \\\n  -d '{"model":"auto","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`;
 }
 async function copyCurl(){
-  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice('curl 已复制','success');}catch(e){}
+  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice(t('curl copied'),'success');}catch(e){}
 }
 async function loadOnboarding(){
   let acc=0,key=0,prefix='sk-';
@@ -1019,7 +1176,7 @@ $('loginForm')?.addEventListener('submit',async e=>{
     if(d.must_change_password){location.replace('/login');return;}
     $('login').style.display='none';$('app').style.display='flex';
     showPage('dashboard');loadStats();
-    showNotice('登录成功','success');
+    showNotice(t('Login successful'),'success');
   }catch(e){showNotice(e.message,'error');}
 });
 
@@ -1043,8 +1200,9 @@ async function loadStats(){
     $('ov24hReq').textContent=(sum.last24h_requests||0)+' requests';
     $('ovTotalTok').textContent=fmtTok(sum.tokens||0);
     $('ovTotalReq').textContent=(sum.requests||0)+' requests';
-    $('ovTodayTok').textContent=fmtTok(sum.today_tokens||0);
-    $('ovTodayReq').textContent=(sum.today_requests||0)+' requests today';
+    // 请求计数卡：主数值是今日请求数，token 数放副行。
+    $('ovTodayReq').textContent=fmtNum(sum.today_requests||0);
+    $('ovTodayTok').textContent=fmtTok(sum.today_tokens||0)+' tokens today';
     loadRecentRequests();
   }catch(e){}
 }
@@ -1079,16 +1237,27 @@ function renderAccounts(){
     const status=x.status==='cooldown'?`<div><span class="status cooldown"><i></i>Cooldown</span>${cooldown}</div>`:x.status==='online'?'<span class="status online"><i></i>Online</span>':'<span class="status offline"><i></i>Offline</span>';
     const calls=x.rateLimited?`Limited after ${x.callCount||0} calls`:`Called ${x.callCount||0} times`;
     const scheduleEnabled=x.scheduleEnabled!==false;
-    const proxyLabel=x.boundProxy?`<span style="font-size:11px;word-break:break-all">${esc(x.boundProxy)}</span>`:'<span style="color:var(--muted);font-size:11px">—</span>';
-    return `<tr><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div><b>${x.displayName||x.email}</b><div style="font-size:11px;color:var(--muted)">${x.email||''}</div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" onclick="toggleAccountSchedule('${x.id}',${!scheduleEnabled})">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td>${proxyLabel} <button class="btn-sm btn" style="margin-top:2px" onclick="bindAccountProxy('${x.id}','${esc(x.boundProxy||'')}')">Bind</button></td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`;
-  }).join(''):'<tr><td colspan="7" class="empty">No matching accounts</td></tr>';
+    return `<tr><td style="max-width:200px"><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div style="min-width:0"><b style="display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.displayName||x.email)}">${esc(x.displayName||x.email)}</b><div style="font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(x.email||'')}">${esc(x.email||'')}</div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><input type="number" min="0" max="9999" step="1" value="${x.priority||0}" title="${t('Higher values are selected first')}" class="form-input" style="width:70px;display:inline-block" onchange="setAccountPriority('${x.id}',this.value)"></td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" onclick="toggleAccountSchedule('${x.id}',${!scheduleEnabled})">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td style="max-width:160px">${buildProxySelect(x.id,x.boundProxy)}</td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`;
+  }).join(''):'<tr><td colspan="8" class="empty">No matching accounts</td></tr>';
 }
 async function loadAccounts(){
   try{
+    if(!window.proxyListCache) try{const pd=await api('/api/admin/proxy-pool');window.proxyListCache=pd.proxies||[];}catch(e){window.proxyListCache=[];}
     const d=await api('/api/accounts');
     _accountsCache=d.accounts||[];
     renderAccounts();
-  }catch(e){$('accountRows').innerHTML=`<tr><td colspan="7" class="empty">${e.message}</td></tr>`;}
+  }catch(e){$('accountRows').innerHTML=`<tr><td colspan="8" class="empty">${e.message}</td></tr>`;}
+}
+
+async function setAccountPriority(id,value){
+  const priority=Number.parseInt(value,10);
+  if(!Number.isInteger(priority)||priority<0)return loadAccounts();
+  try{
+    await api('/api/accounts/priority',{method:'POST',body:JSON.stringify({id,priority})});
+    const account=_accountsCache.find(x=>x.id===id);
+    if(account)account.priority=priority;
+    showNotice(t('Priority updated'),'success');
+  }catch(e){showNotice(e.message,'error');loadAccounts();}
 }
 
 async function toggleAccountSchedule(id,enabled){
@@ -1101,15 +1270,48 @@ async function toggleAccountSchedule(id,enabled){
 }
 
 async function deleteAccount(id){
-  if(!confirm('确定删除此账号？'))return;
-  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice('已删除','success');loadAccounts();showPage('dashboard');}
+  if(!confirm(t('Are you sure you want to delete this account?')))return;
+  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice(t('Deleted'),'success');loadAccounts();showPage('dashboard');}
   catch(e){showNotice(e.message,'error');}
 }
 
-function bindAccountProxy(id,current){
-  const url=prompt('Bind proxy for this account (socks5://, http://, https://). Leave empty to unbind:',current||'');
-  if(url===null)return;
-  api('/api/accounts/bind-proxy',{method:'POST',body:JSON.stringify({id,proxyUrl:url.trim()})}).then(()=>{showNotice(url.trim()?'Proxy bound':'Proxy unbound','success');loadAccounts();}).catch(e=>showNotice(e.message,'error'));
+function buildProxySelect(accountId,boundProxy){
+  const cache=window.proxyListCache||[];
+  let opts='';
+  opts+=`<option value="">${t('Direct (no proxy)')}</option>`;
+  let foundInCache=false;
+  for(const p of cache){
+    const icon=p.health==='reachable'?'✓':(p.health==='unreachable'||p.health==='upstream_error')?'✗':'·';
+    const full=icon+' '+p.url;
+    const label=full.length>30?full.slice(0,29)+'…':full;
+    const sel=p.url===boundProxy?' selected':'';
+    if(sel)foundInCache=true;
+    opts+=`<option value="${esc(p.url)}"${sel}>${esc(label)}</option>`;
+  }
+  if(boundProxy&&!foundInCache){
+    const label=boundProxy.length>28?boundProxy.slice(0,27)+'…':boundProxy;
+    opts+=`<option value="${esc(boundProxy)}" selected>${esc(label)}</option>`;
+  }
+  opts+=`<option value="__manual__">${t('+ Manual input...')}</option>`;
+  return `<select class="proxy-select" data-prev="${esc(boundProxy||'')}" onchange="onProxySelectChange(this,'${accountId}')">${opts}</select>`;
+}
+function onProxySelectChange(sel,accountId){
+  const val=sel.value;
+  if(val==='__manual__'){
+    const url=prompt(t('Enter proxy URL (empty to unbind):'),'');
+    if(url===null){sel.value=sel.dataset.prev||'';return;}
+    bindAccountProxy(accountId,url.trim());
+  }else{
+    bindAccountProxy(accountId,val);
+  }
+}
+
+async function bindAccountProxy(id,proxyUrl){
+  try{
+    await api('/api/accounts/bind-proxy',{method:'POST',body:JSON.stringify({id,proxyUrl})});
+    showNotice(proxyUrl?t('Proxy bound'):t('Proxy unbound'),'success');
+    loadAccounts();
+  }catch(e){showNotice(e.message,'error');}
 }
 
 async function startPKCE(){
@@ -1117,18 +1319,18 @@ async function startPKCE(){
     const d=await api('/api/auth/start');
     $('callbackInput').dataset.state=d.state;
     const popup=window.open(d.url,'pkce','width=600,height=800');
-    if(!popup){$('authStatus').innerHTML='<div class="highlight-box warning"><div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i>弹出窗口被浏览器拦截</div><p>请允许此网站的弹出窗口，然后重新点击"开始授权"。</p></div>';lucide.createIcons();return;}
-    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>授权页面已在新窗口打开</div><p>请在弹出窗口中完成登录。登录后弹出页会显示空白或错误——这是正常的。复制弹出页地址栏的<b>完整网址</b>，粘贴到下方"回调地址"输入框。</p></div>';
+    if(!popup){$('authStatus').innerHTML='<div class="highlight-box warning"><div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i>'+t('Popup blocked by browser')+'</div><p>'+t('Please allow popups for this site, then click "Start authorization" again.')+'</p></div>';lucide.createIcons();return;}
+    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>'+t('Authorization page opened in new window')+'</div><p>'+t('Please complete login in the popup. After login, the page may show blank or error — this is normal. Copy the <b>full URL</b> from the popup address bar and paste it into the "Callback URL" input below.')+'</p></div>';
     $('callbackInput').focus();
-    $('callbackInput').placeholder='粘贴弹出页地址栏中的完整回调地址…';
+    $('callbackInput').placeholder=t('Paste the full callback URL from the popup address bar…');
     if(pkceTimer)clearInterval(pkceTimer);
     const start=Date.now();
     pkceTimer=setInterval(async()=>{
-      if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权超时，请重新开始授权。</b></div>';return;}
-      if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权窗口在完成前已关闭。</b></div>';return;}
+      if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>'+t('Authorization timed out, please start over.')+'</b></div>';return;}
+      if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>'+t('Authorization window was closed before completion.')+'</b></div>';return;}
       try{const s=await api('/api/auth/status?state='+d.state);
-        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>授权成功</div><p>账号已加入账号池。</p></div>';showNotice('授权成功','success');loadAccounts();}
-        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权失败或已过期</b></div>';}
+        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>'+t('Authorization successful')+'</div><p>'+t('Account has been added to the pool.')+'</p></div>';showNotice(t('Authorization successful'),'success');loadAccounts();}
+        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>'+t('Authorization failed or expired')+'</b></div>';}
       }catch(e){}
     },2000);
   }catch(e){showNotice(e.message,'error');}
@@ -1136,26 +1338,30 @@ async function startPKCE(){
 
 async function submitCallback(){
   const raw=$('callbackInput').value.trim();
-  if(!raw)return showNotice('请粘贴回调地址','error');
+  if(!raw)return showNotice(t('Please paste the callback URL'),'error');
   try{
     let u='/api/auth/callback?';
     if(raw.includes('://')){u+='url='+encodeURIComponent(raw);}
     else{u+=raw.replace(/^\?/,'');if(!raw.includes('state='))$('callbackInput').dataset.state&&(u+='&state='+$('callbackInput').dataset.state);}
-    await api(u);showNotice('授权成功','success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
+    await api(u);showNotice(t('Authorization successful'),'success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
   }catch(e){showNotice(e.message,'error');}
 }
 
 async function loadKeys(){
   try{
-    const d=await api('/api/admin/keys');
+    // 近 7 天每个 key 的 token 用量（按 key ID 关联；usage 不可用时降级为 '-'）。
+    const [d,u]=await Promise.all([api('/api/admin/keys'),api('/api/usage?days=7').catch(()=>null)]);
     const k=d.keys||[];
-    $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
+    const tok={};(((u||{}).stats||{}).keys||[]).forEach(row=>{if(row.api_key_id)tok[row.api_key_id]=row.tokens;});
+    $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px">${tok[x.id]!=null?fmtTok(tok[x.id]):'-'}</td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
+      ${x.raw?`<button class="btn-sm btn" onclick="copyKeyRaw('${x.raw}')">Copy</button>`:''}
       <button class="btn-sm btn" onclick="openUseKey('${x.id}')">Use key</button>
+      <button class="btn-sm btn" onclick="openKeyUsage('${x.id}','${x.name.replace(/'/g,"\\'")}','${x.prefix}')">Usage</button>
       <button class="btn-sm btn" onclick="editKey('${x.id}','${x.name.replace(/'/g,"\\'")}')">Edit</button>
       <button class="btn-sm btn ${x.revoked?'success':'danger'}" onclick="toggleKey('${x.id}',${x.revoked})">${x.revoked?'Enable':'Disable'}</button>
       <button class="btn-sm btn danger" onclick="revokeKey('${x.id}')">Delete</button>
-    </td></tr>`).join(''):'<tr><td colspan="6" class="empty">No API keys</td></tr>';
-  }catch(e){$('keyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
+    </td></tr>`).join(''):'<tr><td colspan="7" class="empty">No API keys</td></tr>';
+  }catch(e){$('keyRows').innerHTML=`<tr><td colspan="7" class="empty">${e.message}</td></tr>`;}
 }
 
 let editKeyId=null;
@@ -1163,8 +1369,8 @@ function editKey(id,name){editKeyId=id;$('editKeyName').value=name;$('editKeyMod
 function closeEditKeyModal(){$('editKeyModal').classList.remove('open');editKeyId=null;}
 async function saveEditKey(){
   const name=$('editKeyName').value.trim();
-  if(!name)return showNotice('名称不能为空','error');
-  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice('已更新','success');loadKeys();}
+  if(!name)return showNotice(t('Name cannot be empty'),'error');
+  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice(t('Key updated'),'success');loadKeys();}
   catch(e){showNotice(e.message,'error');}
 }
 async function toggleKey(id,revoked){
@@ -1172,17 +1378,18 @@ async function toggleKey(id,revoked){
   catch(e){showNotice(e.message,'error');}
 }
 
-function openKeyModal(){$('keyModal').classList.add('open');$('keyResult').style.display='none';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
-function closeKeyModal(){$('keyModal').classList.remove('open');}
-async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice('已复制','success');}catch(e){}}
+function openKeyModal(){$('keyModal').classList.add('open');$('keyForm').style.display='block';$('keyResult').style.display='none';$('keyValue').value='';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
+function closeKeyModal(){$('keyModal').classList.remove('open');$('keyValue').value='';}
+async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice(t('Copied'),'success');}catch(e){}}
+async function copyKeyRaw(raw){try{await navigator.clipboard.writeText(raw);showNotice(t('Copied'),'success');}catch(e){showNotice(t('Copy failed'),'error');}}
 async function createKey(e){
   e.preventDefault();
   try{
     const d=await api('/api/admin/keys',{method:'POST',body:JSON.stringify({name:$('keyName').value||'default'})});
-    $('keyValue').value=d.key;$('keyResult').style.display='block';copyKey();loadKeys();
+    $('keyValue').value=d.key;$('keyForm').style.display='none';$('keyResult').style.display='block';copyKey();loadKeys();
   }catch(e){showNotice(e.message,'error');}
 }
-async function revokeKey(id){if(!confirm('确定删除此密钥？'))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
+async function revokeKey(id){if(!confirm(t('Are you sure you want to delete this key?')))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
 
 // ===== Usage page =====
 let usageDays=7, ugPageNo=0, ugTotal=0;
@@ -1218,18 +1425,18 @@ async function loadUsage(){
     $('ug-tok-sub').textContent='Input '+(s.input||0)+' · Output '+(s.output||0);
     $('ug-cache').textContent=fmtTok(s.cache);
     $('ug-ms').textContent=(s.avg_ms||0).toLocaleString();
-    renderTrend((d.stats||{}).trend||[]);
+    renderTrend('ugTrendWrap',(d.stats||{}).trend||[]);
     renderBars('ugModels',(d.stats||{}).models||[],m=>m.name,'tokens');
     renderBars('ugEndpoints',(d.stats||{}).endpoints||[],m=>m.endpoint,'tokens');
-    renderBars('ugKeys',(d.stats||{}).keys||[],m=>m.api_key_prefix,'requests');
+    renderBars('ugKeys',(d.stats||{}).keys||[],m=>m.api_key_name||m.api_key_prefix,'requests');
     loadUsageLogs();
   }catch(e){
     $('ugLogRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;
   }
 }
 
-function renderTrend(trend){
-  const wrap=$('ugTrendWrap');
+function renderTrend(wrapId, trend){
+  const wrap=$(wrapId);
   if(!trend||!trend.length){if(wrap)wrap.innerHTML='<div class="chart-empty"><i data-lucide="line-chart"></i>No trend data yet; it will appear after requests are made.</div>';try{lucide.createIcons();}catch(e){}return;}
   const W=560,H=160,P=8;
   const max=Math.max(...trend.map(t=>t.tokens),1);
@@ -1239,7 +1446,7 @@ function renderTrend(trend){
     const t=trend[0];
     const cx=W/2;
     const cy=H-P-(t.tokens/max)*(H-2*P);
-    wrap.innerHTML=`<svg id="ugTrend" viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px">
+    wrap.innerHTML=`<svg viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px">
       <circle cx="${cx}" cy="${cy}" r="4" fill="var(--accent)"><title>${t.date} · ${t.tokens.toLocaleString()} tokens</title></circle>
       <text x="${cx}" y="${H-2}" text-anchor="middle" font-size="9" fill="var(--muted)">${t.date}</text></svg>`;
     try{lucide.createIcons();}catch(e){}return;
@@ -1253,8 +1460,9 @@ function renderTrend(trend){
   });
   if(trend.length===2)path='M'+P+' '+(H-P-(trend[0].tokens/max)*(H-2*P))+' L'+(W-P)+' '+(H-P-(trend[1].tokens/max)*(H-2*P));
   area+='L'+(W-P)+' '+(H-P)+' L'+P+' '+(H-P)+' Z';
-  const gid='ugGrad';
-  wrap.innerHTML=`<svg id="ugTrend" viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
+  // The gradient id is derived from the container id, to avoid duplication when the dashboard and modal coexist.
+  const gid=wrapId+'Grad';
+  wrap.innerHTML=`<svg viewBox="0 0 560 160" preserveAspectRatio="none" style="height:160px"><defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--accent)" stop-opacity="0.28"/><stop offset="100%" stop-color="var(--accent)" stop-opacity="0.02"/></linearGradient></defs>
     <path d="${area}" fill="url(#${gid})"/>
     <path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     ${trend.map((t,i)=>{
@@ -1290,7 +1498,7 @@ async function loadUsageLogs(){
     ugTotal=d.total||0;
     const rows=(d.logs||[]).map(x=>`<tr>
       <td style="font-size:12px;color:var(--muted)">${new Date(x.time).toLocaleString()}</td>
-      <td><code style="font-size:11px" title="${x.api_key_prefix||'-'}">${x.api_key_prefix||'-'}</code></td>
+      <td><code style="font-size:11px" title="${x.api_key_name||x.api_key_prefix||'-'}">${x.api_key_name||x.api_key_prefix||'-'}</code></td>
       <td style="font-size:12px">${x.model||'-'}</td>
       <td><span class="usage-status">${(x.endpoint||'-').replace('/v1/','')}</span></td>
       <td><span class="token-stack"><b>${(x.input_tokens||0)+(x.output_tokens||0)+(x.cache_tokens||0)}</b> in${x.input_tokens||0}/out${x.output_tokens||0}/cache${x.cache_tokens||0}</span></td>
@@ -1325,14 +1533,52 @@ async function openUseKey(id){
   useKeyId=id;
   const d=await api('/api/admin/keys');
   const rec=(d.keys||[]).find(x=>x.id===id);
-  if(!rec){showNotice('找不到密钥','error');return;}
-  $('useKeyName').textContent='当前密钥：'+rec.name+' ('+rec.prefix+')';
+  if(!rec){showNotice(t('Key not found'),'error');return;}
+  $('useKeyName').textContent=t('Current key')+': '+rec.name+' ('+rec.prefix+')';
   $('useKeyVal').value=rec.raw||'';
   $('useKeyModal').classList.add('open');
   renderUkeTabs();
   renderUkeFiles();
 }
 function closeUseKey(){$('useKeyModal').classList.remove('open');}
+
+// Per-key usage detail modal: fetches on demand (open / range switch only) and
+// reuses the dashboard renderers, so the metrics stay identical.
+let kuDays=7,kuKeyId='';
+function openKeyUsage(id,name,prefix){
+  kuKeyId=id;
+  $('kuKeyName').textContent=name+' ('+prefix+')';
+  $('keyUsageModal').classList.add('open');
+  loadKeyUsage();
+}
+function closeKeyUsage(){$('keyUsageModal').classList.remove('open');}
+function setKuRange(days){
+  kuDays=days;
+  document.querySelectorAll('#kuRange button').forEach(b=>b.classList.toggle('active',+b.dataset.days===days));
+  loadKeyUsage();
+}
+async function loadKeyUsage(){
+  if(!kuKeyId)return;
+  const status=$('kuStatus');
+  status.style.display='flex';
+  status.textContent='Loading...';
+  try{
+    const d=await api('/api/usage/key?id='+encodeURIComponent(kuKeyId)+'&days='+kuDays);
+    status.style.display='none';
+    const s=(d.stats||{}).summary||{};
+    $('ku-req').textContent=fmtNum(s.requests);
+    $('ku-req-sub').textContent='Today +'+(s.today_requests||0);
+    $('ku-tok').textContent=fmtTok(s.tokens);
+    $('ku-tok-sub').textContent='Input '+(s.input||0)+' · Output '+(s.output||0);
+    $('ku-cache').textContent=fmtTok(s.cache);
+    $('ku-ms').textContent=(s.avg_ms||0).toLocaleString();
+    renderTrend('kuTrendWrap',(d.stats||{}).trend||[]);
+    renderBars('kuModels',(d.stats||{}).models||[],m=>m.name,'tokens');
+    renderBars('kuEndpoints',(d.stats||{}).endpoints||[],m=>m.endpoint,'tokens');
+  }catch(e){
+    status.textContent=e.message;
+  }
+}
 function renderUkeTabs(){
   $('useKeyClients').innerHTML=ukeClients.map(c=>`<button class="uke-tab ${c.id===ukeClient?'active':''}" onclick="ukeClient='${c.id}';renderUkeTabs();renderUkeFiles()"><i data-lucide="${c.id==='codex'?'terminal':c.id==='curl'?'square-terminal':c.id==='claude'?'sparkles':'braces'}"></i>${c.label}</button>`).join('');
   $('useKeyOs').innerHTML=ukeOs.map(o=>`<button class="uke-tab ${o.id===ukeOsSel?'active':''}" onclick="ukeOsSel='${o.id}';renderUkeFiles()">${o.label}</button>`).join('');
@@ -1341,7 +1587,7 @@ function renderUkeTabs(){
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function ukeFile(path,content){
   return `<div class="uke-file">
-    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice('已复制','success')">Copy</button></div>
+    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice(t('Copied'),'success')">Copy</button></div>
     <pre>${esc(content)}</pre>
   </div>`;
 }
@@ -1411,34 +1657,54 @@ goals = true`;
 }
 async function copyUseKey(){
   const v=$('useKeyVal').value;
-  if(!v){showNotice('完整密钥不可用','error');return;}
-  try{await navigator.clipboard.writeText(v);showNotice('已复制','success');}catch(e){}
+  if(!v){showNotice(t('Full key unavailable'),'error');return;}
+  try{await navigator.clipboard.writeText(v);showNotice(t('Copied'),'success');}catch(e){}
 }
 
 async function loadConversations(){
   try{
     const d=await api('/api/m365/conversations');
-    const c=d.data||[];
-    $('convRows').innerHTML=c.length?c.map(x=>{
-      const id=String(x.conversationId||'');
-      const updated=x.updateTimeUtc||x.createTimeUtc;
-      return `<tr class="conv-row" data-conversation-id="${esc(id)}">
-        <td><button class="conv-link" type="button">${esc(x.chatName||'未命名对话')}</button><div class="conv-meta"><code>${esc(id)}</code></div></td>
+    _convsCache=d.data||[];
+    renderConversations();
+    loadConvKeyOptions();
+  }catch(e){$('convRows').innerHTML=`<tr><td colspan="6" class="empty">${esc(e.message)}</td></tr>`;}
+}
+
+let _convsCache=[],_convKeyFilter='';
+function setConvKeyFilter(v){_convKeyFilter=v;renderConversations();}
+
+async function loadConvKeyOptions(){
+  try{
+    const d=await api('/api/admin/keys');
+    const cur=_convKeyFilter;
+    $('convKeyFilter').innerHTML='<option value="">All keys</option>'+(d.keys||[]).map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+    $('convKeyFilter').value=cur;
+  }catch(e){}
+}
+
+function renderConversations(){
+  // 选中具体 key 时只保留该 key 发起的对话；云端独有/无归因的行被排除。
+  const c=_convsCache.filter(x=>!_convKeyFilter||x.apiKeyId===_convKeyFilter);
+  $('convRows').innerHTML=c.length?c.map(x=>{
+    const id=String(x.conversationId||'');
+    const updated=x.updateTimeUtc||x.createTimeUtc;
+    const keyCell=x.apiKeyId?(x.apiKeyName?esc(x.apiKeyName):'Unknown key'):'-';
+    return `<tr class="conv-row" data-conversation-id="${esc(id)}">
+        <td><button class="conv-link" type="button">${esc(x.chatName||t('Unnamed conversation'))}</button><div class="conv-meta"><code>${esc(id)}</code></div></td>
         <td>${Number(x.messageCount||0)}</td>
         <td>${esc(x.accountEmail||x.accountId||'-')}</td>
+        <td style="font-size:12px">${keyCell}</td>
         <td style="font-size:12px;color:var(--muted)">${updated?new Date(updated).toLocaleString():'-'}</td>
         <td><div style="display:flex;gap:6px"><button class="btn-sm btn" data-conv-action="view">View</button><button class="btn-sm btn danger" data-conv-action="delete">Delete</button></div></td>
       </tr>`;
-    }).join(''):'<tr><td colspan="5" class="empty">No conversations</td></tr>';
-    $('convRows').querySelectorAll('.conv-row').forEach(row=>{
-      row.addEventListener('click',event=>{
-        const action=event.target.closest('[data-conv-action]')?.dataset.convAction;
-        if(action==='delete'){event.stopPropagation();deleteConv(row.dataset.conversationId);return;}
-        openConversation(row.dataset.conversationId);
-      });
+    }).join(''):'<tr><td colspan="6" class="empty">No conversations</td></tr>';
+  $('convRows').querySelectorAll('.conv-row').forEach(row=>{
+    row.addEventListener('click',event=>{
+      const action=event.target.closest('[data-conv-action]')?.dataset.convAction;
+      if(action==='delete'){event.stopPropagation();deleteConv(row.dataset.conversationId);return;}
+      openConversation(row.dataset.conversationId);
     });
-    applyLocale(currentLocale);
-  }catch(e){$('convRows').innerHTML=`<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`;}
+  });
 }
 
 function openConversation(id){window.open('/conversation?id='+encodeURIComponent(id),'_blank','noopener');}
@@ -1447,16 +1713,16 @@ function termOpen(title){$('termTitle').textContent=title;$('termBody').innerHTM
 function termLine(msg,cls){const d=document.createElement('div');if(cls)d.className=cls;d.textContent='> '+msg;$('termBody').appendChild(d);$('termBody').scrollTop=$('termBody').scrollHeight;}
 function termClear(){$('termBody').innerHTML='';}
 
-async function deleteConv(id){if(!confirm('确定删除此对话？'))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice('已删除','success');loadConversations();}catch(e){showNotice(e.message,'error');}}
+async function deleteConv(id){if(!confirm(t('Are you sure you want to delete this conversation?')))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice(t('Deleted'),'success');loadConversations();}catch(e){showNotice(e.message,'error');}}
 async function cleanupAll(){
-  const total=confirm('确定清理所有对话？\n每条对话将逐一删除并在终端记录日志。');
+  const total=confirm(t('Are you sure you want to clean up all conversations?')+'\n'+t('Each conversation will be deleted individually and logged in the terminal.'));
   if(!total)return;
   termOpen('cleanup — m365-copilot2api');
-  termLine('开始清理所有对话…');
+  termLine(t('Starting cleanup of all conversations…'));
   let ok=0,fail=0,round=0;
   for(round=1;round<=100;round++){
     let d;
-    try{d=await api('/api/m365/conversations');}catch(e){termLine('获取对话列表失败：'+e.message,'err');break;}
+    try{d=await api('/api/m365/conversations');}catch(e){termLine(t('Failed to fetch conversation list')+': '+e.message,'err');break;}
     const c=d.data||[];
     if(!c.length){
       termLine('Round '+round+': list is empty.','dim');
@@ -1465,7 +1731,7 @@ async function cleanupAll(){
     termLine('Round '+round+': found '+c.length+' conversations (paged loading; fetch the next batch after deletion)','dim');
     for(let i=0;i<c.length;i++){
       const x=c[i];
-      const name=x.chatName||'未命名';
+      const name=x.chatName||t('Unnamed');
       termLine('['+(i+1)+'/'+c.length+'] Deleting "'+name+'" '+String(x.conversationId||'').slice(0,8)+'…');
       try{
         await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:x.conversationId})});
@@ -1476,7 +1742,7 @@ async function cleanupAll(){
     await new Promise(r=>setTimeout(r,500));
   }
   termLine('Finished: '+ok+' succeeded, '+fail+' failed, '+round+' rounds total.',fail?'warn':'ok');
-  showNotice('清理完成','success');loadConversations();
+  showNotice(t('Cleanup complete'),'success');loadConversations();
 }
 
 function proxyRow(x){
@@ -1489,7 +1755,7 @@ function proxyRow(x){
     <td style="font-size:12px;color:var(--muted)">${x.failures||0}</td>
     <td style="font-size:12px;color:var(--muted)">${x.cooldownUntil?new Date(x.cooldownUntil).toLocaleString():'-'}</td>
     <td style="text-align:right;white-space:nowrap">
-      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">检测</button>
+      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">${t('Check')}</button>
       <button class="btn-sm btn danger" onclick="proxyRemove('${esc(x.url)}')">Delete</button>
     </td>
   </tr>`;
@@ -1498,20 +1764,21 @@ async function loadProxies(){
   try{
     const d=await api('/api/admin/proxy-pool');
     const p=d.proxies||[];
+    window.proxyListCache=p;
     $('proxyRows').innerHTML=p.length?p.map(proxyRow).join(''):'<tr><td colspan="6" class="empty">No proxies; requests will connect directly</td></tr>';
   }catch(e){$('proxyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
 }
 async function proxyAdd(){
   const raw=$('proxyInput').value.trim();
-  if(!raw)return showNotice('请输入代理地址','error');
+  if(!raw)return showNotice(t('Please enter proxy address'),'error');
   try{
     const d=await api('/api/admin/proxy-pool',{method:'POST',body:JSON.stringify({urls:[raw]})});
     showNotice('Added '+d.added+' proxies','success');$('proxyInput').value='';loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyRemove(url){
-  if(!confirm('确定删除代理 '+url+'？'))return;
-  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice('已删除','success');loadProxies();}
+  if(!confirm(t('Are you sure you want to delete this proxy?')))return;
+  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice(t('Deleted'),'success');loadProxies();}
   catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckOne(url){
@@ -1519,13 +1786,13 @@ async function proxyCheckOne(url){
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT',body:JSON.stringify({url})});
     const rec=(d.proxies||[]).find(x=>x.url===url);
     if(rec&&rec.health==='reachable')showNotice('Connection healthy: '+rec.latencyMs+' ms','success');
-    else showNotice(rec&&rec.lastError?rec.lastError:'连接失败','error');
+    else showNotice(rec&&rec.lastError?rec.lastError:t('Connection failed'),'error');
     loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckAll(){
   termOpen('proxy check — m365-copilot2api');
-  termLine('正在检测所有代理…');
+  termLine(t('Checking all proxies…'));
   try{
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT'});
     const p=d.proxies||[];
@@ -1535,7 +1802,7 @@ async function proxyCheckAll(){
       else termLine('✗ '+x.url+(x.lastError?' — '+x.lastError:''),'err');
     }
     termLine('Finished: '+ok+'/'+p.length+' proxies available.',ok===p.length&&p.length?'ok':'warn');
-    showNotice('健康检查完成','success');loadProxies();
+    showNotice(t('Health check complete'),'success');loadProxies();
   }catch(e){termLine('Check failed: '+e.message,'err');}
 }
 async function proxyTest(){
@@ -1548,7 +1815,7 @@ async function loadModelTest(){
     const d=await api('/api/admin/models');
     const models=d.data||[];
     if(!models.length){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">No models available</td></tr>';return;}
-    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">点击"测试全部"</td></tr>`).join('');
+    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">${t('Click "Test all" to start')}</td></tr>`).join('');
   }catch(e){$('modelTestRows').innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`;}
 }
 async function modelTestOne(id,row){
@@ -1561,7 +1828,7 @@ async function modelTestOne(id,row){
   try{
     const d=await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model:id})});
     const ms=Math.round(performance.now()-start);
-    const content=d.reply||'（空回复）';
+    const content=d.reply||t('(empty reply)');
     badge.innerHTML='<span class="status online"><i></i>Healthy</span>';
     lat.textContent=ms+' ms';
     reply.textContent=String(content).slice(0,80);
@@ -1573,12 +1840,12 @@ async function modelTestOne(id,row){
 }
 async function modelTestAll(){
   const rows=[...document.querySelectorAll('#modelTestRows tr[data-model]')];
-  if(!rows.length){showNotice('请先加载模型列表','error');return;}
+  if(!rows.length){showNotice(t('Please load model list first'),'error');return;}
   for(let i=0;i<rows.length;i++){
     modelTestOne(rows[i].dataset.model,rows[i]);
     await new Promise(r=>setTimeout(r,250));
   }
-  showNotice('模型测试完成','success');
+  showNotice(t('Model test complete'),'success');
 }
 
 async function loadSettings(){
@@ -1597,7 +1864,7 @@ async function saveSettings(){
     if(listen)body.listenAddress=listen;
     if(timeout)body.chatTimeoutSeconds=parseInt(timeout);
     await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
-    showNotice('设置已保存','success');
+    showNotice(t('Settings saved'),'success');
   }catch(e){showNotice(e.message,'error');}
 }
 

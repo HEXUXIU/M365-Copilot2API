@@ -14,7 +14,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -27,8 +29,18 @@ var ErrRateLimitNotice = errors.New("upstream rate-limit notice")
 
 var ErrEmptyCompletion = errors.New("upstream returned empty completion; tone may be unavailable for this tenant")
 
-// DialError carries the HTTP status and optional Retry-After from a failed
-// WebSocket dial so the web layer can route it into the correct cooldown.
+var ErrMeteringOutOfCredits = errors.New("upstream metering out of credits")
+
+const gatewayCustomInstructions = `You have access to real tools on the caller's machine. Call tools directly when needed. Do not say tools are unavailable.`
+
+var ErrContentPolicyBlocked = errors.New("upstream content policy blocked")
+
+type ThrottlingInfo struct {
+	Raw             json.RawMessage
+	MaxTurnCount    int
+	MeteringCredits any
+}
+
 type DialError struct {
 	Status     int
 	RetryAfter int
@@ -43,6 +55,9 @@ var chTrace = os.Getenv("M365_TRACE") == "1"
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "..."
 }
@@ -81,9 +96,8 @@ type Request struct {
 	Attachments    []Attachment
 	Tools          []Tool
 	ToolChoice     any
-	MCPServerURL   string // URL of the MCP HTTP SSE server for tool discovery
-	// Started is true only for the first turn of a ChatHub conversation.
-	Started bool
+	Started        bool
+	MCPServerURL   string
 }
 
 // StreamEvent is the protocol-neutral event exposed while ChatHub is still
@@ -107,7 +121,7 @@ type Result struct {
 	ConversationID string
 	SessionID      string
 	RequestID      string
-	Throttling     any
+	Throttling     *ThrottlingInfo
 	RawResult      string
 	Events         []json.RawMessage
 	Normalized     []Event
@@ -252,8 +266,15 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	_ = conn.SetReadDeadline(time.Now().Add(45 * time.Second))
 	_ = conn.SetWriteDeadline(time.Now().Add(15 * time.Second))
 
+	var writeMu sync.Mutex
+	wsWrite := func(msgType int, data []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteMessage(msgType, data)
+	}
+
 	if !reused {
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"protocol":"json","version":1}`+rs)); err != nil {
+		if err := wsWrite(websocket.TextMessage, []byte(`{"protocol":"json","version":1}`+rs)); err != nil {
 			returnConn = false
 			return Result{}, fmt.Errorf("handshake send: %w", err)
 		}
@@ -263,7 +284,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		}
 	}
 
-	payload := chatPayload(req.Text, req.SessionID, req.ConversationID, requestID, req.Tone, firstTurn, req.Attachments, req.Tools, req.ToolChoice, req.MCPServerURL)
+	payload := chatPayload(req.Text, req.SessionID, req.ConversationID, requestID, req.Tone, firstTurn, req.Attachments, req.Tools, req.ToolChoice)
 	log.Printf("chathub prompt-trace text=%d tools=%d payload=%d", len(req.Text), len(req.Tools), len(payload))
 	if c.Trace != nil {
 		meta := map[string]any{"stage": "chathub_payload", "attachment_count": len(req.Attachments), "payload_has_attachments": strings.Contains(payload, `"attachments"`), "attachments": []map[string]any{}}
@@ -274,7 +295,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	}
 	log.Printf("chathub timing handshake_ms=%d", time.Since(dialStarted).Milliseconds())
 	payloadSentAt := time.Now()
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
+	if err := wsWrite(websocket.TextMessage, []byte(payload)); err != nil {
 		returnConn = false
 		return Result{}, fmt.Errorf("chat send: %w", err)
 	}
@@ -316,7 +337,51 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			strings.Contains(t, "太多请求") ||
 			strings.Contains(t, "无法响应这么多请求") ||
 			strings.Contains(t, "too many requests") ||
-			strings.Contains(t, "please retry") && strings.Contains(t, "later")
+			strings.Contains(t, "please retry") && strings.Contains(t, "later") ||
+			strings.Contains(t, "customthrottlereply") ||
+			strings.Contains(t, "customlimitthrottlereply") ||
+			strings.Contains(t, "meteringoutofcredits")
+	}
+	meteringOutOfCredits := func(text string) bool {
+		return strings.Contains(strings.ToLower(text), "meteringoutofcredits")
+	}
+	contentPolicyBlocked := func(text string) bool {
+		if len(text) > 300 {
+			return false
+		}
+		tl := strings.ToLower(text)
+		return (strings.Contains(tl, "content policy") && strings.Contains(tl, "block")) ||
+			strings.Contains(tl, "i'm sorry, i can't respond") ||
+			strings.Contains(tl, "i'm sorry, i cannot respond") ||
+			strings.Contains(tl, "很抱歉，我无法响应") ||
+			strings.Contains(tl, "我很抱歉，我无法响应") ||
+			strings.Contains(tl, "contentfilter") ||
+			strings.Contains(tl, "safetyblocked")
+	}
+	parseThrottling := func(raw any) *ThrottlingInfo {
+		if raw == nil {
+			return nil
+		}
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return nil
+		}
+		info := &ThrottlingInfo{Raw: json.RawMessage(b)}
+		var m map[string]any
+		if json.Unmarshal(b, &m) == nil {
+			if v, ok := m["maxTurnCount"]; ok {
+				if f, ok := v.(float64); ok {
+					info.MaxTurnCount = int(f)
+				}
+			}
+			if _, ok := m["meteringInformation"]; ok {
+				info.MeteringCredits = m["meteringInformation"]
+			}
+			if _, ok := m["remainingAllowance"]; ok {
+				info.MeteringCredits = m["remainingAllowance"]
+			}
+		}
+		return info
 	}
 	emitSnapshot := func(snapshot string) error {
 		if snapshot == "" {
@@ -326,7 +391,13 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			log.Printf("[trace:emitSnapshot] cur=%d snapshot=%d", streamed.Len(), len(snapshot))
 		}
 		if rateLimited(snapshot) {
+			if meteringOutOfCredits(snapshot) {
+				return ErrMeteringOutOfCredits
+			}
 			return ErrRateLimitNotice
+		}
+		if contentPolicyBlocked(snapshot) {
+			return ErrContentPolicyBlocked
 		}
 		cur := streamed.String()
 		if cur == "" {
@@ -342,7 +413,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		return nil
 	}
 	var final string
-	var throttling any
+	var throttlingInfo *ThrottlingInfo
 	var rawResult string
 	var events []json.RawMessage
 	seenStreamTools := map[string]bool{}
@@ -365,6 +436,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		select {
 		case <-ctx.Done():
 			returnConn = false
+			conn.Close()
 			return Result{}, ctx.Err()
 		case read = <-readCh:
 		}
@@ -393,7 +465,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 
 			// SignalR ping
 			if int(t) == 6 {
-				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":6}`+rs))
+				_ = wsWrite(websocket.TextMessage, []byte(`{"type":6}`+rs))
 				continue
 			}
 
@@ -436,10 +508,10 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 						}
 					}
 					if thr, ok := arg["throttling"]; ok {
-						throttling = thr
+						throttlingInfo = parseThrottling(thr)
 					}
 					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame {
-						if err := emitSnapshot(w); err != nil {
+						if err := emitDelta(w); err != nil {
 							returnConn = false
 							return Result{}, err
 						}
@@ -471,15 +543,23 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 				item, _ := obj["item"].(map[string]any)
 				if item != nil {
 					if thr, ok := item["throttling"]; ok {
-						throttling = thr
+						throttlingInfo = parseThrottling(thr)
 					}
 					if res, ok := item["result"].(map[string]any); ok {
 						rawResult, _ = res["value"].(string)
 				if msg, ok := res["message"].(string); ok {
 						final = msg
+						if meteringOutOfCredits(final) {
+							returnConn = false
+							return Result{}, ErrMeteringOutOfCredits
+						}
 						if rateLimited(final) {
 							returnConn = false
 							return Result{}, ErrRateLimitNotice
+						}
+						if contentPolicyBlocked(final) {
+							returnConn = false
+							return Result{}, ErrContentPolicyBlocked
 						}
 					}
 					}
@@ -503,7 +583,14 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 				}
 				if rateLimited(text) {
 					returnConn = false
+					if meteringOutOfCredits(text) {
+						return Result{}, ErrMeteringOutOfCredits
+					}
 					return Result{}, ErrRateLimitNotice
+				}
+				if contentPolicyBlocked(text) {
+					returnConn = false
+					return Result{}, ErrContentPolicyBlocked
 				}
 				if text == "" {
 					returnConn = false
@@ -515,7 +602,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					ConversationID: req.ConversationID,
 					SessionID:      req.SessionID,
 					RequestID:      requestID,
-					Throttling:     throttling,
+					Throttling:     throttlingInfo,
 					RawResult:      rawResult,
 					Events:         events,
 					Normalized:     NormalizeEvents(events),
@@ -568,21 +655,24 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		// For non-data URLs, download the image first
 		imageData := a.URL
 		if !strings.HasPrefix(a.URL, "data:") {
-			if err := validateRemoteDownloadURL(a.URL); err != nil {
-				return err
+			if err := ValidateDownloadURL(a.URL); err != nil {
+				return fmt.Errorf("attachment %d: %w", i, err)
 			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
 			if err != nil {
-				continue
+				return fmt.Errorf("attachment %d: create request: %w", i, err)
 			}
 			resp, err := c.HTTPClient.Do(req)
 			if err != nil {
-				continue
+				return fmt.Errorf("attachment %d: download: %w", i, err)
 			}
 			body, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentMiB<<20))
 			resp.Body.Close()
-			if err != nil || resp.StatusCode != http.StatusOK {
-				continue
+			if err != nil {
+				return fmt.Errorf("attachment %d: read body: %w", i, err)
+			}
+			if resp.StatusCode != http.StatusOK {
+				return fmt.Errorf("attachment %d: HTTP %d", i, resp.StatusCode)
 			}
 			mimeType := resp.Header.Get("Content-Type")
 			if mimeType == "" {
@@ -684,8 +774,8 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 	return nil
 }
 
-func chatPayload(text, sessionID, conversationID, requestID, tone string, firstTurn bool, attachments []Attachment, tools []Tool, toolChoice any, mcpServerURL string) string {
-	text = toolProtocolPrompt(text, tools, toolChoice, len(clientPlugins(tools, mcpServerURL)) > 0)
+func chatPayload(text, sessionID, conversationID, requestID, tone string, firstTurn bool, attachments []Attachment, tools []Tool, toolChoice any) string {
+	text = toolProtocolPrompt(text, tools, toolChoice)
 	message := map[string]any{
 		"author":                "user",
 		"attachments":           attachments,
@@ -790,8 +880,9 @@ func chatPayload(text, sessionID, conversationID, requestID, tone string, firstT
 				"streamingMode": "ConciseWithPadding",
 				"message":       message,
 
-				"plugins":    clientPlugins(tools, mcpServerURL),
-				"toolChoice": toolChoice,
+				"plugins":            clientPlugins(tools),
+				"toolChoice":         toolChoice,
+				"customInstructions": gatewayCustomInstructions,
 			},
 		},
 		"invocationId": "0",

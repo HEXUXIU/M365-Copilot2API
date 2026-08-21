@@ -188,16 +188,16 @@ func (r anthropicRequest) openAI() (oaiReq, error) {
 								media = "application/octet-stream"
 							}
 							text = append(text, map[string]any{
-								"type":      "input_image",
-								"image_url": "data:" + media + ";base64," + data,
+								"type":      "image_url",
+								"image_url": map[string]any{"url": "data:" + media + ";base64," + data},
 							})
 						}
 					case "url":
 						url, _ := source["url"].(string)
 						if url != "" {
 							text = append(text, map[string]any{
-								"type":      "input_image",
-								"image_url": url,
+								"type":      "image_url",
+								"image_url": map[string]any{"url": url},
 							})
 						}
 					}
@@ -210,7 +210,11 @@ func (r anthropicRequest) openAI() (oaiReq, error) {
 			}
 		}
 		if len(text) > 0 || len(calls) > 0 {
-			o.Messages = append(o.Messages, oaiMsg{Role: m.Role, Content: text, ToolCalls: calls})
+			content := any(text)
+			if len(text) == 0 {
+				content = nil
+			}
+			o.Messages = append(o.Messages, oaiMsg{Role: m.Role, Content: content, ToolCalls: calls})
 		}
 	}
 	for _, t := range r.Tools {

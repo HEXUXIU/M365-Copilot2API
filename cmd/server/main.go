@@ -41,7 +41,7 @@ func main() {
 		Addr:              listen,
 		Handler:           s.Routes(),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
+		ReadTimeout:       120 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		WriteTimeout:      0, // streaming endpoints need an open-ended write window.
 	}

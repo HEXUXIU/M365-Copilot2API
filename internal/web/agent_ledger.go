@@ -86,7 +86,7 @@ func buildAgentLedger(messages []oaiMsg) agentLedger {
 	for _, id := range order {
 		e := calls[id]
 		l.ToolRounds++
-		sig := e.Name + "\x00" + e.Arguments
+		sig := e.Name + "\x00" + canonicalToolArguments(e.Arguments)
 		seenCall[sig]++
 		if seenCall[sig] >= 2 {
 			l.RepeatedCall = true
@@ -100,7 +100,7 @@ func buildAgentLedger(messages []oaiMsg) agentLedger {
 		} else {
 			l.Completed = append(l.Completed, e)
 			if e.Failed {
-				fs := e.Name + "\x00" + e.Arguments + "\x00" + normalizeFailure(e.Result)
+				fs := e.Name + "\x00" + canonicalToolArguments(e.Arguments) + "\x00" + normalizeFailure(e.Result)
 				seenFailure[fs]++
 				if seenFailure[fs] >= 2 {
 					l.RepeatedFailure = true
@@ -155,11 +155,18 @@ func (l agentLedger) hasCompleted(name, args string) bool {
 	return false
 }
 func filterCompletedCalls(calls []detectedToolCall, l agentLedger) []detectedToolCall {
-	out := calls[:0]
+	out := make([]detectedToolCall, 0, len(calls))
+	seen := make(map[string]struct{}, len(l.Completed)+len(calls))
+	for _, e := range l.Completed {
+		seen[e.Name+"\x00"+canonicalToolArguments(e.Arguments)] = struct{}{}
+	}
 	for _, c := range calls {
-		if !l.hasCompleted(c.Name, string(c.Arguments)) {
-			out = append(out, c)
+		sig := c.Name + "\x00" + canonicalToolArguments(string(c.Arguments))
+		if _, duplicate := seen[sig]; duplicate {
+			continue
 		}
+		seen[sig] = struct{}{}
+		out = append(out, c)
 	}
 	return out
 }

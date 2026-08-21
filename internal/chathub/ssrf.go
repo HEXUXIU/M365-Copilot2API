@@ -10,7 +10,7 @@ import (
 // validateRemoteDownloadURL blocks SSRF: only https and public routable
 // addresses are accepted, with a lookup-time recheck against private,
 // loopback, link-local and cloud metadata ranges.
-func validateRemoteDownloadURL(raw string) error {
+func ValidateDownloadURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("invalid attachment URL")

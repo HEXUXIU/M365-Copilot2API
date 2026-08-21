@@ -38,7 +38,7 @@ func (s *Server) proxyPool(w http.ResponseWriter, r *http.Request) {
 			URLs []string `json:"urls"`
 		}
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&body) != nil {
-			writeOpenAIError(w, 400, "invalid_request_error", "bad json")
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_json", "bad json")
 			return
 		}
 		urls := append(body.URLs, body.URL)
@@ -49,11 +49,11 @@ func (s *Server) proxyPool(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				if err := outbound.AddProxy(strings.TrimSpace(v)); err != nil {
-					writeOpenAIError(w, 400, "invalid_request_error", err.Error())
+					writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", err.Error())
 					return
 				}
 				if err := s.persistProxyPool(); err != nil {
-					writeOpenAIError(w, 500, "storage_error", err.Error())
+					writeOpenAIError(w, 500, "storage_error", "storage_error", err.Error())
 					return
 				}
 				added++
@@ -64,19 +64,19 @@ func (s *Server) proxyPool(w http.ResponseWriter, r *http.Request) {
 		raw := strings.TrimRight(strings.TrimSpace(r.URL.Query().Get("url")), "/")
 		if raw == "" {
 			if err := outbound.ConfigurePool(nil); err != nil {
-				writeOpenAIError(w, 400, "invalid_request_error", err.Error())
+				writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", err.Error())
 				return
 			}
 		} else if err := outbound.RemoveProxy(raw); err != nil {
-			writeOpenAIError(w, 400, "invalid_request_error", err.Error())
+			writeOpenAIError(w, 400, "invalid_request_error", "invalid_parameter", err.Error())
 			return
 		}
 		if err := s.persistProxyPool(); err != nil {
-			writeOpenAIError(w, 500, "storage_error", err.Error())
+			writeOpenAIError(w, 500, "storage_error", "storage_error", err.Error())
 			return
 		}
 		jsonOut(w, map[string]any{"ok": true, "proxies": outbound.ProxyPoolStatus()})
 	default:
-		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method_not_allowed", "method not allowed")
 	}
 }

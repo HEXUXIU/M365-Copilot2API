@@ -47,5 +47,9 @@ func Save(s Store) error {
 	if e != nil {
 		return e
 	}
-	return os.WriteFile(p, b, 0o600)
+	tmp := p + ".tmp"
+	if e := os.WriteFile(tmp, b, 0o600); e != nil {
+		return e
+	}
+	return os.Rename(tmp, p)
 }

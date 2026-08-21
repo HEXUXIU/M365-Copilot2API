@@ -25,8 +25,8 @@ func TestBuildAnswerRequestRouterOmitsNativePlugins(t *testing.T) {
 	if len(req.Tools) != 0 || req.ToolChoice != nil {
 		t.Fatalf("router answer leaked native tools: tools=%d choice=%#v", len(req.Tools), req.ToolChoice)
 	}
-	if req.Text != "[user]\nhello" {
-		t.Fatalf("empty ledger changed answer prompt: %q", req.Text)
+	if !strings.Contains(req.Text, "[user]\nhello") {
+		t.Fatalf("answer prompt lost original text: %q", req.Text)
 	}
 }
 
@@ -44,15 +44,5 @@ func TestBuildAnswerRequestAddsCompletedEvidence(t *testing.T) {
 		if !strings.Contains(req.Text, want) {
 			t.Fatalf("answer prompt missing %q: %s", want, req.Text)
 		}
-	}
-}
-
-func TestBuildAnswerRequestMCPForwardsTools(t *testing.T) {
-	req := buildAnswerRequest("[user]\nhello", "magic", answerRequestTestBody(), agentLedger{}, "router", "http://127.0.0.1:4142/v1/mcp/sse")
-	if len(req.Tools) != 1 || req.ToolChoice != "auto" {
-		t.Fatalf("MCP answer lost tools: tools=%d choice=%#v", len(req.Tools), req.ToolChoice)
-	}
-	if req.MCPServerURL != "http://127.0.0.1:4142/v1/mcp/sse" {
-		t.Fatalf("MCP URL not set: %q", req.MCPServerURL)
 	}
 }

@@ -24,7 +24,7 @@ type apiKeyRecord struct {
 }
 type apiKeyStore struct {
 	mu      sync.Mutex
-	Path    string
+	Path    string         `json:"-"`
 	Keys    []apiKeyRecord `json:"keys"`
 	persist *persistStore
 }
@@ -44,18 +44,13 @@ func openAPIKeys() *apiKeyStore {
 	s := newAPIKeyStore(p)
 	b, e := os.ReadFile(p)
 	if e == nil && json.Unmarshal(b, s) == nil {
-		migrated := false
+		// Local extension: keep stored Raw keys so the console can re-copy
+		// them later. Upstream vanilla wipes Raw on load; we deliberately
+		// persist it (file perms 0600, admin-only API).
 		for i := range s.Keys {
-			if s.Keys[i].Raw != "" {
-				if s.Keys[i].Hash == "" {
-					s.Keys[i].Hash = keyHash(s.Keys[i].Raw)
-				}
-				s.Keys[i].Raw = ""
-				migrated = true
+			if s.Keys[i].Raw != "" && s.Keys[i].Hash == "" {
+				s.Keys[i].Hash = keyHash(s.Keys[i].Raw)
 			}
-		}
-		if migrated {
-			_ = s.flush()
 		}
 	}
 	return s
@@ -79,7 +74,7 @@ func (s *apiKeyStore) create(name string) (apiKeyRecord, string, error) {
 		return apiKeyRecord{}, "", e
 	}
 	raw := "m365_" + hex.EncodeToString(b)
-	r := apiKeyRecord{ID: hex.EncodeToString(b[:8]), Name: name, Prefix: raw[:12], Hash: keyHash(raw), CreatedAt: time.Now()}
+	r := apiKeyRecord{ID: hex.EncodeToString(b[:8]), Name: name, Prefix: raw[:12], Hash: keyHash(raw), Raw: raw, CreatedAt: time.Now()}
 	s.mu.Lock()
 	s.Keys = append(s.Keys, r)
 	s.mu.Unlock()
@@ -100,7 +95,6 @@ func (s *apiKeyStore) list() []apiKeyRecord {
 	copy(out, s.Keys)
 	for i := range out {
 		out[i].Hash = ""
-		out[i].Raw = ""
 	}
 	return out
 }
@@ -187,4 +181,64 @@ func (s *apiKeyStore) valid(raw string) bool {
 		s.persist.markDirty()
 	}
 	return found
+}
+
+// lookup 按 sha256 查找 key 的副本（含已 revoked 的 key，用量归因需要）。
+// 不触碰 LastUsedAt —— 该字段由 valid() 维护。
+func (s *apiKeyStore) lookup(raw string) (apiKeyRecord, bool) {
+	if raw == "" {
+		return apiKeyRecord{}, false
+	}
+	h := keyHash(raw)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Keys {
+		if s.Keys[i].Hash == h {
+			rec := s.Keys[i]
+			rec.Hash = ""
+			return rec, true
+		}
+	}
+	return apiKeyRecord{}, false
+}
+
+// byID 返回指定 ID 的 key 副本。
+func (s *apiKeyStore) byID(id string) (apiKeyRecord, bool) {
+	if id == "" {
+		return apiKeyRecord{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Keys {
+		if s.Keys[i].ID == id {
+			rec := s.Keys[i]
+			rec.Hash = ""
+			return rec, true
+		}
+	}
+	return apiKeyRecord{}, false
+}
+
+// resolveName 把 key ID（新记录）或旧版截断前缀（"m365_ab1..." = 前 8 字符 + "..."，
+// 升级前 usage.jsonl 的格式）解析成 key 当前名称。改名即时生效；解析失败返回 ""。
+// store 内前缀均为 m365_ 开头，JWT（eyJ...）前缀不会误匹配。
+func (s *apiKeyStore) resolveName(id, legacyPrefix string) string {
+	if id != "" {
+		if rec, ok := s.byID(id); ok {
+			return rec.Name
+		}
+		return ""
+	}
+	if len(legacyPrefix) != 11 || !strings.HasSuffix(legacyPrefix, "...") {
+		return ""
+	}
+	base := legacyPrefix[:8]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.Keys {
+		if strings.HasPrefix(s.Keys[i].Prefix, base) {
+			return s.Keys[i].Name
+		}
+	}
+	return ""
 }

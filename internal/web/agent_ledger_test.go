@@ -57,6 +57,36 @@ func TestAgentLedgerDetectsRepeatedCallAndRoundLimit(t *testing.T) {
 	}
 }
 
+func TestAgentLedgerDetectsEquivalentJSONArgumentsAsRepeated(t *testing.T) {
+	msgs := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c1", "type": "function", "function": map[string]any{"name": "run", "arguments": "{\"a\":1,\"b\":2}"}}}},
+		{Role: "tool", ToolCallID: "c1", Content: "done"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c2", "type": "function", "function": map[string]any{"name": "run", "arguments": "{ \"b\": 2, \"a\": 1 }"}}}},
+		{Role: "tool", ToolCallID: "c2", Content: "done"},
+	}
+
+	l := buildAgentLedger(msgs)
+	if !l.RepeatedCall {
+		t.Fatalf("equivalent JSON arguments should count as a repeated call: %+v", l)
+	}
+}
+
+func TestFilterCompletedCallsDeduplicatesCurrentBatch(t *testing.T) {
+	calls := []detectedToolCall{
+		{Name: "run", Arguments: []byte("{\"a\":1,\"b\":2}")},
+		{Name: "run", Arguments: []byte("{ \"b\": 2, \"a\": 1 }")},
+		{Name: "read", Arguments: []byte("{\"path\":\"x\"}")},
+	}
+
+	got := filterCompletedCalls(calls, agentLedger{})
+	if len(got) != 2 {
+		t.Fatalf("expected duplicate calls in one model response to be removed, got %d: %+v", len(got), got)
+	}
+	if got[0].Name != "run" || got[1].Name != "read" {
+		t.Fatalf("unexpected retained calls: %+v", got)
+	}
+}
+
 func TestActiveMessagesIgnoresOlderToolHistory(t *testing.T) {
 	var msgs []oaiMsg
 	for i := 0; i < 20; i++ {

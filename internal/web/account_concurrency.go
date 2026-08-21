@@ -16,7 +16,7 @@ type accountConcurrency struct {
 	mu       sync.Mutex
 	limit    int
 	inflight map[string]int
-	changed  chan struct{}
+	cond     *sync.Cond
 }
 
 func newAccountConcurrency() *accountConcurrency {
@@ -26,7 +26,9 @@ func newAccountConcurrency() *accountConcurrency {
 			limit = parsed
 		}
 	}
-	return &accountConcurrency{limit: limit, inflight: map[string]int{}, changed: make(chan struct{})}
+	c := &accountConcurrency{limit: limit, inflight: map[string]int{}}
+	c.cond = sync.NewCond(&c.mu)
+	return c
 }
 
 func (c *accountConcurrency) Available(accountID string) bool {
@@ -42,34 +44,46 @@ func (c *accountConcurrency) Acquire(ctx context.Context, accountID string) (fun
 	if c == nil || accountID == "" {
 		return func() {}, nil
 	}
-	for {
-		c.mu.Lock()
-		if c.inflight[accountID] < c.limit {
-			c.inflight[accountID]++
-			c.mu.Unlock()
-			var once sync.Once
-			return func() {
-				once.Do(func() {
-					c.mu.Lock()
-					if c.inflight[accountID] <= 1 {
-						delete(c.inflight, accountID)
-					} else {
-						c.inflight[accountID]--
-					}
-					close(c.changed)
-					c.changed = make(chan struct{})
-					c.mu.Unlock()
-				})
-			}, nil
-		}
-		changed := c.changed
-		c.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
 		select {
 		case <-ctx.Done():
+			c.cond.Broadcast()
+		case <-done:
+		}
+	}()
+
+	c.mu.Lock()
+	for c.inflight[accountID] >= c.limit {
+		if ctx.Err() != nil {
+			c.mu.Unlock()
+			close(done)
 			return nil, ctx.Err()
-		case <-changed:
+		}
+		c.cond.Wait()
+		if ctx.Err() != nil {
+			c.mu.Unlock()
+			close(done)
+			return nil, ctx.Err()
 		}
 	}
+	c.inflight[accountID]++
+	c.mu.Unlock()
+	close(done)
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			if c.inflight[accountID] <= 1 {
+				delete(c.inflight, accountID)
+			} else {
+				c.inflight[accountID]--
+			}
+			c.cond.Broadcast()
+			c.mu.Unlock()
+		})
+	}, nil
 }
 
 func (c *accountConcurrency) Snapshot() map[string]any {
@@ -83,6 +97,15 @@ func (c *accountConcurrency) Snapshot() map[string]any {
 		inflight[accountID] = count
 	}
 	return map[string]any{"limit": c.limit, "inflight": inflight}
+}
+
+func (c *accountConcurrency) inflightCount(accountID string) int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.inflight[accountID]
 }
 
 func (s *Server) accountAvailable(accountID string) bool {

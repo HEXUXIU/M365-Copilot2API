@@ -15,7 +15,7 @@ func TestResolveContentKeyedSameIdentity(t *testing.T) {
 	sr := openSessionResolver()
 
 	// 首次请求绑定云端对话，同一 IP/UA 但不同 user 账户。
-	sr.Bind("", "conv-shared", "acc1",
+	sr.Bind("", "conv-shared", "acc1", "",
 		&oaiReq{User: "alice", Messages: []oaiMsg{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "你好"}}},
 		"",
 		resolverTestRequest("203.0.113.10", "client-a", "alice"))
@@ -50,7 +50,7 @@ func TestResolveDoesNotMatchAcrossIdentity(t *testing.T) {
 	t.Setenv("M365_USER_SESSION_CACHE", filepath.Join(t.TempDir(), "users.json"))
 	sr := openSessionResolver()
 
-	sr.Bind("", "conv-a", "acc1",
+	sr.Bind("", "conv-a", "acc1", "",
 		&oaiReq{Messages: []oaiMsg{{Role: "user", Content: "继续"}}},
 		"",
 		resolverTestRequest("203.0.113.10", "client-a", "alice"))
@@ -67,7 +67,7 @@ func TestResolveSingleMessageReusesForSameUser(t *testing.T) {
 	t.Setenv("M365_SESSION_CACHE", filepath.Join(t.TempDir(), "sessions.json"))
 	sr := openSessionResolver()
 
-	sr.Bind("sess-short", "conv-short", "acc1",
+	sr.Bind("sess-short", "conv-short", "acc1", "",
 		&oaiReq{Messages: []oaiMsg{{Role: "user", Content: "继续"}}},
 		"",
 		resolverTestRequest("203.0.113.10", "client-a", "alice"))
@@ -83,7 +83,7 @@ func TestResolveSingleMessageNeverReusesAcrossUsers(t *testing.T) {
 	t.Setenv("M365_SESSION_CACHE", filepath.Join(t.TempDir(), "sessions.json"))
 	sr := openSessionResolver()
 
-	sr.Bind("sess-short", "conv-short", "acc1",
+	sr.Bind("sess-short", "conv-short", "acc1", "",
 		&oaiReq{Messages: []oaiMsg{{Role: "user", Content: "继续"}}},
 		"",
 		resolverTestRequest("203.0.113.10", "client-a", "alice"))
@@ -105,7 +105,7 @@ func resolverTestRequest(ip, ua, user string) *http.Request {
 func TestResolverIncrementalBoundary(t *testing.T) {
 	t.Setenv("M365_SESSION_CACHE", filepath.Join(t.TempDir(), "sessions.json"))
 	sr := openSessionResolver()
-	sr.Bind("", "conv-inc", "acc1",
+	sr.Bind("", "conv-inc", "acc1", "",
 		&oaiReq{Messages: []oaiMsg{
 			{Role: "user", Content: "第一轮问题"},
 			{Role: "assistant", Content: "第一轮回答"},
@@ -138,7 +138,7 @@ func TestResolverIncrementalBoundary(t *testing.T) {
 func TestResolverEvictsAfterTTL(t *testing.T) {
 	t.Setenv("M365_SESSION_CACHE", filepath.Join(t.TempDir(), "sessions.json"))
 	sr := openSessionResolver()
-	sr.Bind("sess-old", "conv-old", "acc1",
+	sr.Bind("sess-old", "conv-old", "acc1", "",
 		&oaiReq{Messages: []oaiMsg{{Role: "user", Content: "旧问题"}}},
 		"",
 		httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil))
@@ -163,7 +163,7 @@ func TestResolverPersistsHistoryAcrossReload(t *testing.T) {
 	t.Setenv("M365_SESSION_CACHE", path)
 
 	sr1 := openSessionResolver()
-	sr1.Bind("", "conv-persist", "acc1",
+	sr1.Bind("", "conv-persist", "acc1", "",
 		&oaiReq{Messages: []oaiMsg{
 			{Role: "user", Content: "persisted question"},
 			{Role: "assistant", Content: "persisted answer"},
@@ -190,6 +190,44 @@ func TestResolverPersistsHistoryAcrossReload(t *testing.T) {
 	}
 	if res.HistoryLen != 2 {
 		t.Fatalf("expected HistoryLen=2 after reload, got %d", res.HistoryLen)
+	}
+}
+
+func TestBindRecordsAndUpdatesAPIKeyID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sessions.json")
+	t.Setenv("M365_SESSION_CACHE", path)
+	sr := openSessionResolver()
+
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hi"}}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	// 新建会话记录来源 key。
+	sr.Bind("", "conv-k", "acc1", "key-1", body, "", req)
+	sess, ok := sr.GetConversation("conv-k")
+	if !ok || sess.APIKeyID != "key-1" {
+		t.Fatalf("after first bind: found=%v apiKeyID=%q, want key-1", ok, sess.APIKeyID)
+	}
+
+	// 同一云端对话续轮换 key → 更新为最近一次的 key。
+	sr.Bind("", "conv-k", "acc1", "key-2", body, "", req)
+	if sess, _ = sr.GetConversation("conv-k"); sess.APIKeyID != "key-2" {
+		t.Fatalf("after rebind with key-2: apiKeyID=%q, want key-2", sess.APIKeyID)
+	}
+
+	// JWT/未知 key（空 ID）续轮不应抹掉已记录的归因。
+	sr.Bind(sess.SessionID, "conv-k", "acc1", "", body, "", req)
+	if sess, _ = sr.GetConversation("conv-k"); sess.APIKeyID != "key-2" {
+		t.Fatalf("after JWT rebind: apiKeyID=%q, want key-2 kept", sess.APIKeyID)
+	}
+
+	// 重启后归因仍在。
+	if err := sr.persist.flushNowBlocking(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := openSessionResolver()
+	if sess, ok = reloaded.GetConversation("conv-k"); !ok || sess.APIKeyID != "key-2" {
+		t.Fatalf("after reload: found=%v apiKeyID=%q, want key-2", ok, sess.APIKeyID)
 	}
 }
 

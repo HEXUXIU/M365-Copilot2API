@@ -568,8 +568,10 @@ if (response.output_text) {
           <div class="term-body" id="termBody"></div>
         </div>
         <div class="card">
-          <div class="card-head"><span class="card-title">Conversation list</span></div>
-          <table class="table"><thead><tr><th>Name</th><th>Messages</th><th>Account</th><th>Last updated</th><th>Actions</th></tr></thead><tbody id="convRows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table>
+          <div class="card-head"><span class="card-title">Conversation list</span>
+            <select id="convKeyFilter" style="width:190px;padding:6px 10px;font-size:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);color:var(--fg)" aria-label="Filter by API key" onchange="setConvKeyFilter(this.value)"><option value="">All keys</option></select>
+          </div>
+          <table class="table"><thead><tr><th>Name</th><th>Messages</th><th>Account</th><th>API Key</th><th>Last updated</th><th>Actions</th></tr></thead><tbody id="convRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
@@ -856,7 +858,10 @@ const localeText={
   'Cooling down': {'zh-CN':'冷却中','zh-TW':'冷卻中','ja':'クールダウン中','ko':'쿨다운 중','es':'Enfriando','fr':'En attente','de':'Wird abgekühlt','pt-BR':'Resfriando','ru':'Ожидание','ar':'جارٍ التهدئة'},
   'Testing…': {'zh-CN':'测试中…','zh-TW':'測試中…','ja':'テスト中…','ko':'테스트 중…','es':'Probando…','fr':'Test en cours…','de':'Wird getestet…','pt-BR':'Testando…','ru':'Тестирование…','ar':'جارٍ الاختبار…'},
   'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'},
+  'All keys': {'zh-CN':'全部密钥','zh-TW':'全部金鑰','ja':'すべてのキー','ko':'모든 키','es':'Todas las claves','fr':'Toutes les clés','de':'Alle Schlüssel','pt-BR':'Todas as chaves','ru':'Все ключи','ar':'كل المفاتيح'},
+  'Filter by API key': {'zh-CN':'按 API Key 筛选','zh-TW':'按 API Key 篩選','ja':'API キーで絞り込み','ko':'API 키로 필터','es':'Filtrar por clave API','fr':'Filtrer par clé API','de':'Nach API-Schlüssel filtern','pt-BR':'Filtrar por chave API','ru':'Фильтр по API-ключу','ar':'تصفية حسب مفتاح API'},
   'Tokens (7d)': {'zh-CN':'近7天 Token','zh-TW':'近7天 Token','ja':'7日間のトークン','ko':'7일 토큰','es':'Tokens (7 días)','fr':'Tokens (7 jours)','de':'Tokens (7 Tage)','pt-BR':'Tokens (7 dias)','ru':'Токены (7 дн.)','ar':'الرموز (7 أيام)'},
+  'Unknown key': {'zh-CN':'未知密钥','zh-TW':'未知金鑰','ja':'不明なキー','ko':'알 수 없는 키','es':'Clave desconocida','fr':'Clé inconnue','de':'Unbekannter Schlüssel','pt-BR':'Chave desconhecida','ru':'Неизвестный ключ','ar':'مفتاح غير معروف'}
 };
 function preferredLocale(){
   try{
@@ -1388,27 +1393,47 @@ async function copyUseKey(){
 async function loadConversations(){
   try{
     const d=await api('/api/m365/conversations');
-    const c=d.data||[];
-    $('convRows').innerHTML=c.length?c.map(x=>{
-      const id=String(x.conversationId||'');
-      const updated=x.updateTimeUtc||x.createTimeUtc;
-      return `<tr class="conv-row" data-conversation-id="${esc(id)}">
+    _convsCache=d.data||[];
+    renderConversations();
+    loadConvKeyOptions();
+  }catch(e){$('convRows').innerHTML=`<tr><td colspan="6" class="empty">${esc(e.message)}</td></tr>`;}
+}
+
+let _convsCache=[],_convKeyFilter='';
+function setConvKeyFilter(v){_convKeyFilter=v;renderConversations();}
+
+async function loadConvKeyOptions(){
+  try{
+    const d=await api('/api/admin/keys');
+    const cur=_convKeyFilter;
+    $('convKeyFilter').innerHTML='<option value="">All keys</option>'+(d.keys||[]).map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+    $('convKeyFilter').value=cur;
+  }catch(e){}
+}
+
+function renderConversations(){
+  // 选中具体 key 时只保留该 key 发起的对话；云端独有/无归因的行被排除。
+  const c=_convsCache.filter(x=>!_convKeyFilter||x.apiKeyId===_convKeyFilter);
+  $('convRows').innerHTML=c.length?c.map(x=>{
+    const id=String(x.conversationId||'');
+    const updated=x.updateTimeUtc||x.createTimeUtc;
+    const keyCell=x.apiKeyId?(x.apiKeyName?esc(x.apiKeyName):'Unknown key'):'-';
+    return `<tr class="conv-row" data-conversation-id="${esc(id)}">
         <td><button class="conv-link" type="button">${esc(x.chatName||'Untitled conversation')}</button><div class="conv-meta"><code>${esc(id)}</code></div></td>
         <td>${Number(x.messageCount||0)}</td>
         <td>${esc(x.accountEmail||x.accountId||'-')}</td>
+        <td style="font-size:12px">${keyCell}</td>
         <td style="font-size:12px;color:var(--muted)">${updated?new Date(updated).toLocaleString():'-'}</td>
         <td><div style="display:flex;gap:6px"><button class="btn-sm btn" data-conv-action="view">View</button><button class="btn-sm btn danger" data-conv-action="delete">Delete</button></div></td>
       </tr>`;
-    }).join(''):'<tr><td colspan="5" class="empty">No conversations</td></tr>';
-    $('convRows').querySelectorAll('.conv-row').forEach(row=>{
-      row.addEventListener('click',event=>{
-        const action=event.target.closest('[data-conv-action]')?.dataset.convAction;
-        if(action==='delete'){event.stopPropagation();deleteConv(row.dataset.conversationId);return;}
-        openConversation(row.dataset.conversationId);
-      });
+    }).join(''):'<tr><td colspan="6" class="empty">No conversations</td></tr>';
+  $('convRows').querySelectorAll('.conv-row').forEach(row=>{
+    row.addEventListener('click',event=>{
+      const action=event.target.closest('[data-conv-action]')?.dataset.convAction;
+      if(action==='delete'){event.stopPropagation();deleteConv(row.dataset.conversationId);return;}
+      openConversation(row.dataset.conversationId);
     });
-    applyLocale(currentLocale);
-  }catch(e){$('convRows').innerHTML=`<tr><td colspan="5" class="empty">${esc(e.message)}</td></tr>`;}
+  });
 }
 
 function openConversation(id){window.open('/conversation?id='+encodeURIComponent(id),'_blank','noopener');}

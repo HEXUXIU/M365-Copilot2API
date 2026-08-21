@@ -377,6 +377,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		select {
 		case <-ctx.Done():
 			returnConn = false
+			conn.Close()
 			return Result{}, ctx.Err()
 		case read = <-readCh:
 		}

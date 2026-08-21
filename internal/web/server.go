@@ -1600,11 +1600,17 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if err := r.Context().Err(); err != nil {
 				return err
 			}
-			delta := map[string]any{"content": part}
 			if first {
-				delta["role"] = "assistant"
 				first = false
+				roleChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": nil}, "finish_reason": nil}}}
+				rc := http.NewResponseController(w)
+				_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", mustJSON(roleChunk)); err != nil {
+					return err
+				}
+				flusher.Flush()
 			}
+			delta := map[string]any{"content": part}
 			chunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}}
 			rc := http.NewResponseController(w)
 			_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
@@ -1721,7 +1727,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			if !isClientCancel(err) {
+				s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			}
 			if convReused {
 				s.invalidateConvCache(acc.ID, convCacheModel)
 			}
@@ -1973,7 +1981,9 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			s.accountPool.MarkSuccess(acc.ID)
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			if !isClientCancel(err) {
+				s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+			}
 			if convReused {
 				s.invalidateConvCache(acc.ID, convCacheModel)
 			}
@@ -2033,7 +2043,9 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 	}
 	if err != nil {
-		s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+		if !isClientCancel(err) {
+			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+		}
 		if convReused {
 			s.invalidateConvCache(acc.ID, convCacheModel)
 			log.Printf("[conv-cache] invalidated account=%s model=%s after error: %v", acc.ID, convCacheModel, err)

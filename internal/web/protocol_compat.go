@@ -188,16 +188,16 @@ func (r anthropicRequest) openAI() (oaiReq, error) {
 								media = "application/octet-stream"
 							}
 							text = append(text, map[string]any{
-								"type":      "input_image",
-								"image_url": "data:" + media + ";base64," + data,
+								"type":      "image_url",
+								"image_url": map[string]any{"url": "data:" + media + ";base64," + data},
 							})
 						}
 					case "url":
 						url, _ := source["url"].(string)
 						if url != "" {
 							text = append(text, map[string]any{
-								"type":      "input_image",
-								"image_url": url,
+								"type":      "image_url",
+								"image_url": map[string]any{"url": url},
 							})
 						}
 					}

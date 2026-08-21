@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -31,7 +32,14 @@ func upstreamError(err error) string {
 // upstreamStatus maps a failed upstream call to the client-visible HTTP status:
 // rate limits stay 429 (with Retry-After when known), auth failures become 401,
 // everything else is 502. Unknown upstream failures must never leak internals.
+func isClientCancel(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
 func upstreamStatus(err error) int {
+	if isClientCancel(err) {
+		return 499
+	}
 	if IsRateLimited(err) {
 		return http.StatusTooManyRequests
 	}

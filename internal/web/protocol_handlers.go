@@ -69,7 +69,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	}
 	id := "resp_" + uuid.NewString()
 	created := time.Now().Unix()
-	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "status": "in_progress", "model": model, "output": []any{}}})
+	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}})
 
 	var text strings.Builder
 	messageID := "msg_" + uuid.NewString()
@@ -81,9 +81,10 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	}
 	calls := map[int]*tcState{}
 	scanner := bufio.NewScanner(pr)
-	scanner.Buffer(make([]byte, 4096), 2<<20)
+	scanner.Buffer(make([]byte, 4096), 10<<20)
 	for scanner.Scan() {
 		if r.Context().Err() != nil {
+			pr.Close()
 			return
 		}
 		line := scanner.Text()

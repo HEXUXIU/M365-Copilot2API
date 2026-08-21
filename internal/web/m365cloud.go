@@ -21,6 +21,7 @@ type M365CloudClient struct {
 	accessToken  string
 	expiresAt    time.Time
 	httpClient   *http.Client
+	onRefresh    func(newRefreshToken string)
 }
 
 func NewM365CloudClient(clientID, tenantID, refreshToken string) *M365CloudClient {
@@ -86,6 +87,9 @@ func (c *M365CloudClient) getAccessToken() (string, error) {
 	c.expiresAt = time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
 	if result.RefreshToken != "" {
 		c.refreshToken = result.RefreshToken
+		if c.onRefresh != nil {
+			c.onRefresh(result.RefreshToken)
+		}
 	}
 
 	log.Printf("[m365-cloud] token refreshed, expires in %ds", result.ExpiresIn)

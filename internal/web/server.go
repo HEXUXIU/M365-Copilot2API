@@ -37,7 +37,7 @@ type pendingPKCE struct {
 
 const rateLimitCooldown = 30 * time.Second
 
-const maxAccountProbe = 16
+const maxAccountProbe = 64
 
 const rateLimitProbePrompt = "Reply with exactly: OK"
 
@@ -206,7 +206,13 @@ func (s *Server) InitM365CloudClient() {
 	if clientID == "" {
 		clientID = auth.DefaultClientID
 	}
-	InitM365CloudClient(clientID, acc.TID, acc.RefreshToken)
+	c := NewM365CloudClient(clientID, acc.TID, acc.RefreshToken)
+	c.onRefresh = func(newRefreshToken string) {
+		if err := s.tokens.UpdateRefreshToken(acc.ID, newRefreshToken); err != nil {
+			log.Printf("[m365-cloud] failed to propagate refresh token to store: %v", err)
+		}
+	}
+	m365CloudClient = c
 	log.Printf("[m365-cloud] client initialized for account %s", acc.Email)
 }
 
@@ -334,7 +340,10 @@ func secureAdminCookie(r *http.Request) bool {
 	}
 	// Only trust X-Forwarded-Proto from a loopback reverse proxy.
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return net.ParseIP(host).IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return false
 }
 
 func (s *Server) validAdminSession(r *http.Request) bool {

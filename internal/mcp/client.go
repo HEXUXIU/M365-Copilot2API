@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -135,11 +134,11 @@ func (c *Client) readSSE(body io.ReadCloser) {
 			data := strings.TrimPrefix(line, "data: ")
 			var msg json.RawMessage
 			if err := json.Unmarshal([]byte(data), &msg); err == nil {
-				select {
-				case c.msgCh <- msg:
-				default:
-					log.Printf("[mcp] msgCh overflow, dropping message for session %s", c.sessionID)
-				}
+				// Blocking send: dropping a response here would hang the
+				// pending sendRequest caller forever. The channel is drained
+				// by ListTools/CallTool waiters, so this only blocks if the
+				// server pipelines more responses than outstanding requests.
+				c.msgCh <- msg
 			}
 		}
 	}

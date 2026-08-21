@@ -389,27 +389,27 @@ if (response.output_text) {
         <div class="usage-overview">
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="flame"></i> Last 24 hours</div>
-            <span class="usage-overview-value" id="ov24hTok">0<small>tokens</small></span>
+            <span class="usage-overview-value"><span id="ov24hTok">0</span><small>tokens</small></span>
             <span class="usage-overview-sub" id="ov24hReq">0 requests</span>
           </div>
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="trending-up"></i> All-time usage</div>
-            <span class="usage-overview-value" id="ovTotalTok">0<small>tokens</small></span>
+            <span class="usage-overview-value"><span id="ovTotalTok">0</span><small>tokens</small></span>
             <span class="usage-overview-sub" id="ovTotalReq">0 requests</span>
           </div>
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="activity"></i> Request count</div>
-            <span class="usage-overview-value" id="ovTodayTok">0<small>tokens</small></span>
-            <span class="usage-overview-sub" id="ovTodayReq">0 requests today</span>
+            <span class="usage-overview-value"><span id="ovTodayReq">0</span><small>requests</small></span>
+            <span class="usage-overview-sub" id="ovTodayTok">0 tokens today</span>
           </div>
           <div class="usage-overview-item">
             <div class="usage-overview-top"><i data-lucide="piggy-bank"></i> Cache hits</div>
-            <span class="usage-overview-value" id="ovCacheHits">0<small>tokens</small></span>
+            <span class="usage-overview-value"><span id="ovCacheHits">0</span><small>hits</small></span>
             <span class="usage-overview-sub" id="ovCacheRate">Hit rate 0%</span>
           </div>
         </div>
         <div class="stats">
-          <div class="stat"><span class="stat-label">Total sessions</span><span class="stat-value" id="stat-sessions">0</span><span class="stat-unit">total</span></div>
+          <div class="stat"><span class="stat-label">Total requests</span><span class="stat-value" id="stat-sessions">0</span><span class="stat-unit">total</span></div>
           <div class="stat"><span class="stat-label">Cache hits</span><span class="stat-value" id="stat-hits">0</span><span class="stat-unit">hits</span></div>
           <div class="stat"><span class="stat-label">Hit rate</span><span class="stat-value" id="stat-rate">0</span><span class="stat-unit">%</span></div>
           <div class="stat"><span class="stat-label">Tokens saved</span><span class="stat-value" id="stat-saved">0</span><span class="stat-unit" style="font-size:12px">saved</span></div>
@@ -768,6 +768,8 @@ const localeText={
   'Total sessions': {'zh-CN':'总会话数','zh-TW':'總會話數','ja':'セッション総数','ko':'총 세션 수','es':'Sesiones totales','fr':'Sessions totales','de':'Gesamtsitzungen','pt-BR':'Sessões totais','ru':'Всего сессий','ar':'إجمالي الجلسات'},
   'total': {'zh-CN':'个','zh-TW':'個','ja':'件','ko':'개','es':'total','fr':'total','de':'gesamt','pt-BR':'total','ru':'шт.','ar':'إجمالي'},
   'hits': {'zh-CN':'次','zh-TW':'次','ja':'回','ko':'회','es':'aciertos','fr':'hits','de':'Treffer','pt-BR':'acertos','ru':'раз','ar':'مرة'},
+  'requests': {'zh-CN':'次请求','zh-TW':'次要求','ja':'リクエスト','ko':'요청','es':'solicitudes','fr':'requêtes','de':'Anfragen','pt-BR':'solicitações','ru':'запросов','ar':'طلب'},
+  'tokens': {'zh-CN':'Token','zh-TW':'Token','ja':'トークン','ko':'토큰','es':'tokens','fr':'tokens','de':'Tokens','pt-BR':'tokens','ru':'токенов','ar':'رمز'},
   'Hit rate': {'zh-CN':'命中率','zh-TW':'命中率','ja':'ヒット率','ko':'적중률','es':'Tasa de aciertos','fr':'Taux de hits','de':'Trefferquote','pt-BR':'Taxa de acertos','ru':'Частота попаданий','ar':'معدل الإصابات'},
   'Tokens saved': {'zh-CN':'节省 Token','zh-TW':'節省 Token','ja':'節約されたトークン','ko':'절약된 토큰','es':'Tokens ahorrados','fr':'Tokens économisés','de':'Gesparte Tokens','pt-BR':'Tokens economizados','ru':'Сэкономленные токены','ar':'الرموز الموفرة'},
   'saved': {'zh-CN':'节省','zh-TW':'節省','ja':'節約','ko':'절약','es':'ahorrados','fr':'économisés','de':'gespart','pt-BR':'economizados','ru':'сэкономлено','ar':'تم التوفير'},
@@ -919,6 +921,7 @@ function translateDynamic(value,locale){
   if(!value)return value;
   if(locale==='zh'||locale.startsWith('zh')){
     let m=value.match(/^(\d+) requests today$/);if(m)return '今日 '+m[1]+' 次请求';
+    m=value.match(/^([\d.,]+[KM]?) tokens today$/);if(m)return '今日 '+m[1]+' Token';
     m=value.match(/^(\d+) requests$/);if(m)return m[1]+' 次请求';
     m=value.match(/^Hit rate (.+)$/);if(m)return '命中率 '+m[1];
     m=value.match(/^Today \+(\d+)$/);if(m)return '今日 +'+m[1];
@@ -930,6 +933,7 @@ function translateDynamic(value,locale){
     m=value.match(/^Finished: (\d+) succeeded, (\d+) failed, (\d+) rounds total\.$/);if(m)return '完成：成功 '+m[1]+' 个，失败 '+m[2]+' 个，共 '+m[3]+' 轮。';
   }else{
     let m=value.match(/^今日 (\d+) 次请求$/);if(m)return m[1]+' requests today';
+    m=value.match(/^今日 ([\d.,]+[KM]?) Token$/);if(m)return m[1]+' tokens today';
     m=value.match(/^(\d+) 次请求$/);if(m)return m[1]+' requests';
     m=value.match(/^命中率 (.+)$/);if(m)return 'Hit rate '+m[1];
     m=value.match(/^今日 \+(\d+)$/);if(m)return 'Today +'+m[1];
@@ -1077,8 +1081,9 @@ async function loadStats(){
     $('ov24hReq').textContent=(sum.last24h_requests||0)+' requests';
     $('ovTotalTok').textContent=fmtTok(sum.tokens||0);
     $('ovTotalReq').textContent=(sum.requests||0)+' requests';
-    $('ovTodayTok').textContent=fmtTok(sum.today_tokens||0);
-    $('ovTodayReq').textContent=(sum.today_requests||0)+' requests today';
+    // 请求计数卡：主数值是今日请求数，token 数放副行。
+    $('ovTodayReq').textContent=fmtNum(sum.today_requests||0);
+    $('ovTodayTok').textContent=fmtTok(sum.today_tokens||0)+' tokens today';
     loadRecentRequests();
   }catch(e){}
 }

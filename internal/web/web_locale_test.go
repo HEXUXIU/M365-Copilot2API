@@ -58,3 +58,24 @@ func TestWebIndexIncludesConversationKeyFilterAndKeyNameUsage(t *testing.T) {
 		}
 	}
 }
+
+func TestWebIndexIncludesKeyUsageModal(t *testing.T) {
+	body, err := os.ReadFile("../../web/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(body)
+	for _, needle := range []string{
+		`id="keyUsageModal"`,
+		"openKeyUsage(",
+		"renderTrend('kuTrendWrap'",
+		"renderBars('kuModels'",
+		"renderBars('kuEndpoints'",
+		"/api/usage/key?id=",
+		"'Usage detail':",
+	} {
+		if !strings.Contains(page, needle) {
+			t.Fatalf("web index missing key usage modal %q", needle)
+		}
+	}
+}

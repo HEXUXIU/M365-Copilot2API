@@ -294,9 +294,11 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	estimate := estimateResponsesUsage(firstNonEmpty(body.Model, "m365-copilot"), o.Messages, o.Tools, o.ToolChoice, outputForUsage)
 	out["usage"] = estimate.Values
 	out["m365_usage_source"] = estimate.Source
+	apiKeyID, apiKeyPrefix := s.resolveAPIKey(r)
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
-		APIKeyPrefix: extractAPIKey(r),
+		APIKeyID:     apiKeyID,
+		APIKeyPrefix: apiKeyPrefix,
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
 		Endpoint:     "/v1/responses",
 		InputTokens:  safeInt64(estimate.Values["input_tokens"]),
@@ -414,9 +416,11 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	estimate := estimateResponsesUsage(firstNonEmpty(body.Model, "m365-copilot"), o.Messages, o.Tools, o.ToolChoice, "")
+	apiKeyID, apiKeyPrefix := s.resolveAPIKey(r)
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
-		APIKeyPrefix: extractAPIKey(r),
+		APIKeyID:     apiKeyID,
+		APIKeyPrefix: apiKeyPrefix,
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
 		Endpoint:     "/v1/messages",
 		InputTokens:  safeInt64(estimate.Values["input_tokens"]),

@@ -13,6 +13,7 @@ import (
 
 type UsageRecord struct {
 	Time         time.Time `json:"time"`
+	APIKeyID     string    `json:"api_key_id,omitempty"`
 	APIKeyPrefix string    `json:"api_key_prefix"`
 	AccountEmail string    `json:"account_email"`
 	Model        string    `json:"model"`
@@ -122,115 +123,72 @@ func (s *usageLog) snapshot(days int) map[string]any {
 	recs := append([]UsageRecord(nil), s.records...)
 	s.mu.Unlock()
 
-	cutoff := time.Now().AddDate(0, 0, -days)
-	loc := time.Now().Location()
-	today := time.Now().In(loc).Truncate(24 * time.Hour)
-	dayAgo := time.Now().Add(-24 * time.Hour)
-
-	var (
-		requests, in, out, cache, durationMs int64
-		todayReq, todayTok                   int64
-		h24Req, h24Tok                       int64
-	)
-	keyCounts := map[string]*usageCountStat{}
-	modelCounts := map[string]*usageCountStat{}
-	endpointCounts := map[string]*usageCountStat{}
-	trendMap := map[string]*usageTrendPoint{}
-
+	agg := newUsageAgg(days)
+	keyCounts := map[string]*usageKeyStat{}
 	for _, rec := range recs {
-		if rec.Time.Before(cutoff) {
+		if rec.Time.Before(agg.cutoff) {
 			continue
 		}
-		requests++
-		reqTok := rec.InputTokens + rec.OutputTokens + rec.CacheTokens
-		in += rec.InputTokens
-		out += rec.OutputTokens
-		cache += rec.CacheTokens
-		durationMs += rec.DurationMs
-		if rec.Time.After(today) {
-			todayReq++
-			todayTok += reqTok
+		agg.add(rec)
+		// 按 key ID 聚合；升级前的旧记录没有 ID，按截断前缀独立成桶。
+		key := rec.APIKeyID
+		if key == "" {
+			key = "prefix:" + rec.APIKeyPrefix
 		}
-		if rec.Time.After(dayAgo) {
-			h24Req++
-			h24Tok += reqTok
-		}
-		key := rec.APIKeyPrefix
 		ks, ok := keyCounts[key]
 		if !ok {
-			ks = &usageCountStat{}
+			ks = &usageKeyStat{prefix: rec.APIKeyPrefix, id: rec.APIKeyID}
 			keyCounts[key] = ks
 		}
 		ks.Requests++
-		ks.Tokens += reqTok
-		if mc, ok := modelCounts[rec.Model]; ok {
-			mc.Requests++
-			mc.Tokens += reqTok
-		} else {
-			modelCounts[rec.Model] = &usageCountStat{Requests: 1, Tokens: reqTok}
-		}
-		if ec, ok := endpointCounts[rec.Endpoint]; ok {
-			ec.Requests++
-			ec.Tokens += reqTok
-		} else {
-			endpointCounts[rec.Endpoint] = &usageCountStat{Requests: 1, Tokens: reqTok}
-		}
-		date := rec.Time.In(loc).Format("01-02")
-		if tp, ok := trendMap[date]; ok {
-			tp.Requests++
-			tp.Tokens += reqTok
-		} else {
-			trendMap[date] = &usageTrendPoint{Date: date, Requests: 1, Tokens: reqTok}
-		}
+		ks.Tokens += rec.InputTokens + rec.OutputTokens + rec.CacheTokens
 	}
-
-	avgMs := int64(0)
-	if requests > 0 {
-		avgMs = durationMs / requests
-	}
-
-	model := make([]map[string]any, 0, len(modelCounts))
-	for name, c := range modelCounts {
-		model = append(model, map[string]any{"name": name, "requests": c.Requests, "tokens": c.Tokens})
-	}
-	sort.Slice(model, func(i, j int) bool { return model[i]["tokens"].(int64) > model[j]["tokens"].(int64) })
-
-	ep := make([]map[string]any, 0, len(endpointCounts))
-	for k, c := range endpointCounts {
-		ep = append(ep, map[string]any{"endpoint": k, "requests": c.Requests, "tokens": c.Tokens})
-	}
-	sort.Slice(ep, func(i, j int) bool { return ep[i]["tokens"].(int64) > ep[j]["tokens"].(int64) })
 
 	keys := make([]map[string]any, 0, len(keyCounts))
-	for k, c := range keyCounts {
-		keys = append(keys, map[string]any{"api_key_prefix": k, "requests": c.Requests, "tokens": c.Tokens})
+	for _, c := range keyCounts {
+		keys = append(keys, map[string]any{"api_key_id": c.id, "api_key_prefix": c.prefix, "requests": c.Requests, "tokens": c.Tokens})
 	}
 	sort.Slice(keys, func(i, j int) bool { return keys[i]["requests"].(int64) > keys[j]["requests"].(int64) })
 
-	trend := make([]map[string]any, 0, len(trendMap))
-	for _, t := range trendMap {
-		trend = append(trend, map[string]any{"date": t.Date, "requests": t.Requests, "tokens": t.Tokens})
-	}
-	sort.Slice(trend, func(i, j int) bool { return trend[i]["date"].(string) < trend[j]["date"].(string) })
+	stats := agg.result()
+	stats["keys"] = keys
+	return stats
+}
 
-	return map[string]any{
-		"summary": map[string]any{
-			"requests":         requests,
-			"tokens":           in + out + cache,
-			"input":            in,
-			"output":           out,
-			"cache":            cache,
-			"avg_ms":           avgMs,
-			"today_requests":   todayReq,
-			"today_tokens":     todayTok,
-			"last24h_requests": h24Req,
-			"last24h_tokens":   h24Tok,
-		},
-		"models":    model,
-		"endpoints": ep,
-		"keys":      keys,
-		"trend":     trend,
+// keySnapshot 返回单个 key 的用量明细。锁内只筛选拷贝该 key 的记录子集（避免全量
+// 拷贝 50k 记录的分配开销），聚合在锁外进行。升级前无 ID 的旧记录按 8 字符前缀归入
+// 该 key（与 resolveName 的回退口径一致；JWT eyJ 前缀不会误匹配）。
+func (s *usageLog) keySnapshot(days int, keyID, keyPrefix string) map[string]any {
+	if keyID == "" {
+		return newUsageAgg(days).result()
 	}
+	var legacyBase string
+	if len(keyPrefix) >= 8 {
+		legacyBase = keyPrefix[:8]
+	}
+	s.mu.Lock()
+	var recs []UsageRecord
+	for _, rec := range s.records {
+		if rec.APIKeyID == keyID {
+			recs = append(recs, rec)
+			continue
+		}
+		if rec.APIKeyID == "" && legacyBase != "" &&
+			len(rec.APIKeyPrefix) == 11 && strings.HasSuffix(rec.APIKeyPrefix, "...") &&
+			strings.HasPrefix(rec.APIKeyPrefix, legacyBase) {
+			recs = append(recs, rec)
+		}
+	}
+	s.mu.Unlock()
+
+	agg := newUsageAgg(days)
+	for _, rec := range recs {
+		if rec.Time.Before(agg.cutoff) {
+			continue
+		}
+		agg.add(rec)
+	}
+	return agg.result()
 }
 
 func (s *usageLog) logs(limit, offset int) map[string]any {
@@ -266,8 +224,129 @@ type usageCountStat struct {
 	Tokens   int64
 }
 
+// usageKeyStat 是按 key 维度聚合的桶：id 为空表示旧版前缀桶。
+type usageKeyStat struct {
+	id       string
+	prefix   string
+	Requests int64
+	Tokens   int64
+}
+
 type usageTrendPoint struct {
 	Date     string `json:"date"`
 	Requests int64  `json:"requests"`
 	Tokens   int64  `json:"tokens"`
+}
+
+// usageAgg 聚合一段记录的 summary/models/endpoints/trend 维度（不含 keys 维度）。
+// cutoff 之前的记录由调用方跳过；keys 维度只有全量快照需要，留在 snapshot 内。
+type usageAgg struct {
+	cutoff     time.Time
+	today      time.Time
+	dayAgo     time.Time
+	loc        *time.Location
+	requests   int64
+	in         int64
+	out        int64
+	cache      int64
+	durationMs int64
+	todayReq   int64
+	todayTok   int64
+	h24Req     int64
+	h24Tok     int64
+	models     map[string]*usageCountStat
+	endpoints  map[string]*usageCountStat
+	trendMap   map[string]*usageTrendPoint
+}
+
+func newUsageAgg(days int) *usageAgg {
+	now := time.Now()
+	return &usageAgg{
+		cutoff:    now.AddDate(0, 0, -days),
+		loc:       now.Location(),
+		today:     now.In(now.Location()).Truncate(24 * time.Hour),
+		dayAgo:    now.Add(-24 * time.Hour),
+		models:    map[string]*usageCountStat{},
+		endpoints: map[string]*usageCountStat{},
+		trendMap:  map[string]*usageTrendPoint{},
+	}
+}
+
+func (a *usageAgg) add(rec UsageRecord) {
+	a.requests++
+	reqTok := rec.InputTokens + rec.OutputTokens + rec.CacheTokens
+	a.in += rec.InputTokens
+	a.out += rec.OutputTokens
+	a.cache += rec.CacheTokens
+	a.durationMs += rec.DurationMs
+	if rec.Time.After(a.today) {
+		a.todayReq++
+		a.todayTok += reqTok
+	}
+	if rec.Time.After(a.dayAgo) {
+		a.h24Req++
+		a.h24Tok += reqTok
+	}
+	if mc, ok := a.models[rec.Model]; ok {
+		mc.Requests++
+		mc.Tokens += reqTok
+	} else {
+		a.models[rec.Model] = &usageCountStat{Requests: 1, Tokens: reqTok}
+	}
+	if ec, ok := a.endpoints[rec.Endpoint]; ok {
+		ec.Requests++
+		ec.Tokens += reqTok
+	} else {
+		a.endpoints[rec.Endpoint] = &usageCountStat{Requests: 1, Tokens: reqTok}
+	}
+	date := rec.Time.In(a.loc).Format("01-02")
+	if tp, ok := a.trendMap[date]; ok {
+		tp.Requests++
+		tp.Tokens += reqTok
+	} else {
+		a.trendMap[date] = &usageTrendPoint{Date: date, Requests: 1, Tokens: reqTok}
+	}
+}
+
+func (a *usageAgg) result() map[string]any {
+	avgMs := int64(0)
+	if a.requests > 0 {
+		avgMs = a.durationMs / a.requests
+	}
+
+	model := make([]map[string]any, 0, len(a.models))
+	for name, c := range a.models {
+		model = append(model, map[string]any{"name": name, "requests": c.Requests, "tokens": c.Tokens})
+	}
+	sort.Slice(model, func(i, j int) bool { return model[i]["tokens"].(int64) > model[j]["tokens"].(int64) })
+
+	ep := make([]map[string]any, 0, len(a.endpoints))
+	for k, c := range a.endpoints {
+		ep = append(ep, map[string]any{"endpoint": k, "requests": c.Requests, "tokens": c.Tokens})
+	}
+	sort.Slice(ep, func(i, j int) bool { return ep[i]["tokens"].(int64) > ep[j]["tokens"].(int64) })
+
+	trend := make([]map[string]any, 0, len(a.trendMap))
+	for _, t := range a.trendMap {
+		trend = append(trend, map[string]any{"date": t.Date, "requests": t.Requests, "tokens": t.Tokens})
+	}
+	sort.Slice(trend, func(i, j int) bool { return trend[i]["date"].(string) < trend[j]["date"].(string) })
+
+	return map[string]any{
+		"summary": map[string]any{
+			"requests":         a.requests,
+			"tokens":           a.in + a.out + a.cache,
+			"input":            a.in,
+			"output":           a.out,
+			"cache":            a.cache,
+			"avg_ms":           avgMs,
+			"today_requests":   a.todayReq,
+			"today_tokens":     a.todayTok,
+			"last24h_requests": a.h24Req,
+			"last24h_tokens":   a.h24Tok,
+		},
+		"models":    model,
+		"endpoints": ep,
+		"trend":     trend,
+	}
 }

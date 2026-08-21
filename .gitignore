@@ -54,3 +54,6 @@ AGENTS.md
 *.bak*
 _wip_backup_*
 *.dll
+
+# Local-only deploy tooling (contains personal VPS targets)
+scripts/deploy-vps.sh

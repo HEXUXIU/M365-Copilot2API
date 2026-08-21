@@ -97,6 +97,7 @@ type Request struct {
 	Tools          []Tool
 	ToolChoice     any
 	Started        bool
+	MCPServerURL   string
 }
 
 // StreamEvent is the protocol-neutral event exposed while ChatHub is still

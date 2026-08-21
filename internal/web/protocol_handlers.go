@@ -339,7 +339,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 						oldestTenant = t
 						oldestTime = h.At
 					}
-					break
+					// Do not break here: b holds many entries and we must scan
+					// all of them to find this tenant's oldest record, otherwise
+					// Go's random map order makes the eviction arbitrary.
 				}
 			}
 			if oldestTenant != "" {

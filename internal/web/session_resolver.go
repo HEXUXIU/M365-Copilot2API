@@ -167,6 +167,11 @@ func (sr *sessionResolver) evictLocked() {
 
 func (sr *sessionResolver) dropLocked(id string, s sessionBinding) {
 	delete(sr.sessions, id)
+	for explicitID, sessID := range sr.byExplicit {
+		if sessID == id {
+			delete(sr.byExplicit, explicitID)
+		}
+	}
 	if sr.byUserField[s.UserField] == id {
 		delete(sr.byUserField, s.UserField)
 	}
@@ -532,7 +537,11 @@ func (sr *sessionResolver) DeleteSession(sessionID string) bool {
 		return false
 	}
 	delete(sr.sessions, sessionID)
-	delete(sr.byExplicit, sessionID)
+	for explicitID, sessID := range sr.byExplicit {
+		if sessID == sessionID {
+			delete(sr.byExplicit, explicitID)
+		}
+	}
 	if s.UserField != "" {
 		delete(sr.byUserField, s.UserField)
 	}
@@ -558,7 +567,11 @@ func (sr *sessionResolver) UnbindByConversation(conversationID string) int {
 			continue
 		}
 		delete(sr.sessions, sid)
-		delete(sr.byExplicit, sid)
+		for explicitID, sessID := range sr.byExplicit {
+			if sessID == sid {
+				delete(sr.byExplicit, explicitID)
+			}
+		}
 		if s.UserField != "" {
 			delete(sr.byUserField, s.UserField)
 		}

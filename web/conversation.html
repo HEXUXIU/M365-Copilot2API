@@ -31,7 +31,7 @@ main{width:min(1120px,calc(100% - 36px));margin:0 auto;padding:34px 0 64px}
 .eyebrow{font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase}
 h1{margin:5px 0 0;font-size:24px;line-height:1.35;font-weight:700;overflow-wrap:anywhere;letter-spacing:0}
 .identity{margin-top:9px;color:var(--muted);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;overflow-wrap:anywhere}
-.meta{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;border-bottom:1px solid var(--line)}
+.meta{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;border-bottom:1px solid var(--line)}
 .meta-item{padding:18px 20px;border-right:1px solid var(--line);min-width:0}
 .meta-item:first-child{padding-left:0}.meta-item:last-child{border-right:0}
 .meta-label{font-size:11px;color:var(--muted);font-weight:600}
@@ -91,6 +91,7 @@ pre{margin:0;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;word-break
     <section class="meta" aria-label="会话元数据">
       <div class="meta-item"><div class="meta-label">消息数</div><div class="meta-value" id="messageCount">0</div></div>
       <div class="meta-item"><div class="meta-label">账号</div><div class="meta-value" id="account">-</div></div>
+      <div class="meta-item"><div class="meta-label">API Key</div><div class="meta-value" id="apiKey">-</div></div>
       <div class="meta-item"><div class="meta-label">创建时间</div><div class="meta-value" id="createdAt">-</div></div>
       <div class="meta-item"><div class="meta-label">最近更新</div><div class="meta-value" id="updatedAt">-</div></div>
     </section>
@@ -158,6 +159,7 @@ function render(data){
   $('conversationId').textContent=data.conversationId||'-';
   $('messageCount').textContent=String(data.messageCount??data.messages?.length??0);
   $('account').textContent=data.accountEmail||data.accountId||'-';
+  $('apiKey').textContent=data.apiKeyName||data.apiKeyId||'-';
   $('createdAt').textContent=formatDate(data.createdAt);
   $('updatedAt').textContent=formatDate(data.updatedAt);
   const messages=Array.isArray(data.messages)?data.messages:[];

@@ -274,6 +274,7 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/api/stats/reset", s.handleCacheStatsReset)
 	m.HandleFunc("/api/usage", s.adminUsage)
 	m.HandleFunc("/api/usage/logs", s.adminUsageLogs)
+	m.HandleFunc("/api/usage/key", s.adminUsageKey)
 	m.HandleFunc("/v1/models", s.openaiModels)
 	m.HandleFunc("/v1/chat/completions", s.openaiChat)
 	m.HandleFunc("/v1/responses", s.responses)
@@ -320,14 +321,14 @@ func (s *Server) adminMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if !s.validAdminSession(r) {
-			writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "administrator login required")
+			writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "", "administrator login required")
 			return
 		}
 		s.mu.Lock()
 		mustChange := s.mustChangePassword
 		s.mu.Unlock()
 		if mustChange && r.URL.Path != "/api/admin/change-password" && r.URL.Path != "/api/admin/logout" {
-			writeOpenAIError(w, http.StatusForbidden, "password_change_required", "administrator password must be changed before using the console")
+			writeOpenAIError(w, http.StatusForbidden, "password_change_required", "", "administrator password must be changed before using the console")
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -374,14 +375,14 @@ func pruneAdminSessions(m map[string]time.Time, now time.Time) {
 
 func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "", "method not allowed")
 		return
 	}
 	ip, now := clientIP(r), time.Now()
 	if ok, wait := s.loginAllowed(ip, now); !ok {
 		seconds := int(wait.Seconds()) + 1
 		w.Header().Set("Retry-After", fmt.Sprint(seconds))
-		writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", "too many failed login attempts; try again later")
+		writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", "", "too many failed login attempts; try again later")
 		return
 	}
 	var body struct {
@@ -394,13 +395,13 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	if decodeErr != nil || body.Password == "" || subtle.ConstantTimeCompare([]byte(body.Password), []byte(password)) != 1 {
 		s.recordLoginFailure(ip, now)
-		writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "invalid administrator password")
+		writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "", "invalid administrator password")
 		return
 	}
 	s.clearLoginFailures(ip)
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		writeOpenAIError(w, 500, "internal_error", "session failure")
+		writeOpenAIError(w, 500, "internal_error", "", "session failure")
 		return
 	}
 	token := base64.RawURLEncoding.EncodeToString(b)
@@ -590,7 +591,7 @@ func (s *Server) refreshAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	acc, err := s.tokens.EnsureValid(strings.TrimSpace(body.ID))
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "token_refresh_error", err.Error())
+		writeOpenAIError(w, http.StatusBadGateway, "token_refresh_error", "", err.Error())
 		return
 	}
 	jsonOut(w, map[string]any{"status": "refreshed", "account": map[string]any{
@@ -691,7 +692,7 @@ func (s *Server) provisionAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.validAdminSession(r) {
-		writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "administrator login required")
+		writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "", "administrator login required")
 		return
 	}
 	var body struct {
@@ -704,12 +705,12 @@ func (s *Server) provisionAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	set, err := auth.ROPC(body.Email, body.Password)
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "ropc_error", err.Error())
+		writeOpenAIError(w, http.StatusBadGateway, "ropc_error", "", err.Error())
 		return
 	}
 	acc, err := s.tokens.Upsert(set)
 	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "upsert_error", err.Error())
+		writeOpenAIError(w, http.StatusInternalServerError, "upsert_error", "", err.Error())
 		return
 	}
 	jsonOut(w, map[string]any{"status": "provisioned", "account": map[string]any{
@@ -724,7 +725,7 @@ func (s *Server) bindProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.validAdminSession(r) {
-		writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "administrator login required")
+		writeOpenAIError(w, http.StatusUnauthorized, "auth_error", "", "administrator login required")
 		return
 	}
 	var body struct {
@@ -737,12 +738,12 @@ func (s *Server) bindProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ProxyURL != "" {
 		if err := outbound.ValidateProxyURL(body.ProxyURL); err != nil {
-			writeOpenAIError(w, http.StatusBadRequest, "invalid_proxy", err.Error())
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_proxy", "", err.Error())
 			return
 		}
 	}
 	if err := s.tokens.SetBoundProxy(body.ID, body.ProxyURL); err != nil {
-		writeOpenAIError(w, http.StatusNotFound, "not_found", err.Error())
+		writeOpenAIError(w, http.StatusNotFound, "not_found", "", err.Error())
 		return
 	}
 	acc, _ := s.tokens.Get(body.ID)
@@ -1193,7 +1194,7 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if acc.OID == "" || acc.TID == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "account_error", "account missing oid/tid")
+		writeOpenAIError(w, http.StatusBadRequest, "account_error", "", "account missing oid/tid")
 		return
 	}
 	tone, _ := reasoningTone(b.Model, "")
@@ -1206,7 +1207,7 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 	})
 	ms := time.Since(start).Milliseconds()
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "m365_error", upstreamError(err))
+		writeOpenAIError(w, http.StatusBadGateway, "m365_error", "", upstreamError(err))
 		return
 	}
 	jsonOut(w, map[string]any{"ok": true, "model": b.Model, "reply": sanitizePublicAssistantTextForModel(res.Text, b.Model), "latency_ms": ms})
@@ -1370,7 +1371,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	}
 	tone, toneErr := reasoningTone(body.Model, effort)
 	if toneErr != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", toneErr.Error())
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "", toneErr.Error())
 		return
 	}
 	normalizeLegacyTools(&body)
@@ -1378,7 +1379,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	body.SessionID = firstNonEmpty(body.SessionID, body.SessionIDC)
 	log.Printf("[req-trace] id=%s stage=body_parsed messages=%d tools=%d choice=%s raw_bytes=%d", requestID, len(body.Messages), len(body.Tools), normalizedToolChoiceMode(body.ToolChoice), len(raw))
 	if err := validateToolConversation(body.Messages); err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", err.Error())
+		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", "", err.Error())
 		return
 	}
 	// Rebuild a protocol-neutral evidence ledger from actual tool calls/results.
@@ -1842,7 +1843,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				if IsRateLimited(routeErr) {
 					msg = "upstream is rate limiting; try again shortly"
 				}
-				writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", msg)
+				writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", "", msg)
 				return
 			}
 			s.accountPool.MarkSuccess(acc.ID)
@@ -2156,7 +2157,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	if isContentPolicyBlock(res.Text) {
 		log.Printf("[content-policy] M365 blocked the request, returning 503")
-		writeOpenAIError(w, http.StatusServiceUnavailable, "upstream_content_blocked", "M365 content policy blocked this request; try again or switch account")
+		writeOpenAIError(w, http.StatusServiceUnavailable, "upstream_content_blocked", "", "M365 content policy blocked this request; try again or switch account")
 		return
 	}
 	if len(toolMaps) > 0 && !completionEvidenceAllows(res.Text, ledger) {
@@ -2247,9 +2248,11 @@ func (s *Server) writePublicIdentityChatResponse(w http.ResponseWriter, r *http.
 	outputTokens := EstimateTokens(answer)
 	usage := map[string]any{"prompt_tokens": inputTokens, "completion_tokens": outputTokens, "total_tokens": inputTokens + outputTokens}
 	if s.usage != nil {
+		apiKeyID, apiKeyPrefix := s.resolveAPIKey(r)
 		s.usage.record(UsageRecord{
 			Time:         time.Now(),
-			APIKeyPrefix: extractAPIKey(r),
+			APIKeyID:     apiKeyID,
+			APIKeyPrefix: apiKeyPrefix,
 			Model:        model,
 			Endpoint:     "/v1/chat/completions",
 			InputTokens:  inputTokens,
@@ -2310,13 +2313,16 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	if res.ConversationID == "" {
 		return
 	}
+	// 一次解析请求的 key 身份：ID 传给会话归因，截断前缀继续喂 cacheStats
+	// （stats.json 按前缀记账，保持既有统计连续）。
+	apiKeyID, apiKey := s.resolveAPIKey(r)
 	historyBody := *body
 	historyBody.Messages = append(cloneMessages(body.Messages), oaiMsg{
 		Role:             "assistant",
 		Content:          res.Text,
 		ReasoningContent: res.Reasoning,
 	})
-	s.sessionResolver.Bind(res.SessionID, res.ConversationID, acc.ID, &historyBody, "", r)
+	s.sessionResolver.Bind(res.SessionID, res.ConversationID, acc.ID, apiKeyID, &historyBody, "", r)
 	s.conversationManager.Record(res.ConversationID, acc.ID, prompt)
 	if s.conversationManager.ShouldCleanup() {
 		if cleaned := s.conversationManager.Cleanup(); len(cleaned) > 0 {
@@ -2324,7 +2330,6 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 		}
 	}
 
-	apiKey := extractAPIKey(r)
 	historyTokens := int64(0)
 	upper := len(body.Messages) - 1
 	if upper < 0 {
@@ -2338,6 +2343,7 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	cacheStats.RecordRequest(apiKey, historyTokens > 0, newTokens, historyTokens, len(sessions))
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
+		APIKeyID:     apiKeyID,
 		APIKeyPrefix: apiKey,
 		AccountEmail: acc.Email,
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
@@ -2351,19 +2357,52 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	})
 }
 
-func extractAPIKey(r *http.Request) string {
+// rawAPIKey 返回请求头里的完整 key（X-API-Key 优先，其次 Bearer）。
+func rawAPIKey(r *http.Request) string {
 	key := strings.TrimSpace(r.Header.Get("X-API-Key"))
 	if key != "" {
 		return key
 	}
 	auth := r.Header.Get("Authorization")
 	if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		key = strings.TrimSpace(auth[7:])
+		return strings.TrimSpace(auth[7:])
 	}
+	return ""
+}
+
+func truncateAPIKey(key string) string {
 	if len(key) > 8 {
 		return key[:8] + "..."
 	}
 	return key
+}
+
+// extractAPIKey 的输出同时被用作 responseMessages 的内存 tenant 键
+// （protocol_handlers.go），截断语义不可变。
+func extractAPIKey(r *http.Request) string {
+	return truncateAPIKey(rawAPIKey(r))
+}
+
+// resolveAPIKey 解析请求的 key 身份：store 记录 ID（JWT/未知 key 为 ""）
+// 与截断展示前缀。
+func (s *Server) resolveAPIKey(r *http.Request) (keyID, displayPrefix string) {
+	raw := rawAPIKey(r)
+	displayPrefix = truncateAPIKey(raw)
+	if s.apiKeys != nil {
+		if rec, ok := s.apiKeys.lookup(raw); ok {
+			return rec.ID, displayPrefix
+		}
+	}
+	return "", displayPrefix
+}
+
+// apiKeyName 把 key ID（或旧版截断前缀）解析成当前名称；解析失败返回 ""。
+// s.apiKeys 为 nil（部分测试构造的 Server）时安全返回空。
+func (s *Server) apiKeyName(keyID, legacyPrefix string) string {
+	if s.apiKeys == nil {
+		return ""
+	}
+	return s.apiKeys.resolveName(keyID, legacyPrefix)
 }
 
 func firstNonEmpty(vals ...string) string {

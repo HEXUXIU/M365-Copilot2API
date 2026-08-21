@@ -67,9 +67,9 @@ func TestAutoCleanupWhitelistProtects(t *testing.T) {
 func TestUnbindByConversationRemovesBindings(t *testing.T) {
 	s := newTestServerForAutoCleanup(t)
 
-	s.sessionResolver.Bind("sess-1", "conv-x", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hi"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
-	s.sessionResolver.Bind("sess-2", "conv-x", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
-	s.sessionResolver.Bind("sess-3", "conv-y", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "other"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	s.sessionResolver.Bind("sess-1", "conv-x", "acc1", "", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hi"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	s.sessionResolver.Bind("sess-2", "conv-x", "acc1", "", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	s.sessionResolver.Bind("sess-3", "conv-y", "acc1", "", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "other"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
 
 	if removed := s.sessionResolver.UnbindByConversation("conv-x"); removed != 2 {
 		t.Fatalf("expected 2 unbinds, got %d", removed)

@@ -55,6 +55,58 @@ func TestAPIKeyDeletePhysicallyRemoves(t *testing.T) {
 	}
 }
 
+func TestAPIKeyStoreLookupAndResolveName(t *testing.T) {
+	store := newAPIKeyStore(t.TempDir() + "/api-keys.json")
+	record, raw, err := store.create("prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := store.lookup(raw)
+	if !ok || got.ID != record.ID || got.Name != "prod" {
+		t.Fatalf("lookup(raw)=%+v ok=%v, want record %q", got, ok, record.ID)
+	}
+	if _, ok := store.lookup("m365_totally_unknown"); ok {
+		t.Fatal("lookup of unknown key should miss")
+	}
+	if _, ok := store.lookup("eyJhbGciOi.example.jwt"); ok {
+		t.Fatal("lookup of JWT bearer should miss")
+	}
+	if _, ok := store.lookup(""); ok {
+		t.Fatal("lookup of empty key should miss")
+	}
+
+	// lookup 不应触碰 LastUsedAt（valid() 已负责维护）。
+	if got.LastUsedAt != nil {
+		t.Fatalf("lookup mutated LastUsedAt: %v", got.LastUsedAt)
+	}
+
+	if name := store.resolveName(record.ID, ""); name != "prod" {
+		t.Fatalf("resolveName(by id)=%q, want %q", name, "prod")
+	}
+	legacy := record.Prefix[:8] + "..."
+	if name := store.resolveName("", legacy); name != "prod" {
+		t.Fatalf("resolveName(legacy prefix %q)=%q, want %q", legacy, name, "prod")
+	}
+	if name := store.resolveName("", "m365_zzz"); name != "" {
+		t.Fatalf("resolveName(short prefix)=%q, want empty", name)
+	}
+	if name := store.resolveName("", "eyJhbGci..."); name != "" {
+		t.Fatalf("resolveName(JWT prefix)=%q, want empty", name)
+	}
+	if name := store.resolveName("no-such-id", ""); name != "" {
+		t.Fatalf("resolveName(unknown id)=%q, want empty", name)
+	}
+
+	// revoked key 仍可归因：历史用量/会话需要继续解析其名称。
+	if _, err := store.revoke(record.ID); err != nil {
+		t.Fatal(err)
+	}
+	if name := store.resolveName(record.ID, ""); name != "prod" {
+		t.Fatalf("resolveName(revoked)=%q, want %q", name, "prod")
+	}
+}
+
 func TestAPIKeyDeleteRollsBackWhenPersistenceFails(t *testing.T) {
 	store := newAPIKeyStore(t.TempDir() + "/api-keys.json")
 	record, _, err := store.create("test")

@@ -46,6 +46,10 @@ func upstreamStatus(err error) int {
 	if IsAuthFailure(err) {
 		return http.StatusUnauthorized
 	}
+	var httpErr *UpstreamHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.Status
+	}
 	return http.StatusBadGateway
 }
 
@@ -60,12 +64,12 @@ func writeUpstreamError(w http.ResponseWriter, err error) {
 		if w.Header().Get("Retry-After") == "" {
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(rateLimitCooldown.Seconds())))
 		}
-		writeOpenAIError(w, status, "rate_limit_error", "upstream is rate limiting; try again shortly")
+		writeOpenAIError(w, status, "rate_limit_error", "", "upstream is rate limiting; try again shortly")
 		return
 	}
 	if IsEmptyCompletion(err) {
-		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "upstream returned empty completion; the requested model may be unavailable for this tenant")
+		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "", "upstream returned empty completion; the requested model may be unavailable for this tenant")
 		return
 	}
-	writeOpenAIError(w, status, "upstream_error", upstreamError(err))
+	writeOpenAIError(w, status, "upstream_error", "", upstreamError(err))
 }

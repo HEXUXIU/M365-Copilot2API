@@ -547,7 +547,7 @@ if (response.output_text) {
         </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Key list</span><span style="font-size:11px;color:var(--muted)">The full key is shown only once after creation</span></div>
-          <table class="table"><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Status</th><th>Last used</th><th style="text-align:right">Actions</th></tr></thead><tbody id="keyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
+          <table class="table"><thead><tr><th>Name</th><th>Prefix</th><th>Tokens (7d)</th><th>Created</th><th>Status</th><th>Last used</th><th style="text-align:right">Actions</th></tr></thead><tbody id="keyRows"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody></table>
         </div>
       </section>
 
@@ -855,7 +855,8 @@ const localeText={
   'Not checked': {'zh-CN':'未检测','zh-TW':'未檢測','ja':'未確認','ko':'확인 안 됨','es':'Sin comprobar','fr':'Non vérifié','de':'Nicht geprüft','pt-BR':'Não verificado','ru':'Не проверено','ar':'لم يتم التحقق'},
   'Cooling down': {'zh-CN':'冷却中','zh-TW':'冷卻中','ja':'クールダウン中','ko':'쿨다운 중','es':'Enfriando','fr':'En attente','de':'Wird abgekühlt','pt-BR':'Resfriando','ru':'Ожидание','ar':'جارٍ التهدئة'},
   'Testing…': {'zh-CN':'测试中…','zh-TW':'測試中…','ja':'テスト中…','ko':'테스트 중…','es':'Probando…','fr':'Test en cours…','de':'Wird getestet…','pt-BR':'Testando…','ru':'Тестирование…','ar':'جارٍ الاختبار…'},
-  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'}
+  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'},
+  'Tokens (7d)': {'zh-CN':'近7天 Token','zh-TW':'近7天 Token','ja':'7日間のトークン','ko':'7일 토큰','es':'Tokens (7 días)','fr':'Tokens (7 jours)','de':'Tokens (7 Tage)','pt-BR':'Tokens (7 dias)','ru':'Токены (7 дн.)','ar':'الرموز (7 أيام)'},
 };
 function preferredLocale(){
   try{
@@ -1112,16 +1113,18 @@ async function submitCallback(){
 
 async function loadKeys(){
   try{
-    const d=await api('/api/admin/keys');
+    // 近 7 天每个 key 的 token 用量（按 key ID 关联；usage 不可用时降级为 '-'）。
+    const [d,u]=await Promise.all([api('/api/admin/keys'),api('/api/usage?days=7').catch(()=>null)]);
     const k=d.keys||[];
-    $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
+    const tok={};(((u||{}).stats||{}).keys||[]).forEach(row=>{if(row.api_key_id)tok[row.api_key_id]=row.tokens;});
+    $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px">${tok[x.id]!=null?fmtTok(tok[x.id]):'-'}</td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
       ${x.raw?`<button class="btn-sm btn" onclick="copyKeyRaw('${x.raw}')">Copy</button>`:''}
       <button class="btn-sm btn" onclick="openUseKey('${x.id}')">Use key</button>
       <button class="btn-sm btn" onclick="editKey('${x.id}','${x.name.replace(/'/g,"\\'")}')">Edit</button>
       <button class="btn-sm btn ${x.revoked?'success':'danger'}" onclick="toggleKey('${x.id}',${x.revoked})">${x.revoked?'Enable':'Disable'}</button>
       <button class="btn-sm btn danger" onclick="revokeKey('${x.id}')">Delete</button>
-    </td></tr>`).join(''):'<tr><td colspan="6" class="empty">No API keys</td></tr>';
-  }catch(e){$('keyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
+    </td></tr>`).join(''):'<tr><td colspan="7" class="empty">No API keys</td></tr>';
+  }catch(e){$('keyRows').innerHTML=`<tr><td colspan="7" class="empty">${e.message}</td></tr>`;}
 }
 
 let editKeyId=null;
@@ -1188,7 +1191,7 @@ async function loadUsage(){
     renderTrend((d.stats||{}).trend||[]);
     renderBars('ugModels',(d.stats||{}).models||[],m=>m.name,'tokens');
     renderBars('ugEndpoints',(d.stats||{}).endpoints||[],m=>m.endpoint,'tokens');
-    renderBars('ugKeys',(d.stats||{}).keys||[],m=>m.api_key_prefix,'requests');
+    renderBars('ugKeys',(d.stats||{}).keys||[],m=>m.api_key_name||m.api_key_prefix,'requests');
     loadUsageLogs();
   }catch(e){
     $('ugLogRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;
@@ -1257,7 +1260,7 @@ async function loadUsageLogs(){
     ugTotal=d.total||0;
     const rows=(d.logs||[]).map(x=>`<tr>
       <td style="font-size:12px;color:var(--muted)">${new Date(x.time).toLocaleString()}</td>
-      <td><code style="font-size:11px" title="${x.api_key_prefix||'-'}">${x.api_key_prefix||'-'}</code></td>
+      <td><code style="font-size:11px" title="${x.api_key_name||x.api_key_prefix||'-'}">${x.api_key_name||x.api_key_prefix||'-'}</code></td>
       <td style="font-size:12px">${x.model||'-'}</td>
       <td><span class="usage-status">${(x.endpoint||'-').replace('/v1/','')}</span></td>
       <td><span class="token-stack"><b>${(x.input_tokens||0)+(x.output_tokens||0)+(x.cache_tokens||0)}</b> in${x.input_tokens||0}/out${x.output_tokens||0}/cache${x.cache_tokens||0}</span></td>

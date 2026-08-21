@@ -295,8 +295,8 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		APIKeyPrefix: extractAPIKey(r),
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
 		Endpoint:     "/v1/responses",
-		InputTokens:  int64(estimate.Values["input_tokens"].(int)),
-		OutputTokens: int64(estimate.Values["output_tokens"].(int)),
+		InputTokens:  safeInt64(estimate.Values["input_tokens"]),
+		OutputTokens: safeInt64(estimate.Values["output_tokens"]),
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})
@@ -393,10 +393,23 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		APIKeyPrefix: extractAPIKey(r),
 		Model:        firstNonEmpty(body.Model, "m365-copilot"),
 		Endpoint:     "/v1/messages",
-		InputTokens:  int64(estimate.Values["input_tokens"].(int)),
-		OutputTokens: int64(estimate.Values["output_tokens"].(int)),
+		InputTokens:  safeInt64(estimate.Values["input_tokens"]),
+		OutputTokens: safeInt64(estimate.Values["output_tokens"]),
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})
 	writeAnthropicResult(w, firstNonEmpty(body.Model, "m365-copilot"), body.Stream, out)
+}
+
+func safeInt64(v any) int64 {
+	switch n := v.(type) {
+	case int:
+		return int64(n)
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	default:
+		return 0
+	}
 }

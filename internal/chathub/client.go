@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -43,6 +44,9 @@ var chTrace = os.Getenv("M365_TRACE") == "1"
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "..."
 }
@@ -568,7 +572,7 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		// For non-data URLs, download the image first
 		imageData := a.URL
 		if !strings.HasPrefix(a.URL, "data:") {
-			if err := validateRemoteDownloadURL(a.URL); err != nil {
+			if err := ValidateDownloadURL(a.URL); err != nil {
 				return err
 			}
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)

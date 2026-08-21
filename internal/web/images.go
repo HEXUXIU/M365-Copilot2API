@@ -489,6 +489,9 @@ func downloadImageAsBase64(url string) (b64, contentType string, err error) {
 }
 
 func downloadImageAsBase64WithToken(url, token string) (b64, contentType string, err error) {
+	if err := chathub.ValidateDownloadURL(url); err != nil {
+		return "", "", fmt.Errorf("url not allowed: %w", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

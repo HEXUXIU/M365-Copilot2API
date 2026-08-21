@@ -96,3 +96,73 @@ func TestAdminUsageHandlersEnrichKeyNames(t *testing.T) {
 		t.Fatalf("legacy/JWT log rows must omit api_key_name: %s", logRec.Body.String())
 	}
 }
+
+func TestAdminUsageKeyEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("M365_USAGE_LOG", filepath.Join(dir, "usage.jsonl"))
+	t.Setenv("M365_API_KEYS", filepath.Join(dir, "api-keys.json"))
+	store := openAPIKeys()
+	keyRec, _, err := store.create("detail key")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{usage: openUsageLog(), apiKeys: store}
+	now := time.Now()
+	s.usage.record(UsageRecord{Time: now, APIKeyID: keyRec.ID, APIKeyPrefix: keyRec.Prefix[:8] + "...", Model: "m", InputTokens: 10, OutputTokens: 5})
+	// 升级前的旧记录：按 8 字符前缀归入该 key。
+	s.usage.record(UsageRecord{Time: now, APIKeyPrefix: keyRec.Prefix[:8] + "...", Model: "m", InputTokens: 1})
+	s.usage.record(UsageRecord{Time: now, APIKeyID: "other-key", Model: "m", InputTokens: 100})
+
+	rec := httptest.NewRecorder()
+	s.adminUsageKey(rec, httptest.NewRequest(http.MethodGet, "/api/usage/key?id="+keyRec.ID+"&days=7", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("usage key status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Days int `json:"days"`
+		Key  struct {
+			ID      string `json:"id"`
+			Name    string `json:"name"`
+			Prefix  string `json:"prefix"`
+			Revoked bool   `json:"revoked"`
+		} `json:"key"`
+		Stats struct {
+			Summary struct {
+				Requests int64 `json:"requests"`
+				Tokens   int64 `json:"tokens"`
+			} `json:"summary"`
+			Models []map[string]any `json:"models"`
+		} `json:"stats"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Days != 7 || payload.Key.ID != keyRec.ID || payload.Key.Name != "detail key" || payload.Key.Prefix != keyRec.Prefix || payload.Key.Revoked {
+		t.Fatalf("payload key=%+v days=%d", payload.Key, payload.Days)
+	}
+	if payload.Stats.Summary.Requests != 2 || payload.Stats.Summary.Tokens != 16 {
+		t.Fatalf("stats summary=%+v, want requests=2 tokens=16", payload.Stats.Summary)
+	}
+	if len(payload.Stats.Models) != 1 {
+		t.Fatalf("models=%v, want 1 entry", payload.Stats.Models)
+	}
+
+	notFound := httptest.NewRecorder()
+	s.adminUsageKey(notFound, httptest.NewRequest(http.MethodGet, "/api/usage/key?id=nope", nil))
+	if notFound.Code != http.StatusNotFound {
+		t.Fatalf("unknown id status=%d, want 404", notFound.Code)
+	}
+
+	missing := httptest.NewRecorder()
+	s.adminUsageKey(missing, httptest.NewRequest(http.MethodGet, "/api/usage/key", nil))
+	if missing.Code != http.StatusBadRequest {
+		t.Fatalf("missing id status=%d, want 400", missing.Code)
+	}
+
+	badMethod := httptest.NewRecorder()
+	s.adminUsageKey(badMethod, httptest.NewRequest(http.MethodPost, "/api/usage/key?id="+keyRec.ID, nil))
+	if badMethod.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST status=%d, want 405", badMethod.Code)
+	}
+}

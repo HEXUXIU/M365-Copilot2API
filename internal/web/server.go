@@ -227,6 +227,7 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/api/stats/reset", s.handleCacheStatsReset)
 	m.HandleFunc("/api/usage", s.adminUsage)
 	m.HandleFunc("/api/usage/logs", s.adminUsageLogs)
+	m.HandleFunc("/api/usage/key", s.adminUsageKey)
 	m.HandleFunc("/v1/models", s.openaiModels)
 	m.HandleFunc("/v1/chat/completions", s.openaiChat)
 	m.HandleFunc("/v1/responses", s.responses)

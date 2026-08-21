@@ -120,7 +120,16 @@ func (s *Server) recordLoginFailure(ip string, now time.Time) {
 			}
 		}
 		if len(s.loginAttempts) >= maxLoginAttemptEntries {
-			return
+			var oldestIP string
+			var oldestStart time.Time
+			for k, a := range s.loginAttempts {
+				if oldestIP == "" || a.WindowStart.Before(oldestStart) {
+					oldestIP, oldestStart = k, a.WindowStart
+				}
+			}
+			if oldestIP != "" {
+				delete(s.loginAttempts, oldestIP)
+			}
 		}
 	}
 	a := s.loginAttempts[ip]

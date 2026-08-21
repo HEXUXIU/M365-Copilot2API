@@ -323,7 +323,8 @@ func secureAdminCookie(r *http.Request) bool {
 	}
 	// Only trust X-Forwarded-Proto from a loopback reverse proxy.
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	return net.ParseIP(host).IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func (s *Server) validAdminSession(r *http.Request) bool {
@@ -495,7 +496,9 @@ func (s *Server) validAPIKey(r *http.Request) bool {
 
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("jsonOut encode error: %v", err)
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -752,7 +755,13 @@ func (s *Server) startPKCE(w http.ResponseWriter, _ *http.Request) {
 	state := hex.EncodeToString(b)
 	redirectURI := auth.RedirectURI()
 	s.mu.Lock()
-	s.pkce[state] = pendingPKCE{Verifier: v, Created: time.Now(), Status: "pending", RedirectURI: redirectURI}
+	now := time.Now()
+	for k, v := range s.pkce {
+		if now.Sub(v.Created) > 10*time.Minute {
+			delete(s.pkce, k)
+		}
+	}
+	s.pkce[state] = pendingPKCE{Verifier: v, Created: now, Status: "pending", RedirectURI: redirectURI}
 	s.mu.Unlock()
 	jsonOut(w, map[string]string{
 		"status": "pkce_ready",

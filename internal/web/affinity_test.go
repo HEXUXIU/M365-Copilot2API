@@ -85,6 +85,65 @@ func TestHistoryLookupRequiresAssistantBearingExactPrefix(t *testing.T) {
 	}
 }
 
+func TestMemoryAffinityHistoryKeepsConcurrentEqualDigests(t *testing.T) {
+	store := newMemoryAffinityStore(time.Hour, 100)
+	ctx := context.Background()
+	tenant := "tenant"
+	b1 := affinityBinding{ID: "binding-1", TenantHash: tenant, AccountID: "a", ConversationID: "conv-1", HistoryDigest: "same", HistoryCount: 2, Generation: 1}
+	b2 := affinityBinding{ID: "binding-2", TenantHash: tenant, AccountID: "b", ConversationID: "conv-2", HistoryDigest: "same", HistoryCount: 2, Generation: 1}
+	if err := store.PutBinding(ctx, b1, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBinding(ctx, b2, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	if got := len(store.history[historyStoreKey(tenant, "same")]); got != 2 {
+		store.mu.Unlock()
+		t.Fatalf("equal history digest overwrote a binding: count=%d", got)
+	}
+	store.mu.Unlock()
+
+	updated := b1
+	updated.HistoryDigest = "other"
+	updated.Generation = 2
+	if ok, err := store.CompareAndSwapBinding(ctx, b1.ID, b1.Generation, updated, time.Hour); err != nil || !ok {
+		t.Fatalf("binding migration failed: ok=%t err=%v", ok, err)
+	}
+	resolved, _, ok, err := store.FindHistory(ctx, tenant, []string{"same"})
+	if err != nil || !ok || resolved.ID != b2.ID {
+		t.Fatalf("remaining equal-digest binding was lost: resolved=%+v ok=%t err=%v", resolved, ok, err)
+	}
+}
+
+func TestResponsesTenantKeysPreserveLegacyNamespaceWhenAffinityOff(t *testing.T) {
+	r := httptest.NewRequest("POST", "/v1/responses", nil)
+	r.Header.Set("Authorization", "Bearer response-secret-token")
+	manager := openAffinityManager(affinityConfig{Mode: affinityOff})
+	defer manager.close()
+	s := &Server{affinity: manager}
+	tenant, affinityTenant := s.responsesTenantKeys(r)
+	if want := extractAPIKey(r); tenant != want {
+		t.Fatalf("off mode changed response tenant namespace: got=%q want=%q", tenant, want)
+	}
+	if affinityTenant != "" {
+		t.Fatalf("off mode unexpectedly created affinity tenant: %q", affinityTenant)
+	}
+}
+
+func TestResponsesTenantKeysHashTenantWhenAffinityActive(t *testing.T) {
+	r := httptest.NewRequest("POST", "/v1/responses", nil)
+	r.Header.Set("Authorization", "Bearer response-secret-token")
+	manager := openAffinityManager(affinityConfig{Mode: affinityObserve})
+	defer manager.close()
+	s := &Server{affinity: manager}
+	tenant, affinityTenant := s.responsesTenantKeys(r)
+	want := hashString("response-secret-token")
+	if tenant != want || affinityTenant != want {
+		t.Fatalf("active mode did not use hashed tenant namespace: tenant=%q affinity=%q want=%q", tenant, affinityTenant, want)
+	}
+}
+
 func TestRendezvousSelectionIsStableAndSkipsUnavailableAccounts(t *testing.T) {
 	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	available := func(id string) bool { return id != "b" }

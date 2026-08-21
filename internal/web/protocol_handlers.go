@@ -263,8 +263,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		writeResponsesError(w, 400, "invalid_request_error", err.Error())
 		return
 	}
-	tenantIdentity := s.affinityTenantIdentity(r)
-	tenant := hashString(tenantIdentity)
+	tenant, tenantIdentity := s.responsesTenantKeys(r)
 	publicID := "resp_" + uuid.NewString()
 	affinitySessionID := publicID
 	if body.PreviousResponseID != "" {
@@ -355,6 +354,15 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		s.affinity.bindResponse(r.Context(), tenantIdentity, publicID, affinitySessionID)
 	}
 	writeResponsesResult(w, firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, out)
+}
+
+func (s *Server) responsesTenantKeys(r *http.Request) (tenant, affinityTenant string) {
+	tenant = extractAPIKey(r)
+	if s.affinity == nil || s.affinity.config.Mode == affinityOff {
+		return tenant, ""
+	}
+	affinityTenant = s.affinityTenantIdentity(r)
+	return affinityTenant, affinityTenant
 }
 
 func (s *Server) storeResponsesHistory(tenant, responseID, affinitySessionID string, messages []oaiMsg) {

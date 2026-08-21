@@ -68,12 +68,22 @@ func hashString(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
+func normalizeAffinityTenantHash(tenant string) string {
+	tenant = strings.TrimSpace(tenant)
+	if len(tenant) == sha256.Size*2 {
+		if _, err := hex.DecodeString(tenant); err == nil {
+			return strings.ToLower(tenant)
+		}
+	}
+	return hashString(tenant)
+}
+
 func affinityExplicitHash(tenantHash, reason, value string) string {
 	return hashString(tenantHash + "\x00" + reason + "\x00" + strings.TrimSpace(value))
 }
 
 func deriveAffinityKey(tenant string, body *oaiReq, r *http.Request) affinityKey {
-	tenantHash := hashString(strings.TrimSpace(tenant))
+	tenantHash := normalizeAffinityTenantHash(tenant)
 	type candidate struct {
 		reason string
 		value  string
@@ -293,7 +303,7 @@ type memoryAffinityStore struct {
 	accounts     map[string]memoryAccountAffinity
 	responses    map[string]memoryAccountAffinity
 	bindings     map[string]memoryBinding
-	history      map[string]string
+	history      map[string][]string
 	locks        map[string]memoryLock
 	waiters      map[string][]chan struct{}
 	health       map[string]memoryAccountHealth
@@ -329,13 +339,47 @@ func newMemoryAffinityStore(ttl time.Duration, max int) *memoryAffinityStore {
 	return &memoryAffinityStore{
 		ttl: ttl, max: max, cleanupEvery: 10 * time.Second,
 		accounts: map[string]memoryAccountAffinity{}, responses: map[string]memoryAccountAffinity{},
-		bindings: map[string]memoryBinding{}, history: map[string]string{}, locks: map[string]memoryLock{},
+		bindings: map[string]memoryBinding{}, history: map[string][]string{}, locks: map[string]memoryLock{},
 		waiters: map[string][]chan struct{}{}, health: map[string]memoryAccountHealth{},
 	}
 }
 
 func accountStoreKey(tenantHash, affinityHash string) string { return tenantHash + ":" + affinityHash }
 func historyStoreKey(tenantHash, digest string) string       { return tenantHash + ":" + digest }
+
+func (s *memoryAffinityStore) addHistoryBindingLocked(binding affinityBinding) {
+	if binding.HistoryDigest == "" {
+		return
+	}
+	key := historyStoreKey(binding.TenantHash, binding.HistoryDigest)
+	ids := s.history[key]
+	for _, id := range ids {
+		if id == binding.ID {
+			return
+		}
+	}
+	s.history[key] = append(ids, binding.ID)
+}
+
+func (s *memoryAffinityStore) removeHistoryBindingLocked(binding affinityBinding) {
+	if binding.HistoryDigest == "" {
+		return
+	}
+	key := historyStoreKey(binding.TenantHash, binding.HistoryDigest)
+	ids := s.history[key]
+	for i, id := range ids {
+		if id != binding.ID {
+			continue
+		}
+		ids = append(ids[:i], ids[i+1:]...)
+		if len(ids) == 0 {
+			delete(s.history, key)
+		} else {
+			s.history[key] = ids
+		}
+		return
+	}
+}
 
 func (s *memoryAffinityStore) cleanupLocked(now time.Time) {
 	if s.cleanupEvery > 0 && !s.lastCleanup.IsZero() && now.Sub(s.lastCleanup) < s.cleanupEvery {
@@ -356,7 +400,7 @@ func (s *memoryAffinityStore) cleanupLocked(now time.Time) {
 	for id, value := range s.bindings {
 		if now.After(value.ExpiresAt) {
 			delete(s.bindings, id)
-			delete(s.history, historyStoreKey(value.Value.TenantHash, value.Value.HistoryDigest))
+			s.removeHistoryBindingLocked(value.Value)
 		}
 	}
 	for key, value := range s.locks {
@@ -380,7 +424,7 @@ func (s *memoryAffinityStore) cleanupLocked(now time.Time) {
 	sort.Slice(list, func(i, j int) bool { return list[i].Value.LastUsedAt.Before(list[j].Value.LastUsedAt) })
 	for _, value := range list[:len(list)-s.max] {
 		delete(s.bindings, value.Value.ID)
-		delete(s.history, historyStoreKey(value.Value.TenantHash, value.Value.HistoryDigest))
+		s.removeHistoryBindingLocked(value.Value)
 	}
 }
 
@@ -477,7 +521,7 @@ func (s *memoryAffinityStore) GetBinding(_ context.Context, id string) (affinity
 	v, ok := s.bindings[id]
 	if ok && now.After(v.ExpiresAt) {
 		delete(s.bindings, id)
-		delete(s.history, historyStoreKey(v.Value.TenantHash, v.Value.HistoryDigest))
+		s.removeHistoryBindingLocked(v.Value)
 		ok = false
 	}
 	return v.Value, ok, nil
@@ -489,17 +533,22 @@ func (s *memoryAffinityStore) FindHistory(_ context.Context, tenantHash string, 
 	now := time.Now()
 	s.cleanupLocked(now)
 	for index, digest := range digests {
-		id, ok := s.history[historyStoreKey(tenantHash, digest)]
-		if !ok {
+		key := historyStoreKey(tenantHash, digest)
+		ids := append([]string(nil), s.history[key]...)
+		if len(ids) == 0 {
 			continue
 		}
-		value, ok := s.bindings[id]
-		if ok && now.Before(value.ExpiresAt) {
-			return value.Value, index, true, nil
-		}
-		if ok {
-			delete(s.bindings, id)
-			delete(s.history, historyStoreKey(value.Value.TenantHash, value.Value.HistoryDigest))
+		for _, id := range ids {
+			value, ok := s.bindings[id]
+			if ok && now.Before(value.ExpiresAt) {
+				return value.Value, index, true, nil
+			}
+			if ok {
+				delete(s.bindings, id)
+				s.removeHistoryBindingLocked(value.Value)
+				continue
+			}
+			s.removeHistoryBindingLocked(affinityBinding{ID: id, TenantHash: tenantHash, HistoryDigest: digest})
 		}
 	}
 	return affinityBinding{}, 0, false, nil
@@ -522,12 +571,10 @@ func (s *memoryAffinityStore) PutBinding(_ context.Context, binding affinityBind
 	}
 	s.mu.Lock()
 	if old, ok := s.bindings[binding.ID]; ok && old.Value.HistoryDigest != "" && old.Value.HistoryDigest != binding.HistoryDigest {
-		delete(s.history, historyStoreKey(old.Value.TenantHash, old.Value.HistoryDigest))
+		s.removeHistoryBindingLocked(old.Value)
 	}
 	s.bindings[binding.ID] = memoryBinding{Value: binding, ExpiresAt: now.Add(ttl)}
-	if binding.HistoryDigest != "" {
-		s.history[historyStoreKey(binding.TenantHash, binding.HistoryDigest)] = binding.ID
-	}
+	s.addHistoryBindingLocked(binding)
 	s.cleanupLocked(now)
 	s.mu.Unlock()
 	return nil
@@ -542,25 +589,25 @@ func (s *memoryAffinityStore) CompareAndSwapBinding(_ context.Context, id string
 	if !ok || now.After(current.ExpiresAt) || current.Value.Generation != generation {
 		if ok && now.After(current.ExpiresAt) {
 			delete(s.bindings, id)
-			delete(s.history, historyStoreKey(current.Value.TenantHash, current.Value.HistoryDigest))
+			s.removeHistoryBindingLocked(current.Value)
 		}
 		return false, nil
 	}
 	if ttl <= 0 {
 		ttl = s.ttl
 	}
-	delete(s.history, historyStoreKey(current.Value.TenantHash, current.Value.HistoryDigest))
+	s.removeHistoryBindingLocked(current.Value)
 	binding.LastUsedAt = now
 	s.bindings[id] = memoryBinding{Value: binding, ExpiresAt: now.Add(ttl)}
-	if binding.HistoryDigest != "" {
-		s.history[historyStoreKey(binding.TenantHash, binding.HistoryDigest)] = id
-	}
+	s.addHistoryBindingLocked(binding)
 	return true, nil
 }
 
 func randomOwner() string {
 	b := make([]byte, 16)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 

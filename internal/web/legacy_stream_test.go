@@ -65,7 +65,7 @@ func TestResponsesToolSSEDoesNotDuplicateArguments(t *testing.T) {
 
 func TestAnthropicToolSSEEvents(t *testing.T) {
 	rr := httptest.NewRecorder()
-	writeAnthropicResult(rr, "m", true, toolSource())
+	writeAnthropicResult(rr, "m", true, toolSource(), nil, "")
 	body := rr.Body.String()
 	for _, want := range []string{"event: message_start", "event: content_block_start", "\"type\":\"tool_use\"", "\"type\":\"input_json_delta\"", "event: content_block_stop", "event: message_delta", "event: message_stop"} {
 		if !strings.Contains(body, want) {

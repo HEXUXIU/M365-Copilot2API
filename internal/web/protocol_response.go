@@ -21,15 +21,7 @@ func openAIChoice(v map[string]any) (map[string]any, string) {
 	return m, finish
 }
 
-func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src map[string]any, usageArgs ...any) {
-	var usage map[string]any
-	var usageSource string
-	if len(usageArgs) > 0 {
-		usage, _ = usageArgs[0].(map[string]any)
-	}
-	if len(usageArgs) > 1 {
-		usageSource, _ = usageArgs[1].(string)
-	}
+func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src map[string]any, usage map[string]any, usageSource string) {
 	id := "msg_" + uuid.NewString()
 	msg, finish := openAIChoice(src)
 	sanitizePublicAssistantMessage(msg, model)

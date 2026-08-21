@@ -82,6 +82,54 @@ func TestAffinityManagerMigrationNeverClaimsCache(t *testing.T) {
 	}
 }
 
+func TestAffinityManagerCASLossClearsCacheClaim(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}}
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, httptest.NewRequest("POST", "/", nil), accounts, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv", "sess", oaiMsg{Role: "assistant", Content: "hi"}, 10, 2)
+	first.close()
+
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "continue"}}}
+	state, err := manager.begin(ctx, "tenant", body, httptest.NewRequest("POST", "/", nil), accounts, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.close()
+	state.apply(body)
+	if !state.incremental || !state.hasBinding {
+		t.Fatalf("warm state was not established: state=%s", state)
+	}
+
+	current := state.binding
+	current.Generation++
+	current.HistoryDigest = "concurrent-update"
+	if ok, err := manager.fallback.CompareAndSwapBinding(ctx, state.binding.ID, state.binding.Generation, current, time.Hour); err != nil || !ok {
+		t.Fatalf("failed to create concurrent binding update: ok=%t err=%v", ok, err)
+	}
+	usage := state.complete(ctx, body, state.accountID, "conv", "sess", oaiMsg{Role: "assistant", Content: "more"}, 20, 3)
+	if usage.Confirmed || usage.CachedTokens != 0 {
+		t.Fatalf("CAS loss still claimed cache: %+v", usage)
+	}
+}
+
+func TestAffinityRouterConversationReuseToggle(t *testing.T) {
+	t.Setenv("M365_AFFINITY_REUSE_ROUTER_CONVERSATION", "")
+	if cfg := loadAffinityConfig(); cfg.ReuseRouterConversation {
+		t.Fatal("router conversation reuse must default to false")
+	}
+	t.Setenv("M365_AFFINITY_REUSE_ROUTER_CONVERSATION", "true")
+	if cfg := loadAffinityConfig(); !cfg.ReuseRouterConversation {
+		t.Fatal("router conversation reuse toggle was not enabled")
+	}
+}
+
 func TestExplicitSessionContinuesWithoutResendingHistory(t *testing.T) {
 	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
 	defer manager.close()

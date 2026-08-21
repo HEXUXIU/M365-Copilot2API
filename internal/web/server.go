@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -126,11 +127,11 @@ func (s *Server) clientForProxy(proxyURL string) *chathub.Client {
 		return s.chat
 	}
 	c := &chathub.Client{
-		HTTPHeader:  make(http.Header),
-		HTTPClient:  clients.HTTP,
-		Dialer:      clients.WebSocket,
-		Pool:        chathub.NewConnPool(clients.WebSocket, make(http.Header)),
-		Trace:       s.chat.Trace,
+		HTTPHeader: make(http.Header),
+		HTTPClient: clients.HTTP,
+		Dialer:     clients.WebSocket,
+		Pool:       chathub.NewConnPool(clients.WebSocket, make(http.Header)),
+		Trace:      s.chat.Trace,
 	}
 	c.HTTPHeader.Set("Origin", "https://m365.cloud.microsoft")
 	c.HTTPHeader.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0")
@@ -213,13 +214,74 @@ func (s *Server) InitM365CloudClient() {
 
 func (s *Server) RefreshExpiredTokens() {
 	results := s.tokens.RefreshAllExpired()
+	s.logTokenRefreshResults(results, time.Time{})
+}
+
+func (s *Server) logTokenRefreshResults(results []auth.TokenRefreshResult, started time.Time) {
 	for _, r := range results {
 		if r.Success {
-			log.Printf("[token-refresh] account=%s refreshed, expires=%s", r.Email, r.ExpiresAt.Format(time.RFC3339))
+			log.Printf("[token-refresh] account=%s refreshed, expires=%s, remaining=%s", r.Email, r.ExpiresAt.Format(time.RFC3339), time.Until(r.ExpiresAt).Truncate(time.Second))
 		} else {
 			log.Printf("[token-refresh] account=%s failed: %s", r.Email, r.Error)
 		}
 	}
+	if len(results) > 0 && !started.IsZero() {
+		log.Printf("[token-refresh] batch=%d duration=%s", len(results), time.Since(started).Truncate(time.Millisecond))
+	}
+}
+
+// StartTokenPreRefresh keeps OAuth work off the request path by refreshing
+// access tokens several minutes before they expire.
+func (s *Server) StartTokenPreRefresh(ctx context.Context) {
+	if envFalse("M365_TOKEN_PRE_REFRESH") {
+		log.Printf("[token-refresh] background pre-refresh disabled")
+		return
+	}
+	refreshBefore := tokenRefreshDuration("M365_TOKEN_PRE_REFRESH_MINUTES", 5, time.Minute)
+	interval := tokenRefreshDuration("M365_TOKEN_PRE_REFRESH_INTERVAL_SECONDS", 60, time.Second)
+	concurrency := tokenRefreshInt("M365_TOKEN_PRE_REFRESH_CONCURRENCY", 4)
+	log.Printf("[token-refresh] background pre-refresh enabled interval=%s before_expiry=%s concurrency=%d", interval, refreshBefore, concurrency)
+	// Complete one pass before the HTTP listener accepts traffic. This moves
+	// any cold OAuth work into startup instead of letting the first user request
+	// pay for it.
+	started := time.Now()
+	s.logTokenRefreshResults(s.tokens.RefreshAllDue(refreshBefore, concurrency), started)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			started := time.Now()
+			s.logTokenRefreshResults(s.tokens.RefreshAllDue(refreshBefore, concurrency), started)
+		}
+	}()
+}
+
+func envFalse(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "0", "false", "no", "off":
+		return true
+	default:
+		return false
+	}
+}
+
+func tokenRefreshDuration(name string, fallback int, unit time.Duration) time.Duration {
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && value > 0 {
+		return time.Duration(value) * unit
+	}
+	return time.Duration(fallback) * unit
+}
+
+func tokenRefreshInt(name string, fallback int) int {
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name))); err == nil && value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func (s *Server) Routes() http.Handler {
@@ -893,6 +955,7 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
+	started := time.Now()
 	if accountID == "" {
 		acc, ok := s.tokens.Next()
 		if !ok {
@@ -921,7 +984,13 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 			return auth.AccountToken{}, &UpstreamHTTPError{Status: 429, RetryAfter: 1, Body: "all accounts are at their concurrency limit; try again shortly"}
 		}
 	}
-	return s.tokens.EnsureValid(accountID)
+	acc, err := s.tokens.EnsureValid(accountID)
+	if err != nil {
+		log.Printf("[account-route] prepare_failed id=%q duration_ms=%d err=%v", accountID, time.Since(started).Milliseconds(), err)
+		return auth.AccountToken{}, err
+	}
+	log.Printf("[account-route] prepared id=%q duration_ms=%d token_remaining=%s", acc.ID, time.Since(started).Milliseconds(), time.Until(acc.ExpiresAt).Truncate(time.Second))
+	return acc, nil
 }
 
 func (s *Server) markAccountFailure(accountID string, err error, window time.Duration) {
@@ -1247,7 +1316,9 @@ type oaiReq struct {
 	ResponseFormat *responseFormat `json:"response_format,omitempty"`
 	Messages       []oaiMsg        `json:"messages"`
 	Stream         bool            `json:"stream"`
-	PromptCacheKey string          `json:"prompt_cache_key,omitempty"`
+	// PromptCacheKey pins requests with the same caller-supplied cache key to
+	// one affinity route without treating the key as a conversation binding.
+	PromptCacheKey string `json:"prompt_cache_key,omitempty"`
 	// optional account routing
 	User           string `json:"user"`
 	AccountID      string `json:"accountId"`
@@ -1556,27 +1627,46 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 	defer cancel()
 	account := chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}
-	routerConversationID := body.ConversationID
-	routerSessionID := body.SessionID
+	reuseRouterConversation := s.affinity != nil && s.affinity.config.ReuseRouterConversation
+	routerConversationID := ""
+	routerSessionID := ""
+	if reuseRouterConversation {
+		routerConversationID = body.ConversationID
+		routerSessionID = body.SessionID
+	}
 	runRouter := func(text string) (chathub.Result, error) {
 		res, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{
 			Text: text, Tone: tone, ConversationID: routerConversationID,
 			SessionID: routerSessionID, Attachments: body.Attachments,
 		})
 		if routeErr == nil {
-			routerConversationID = firstNonEmpty(res.ConversationID, routerConversationID)
-			routerSessionID = firstNonEmpty(res.SessionID, routerSessionID)
-			res.ConversationID = routerConversationID
-			res.SessionID = routerSessionID
+			if reuseRouterConversation {
+				routerConversationID = firstNonEmpty(res.ConversationID, routerConversationID)
+				routerSessionID = firstNonEmpty(res.SessionID, routerSessionID)
+				res.ConversationID = routerConversationID
+				res.SessionID = routerSessionID
+			} else {
+				s.dropTransientConversation(res.ConversationID)
+			}
 			s.markAccountSuccess(acc.ID)
 		}
 		return res, routeErr
 	}
 	adoptRouterConversation := func() {
+		if !reuseRouterConversation {
+			return
+		}
 		body.ConversationID = firstNonEmpty(routerConversationID, body.ConversationID)
 		body.SessionID = firstNonEmpty(routerSessionID, body.SessionID)
 	}
 	bindRouterCalls := func(res chathub.Result, calls []detectedToolCall, routePrompt string) reuseUsage {
+		if !reuseRouterConversation {
+			callJSON, _ := json.Marshal(toolCallMessageMaps(calls))
+			return reuseUsage{
+				PromptTokens:     EstimateTokens(routePrompt),
+				CompletionTokens: EstimateTokens(string(callJSON)),
+			}
+		}
 		adoptRouterConversation()
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
@@ -1607,7 +1697,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls = filterCompletedCalls(calls, ledger)
 		calls, _ = validateCalls("router", calls)
 		if !parsed {
-			repairRes, repairErr := runRouter(`Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`)
+			repairPrompt := `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
+			if !reuseRouterConversation {
+				repairPrompt += " OUTPUT:\n" + compactToolResult(routeRes.Text, 6000)
+			}
+			repairRes, repairErr := runRouter(repairPrompt)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -1625,8 +1719,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), true, calls, routeRes, chatUsage(routerUsage))
 			return
 		}
-		adoptRouterConversation()
-		answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
+		if reuseRouterConversation {
+			adoptRouterConversation()
+			answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
+		}
 	}
 	if body.Stream {
 		answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL)
@@ -1877,6 +1973,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 					defer cancel2()
 					if res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments}); err2 == nil {
+						if reuseRouterConversation {
+							routerConversationID = firstNonEmpty(res2.ConversationID, routerConversationID)
+							routerSessionID = firstNonEmpty(res2.SessionID, routerSessionID)
+							res2.ConversationID = routerConversationID
+							res2.SessionID = routerSessionID
+						} else {
+							s.dropTransientConversation(res2.ConversationID)
+						}
 						routeRes, routeErr = res2, nil
 						acc = next
 						account = chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
@@ -1898,7 +2002,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
 		if !parsed {
-			repairRes, repairErr := runRouter(`Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Do not invent calls; use {"calls":[]} if unrecoverable.`)
+			repairPrompt := `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Do not invent calls; use {"calls":[]} if unrecoverable.`
+			if !reuseRouterConversation {
+				repairPrompt += " OUTPUT:\n" + compactToolResult(routeRes.Text, 6000)
+			}
+			repairRes, repairErr := runRouter(repairPrompt)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -1946,8 +2054,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			http.Error(w, "model did not select a required tool after constrained retry", http.StatusBadGateway)
 			return
 		}
-		adoptRouterConversation()
-		answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
+		if reuseRouterConversation {
+			adoptRouterConversation()
+			answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
+		}
 	}
 	answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL)
 	answerPrompt = answerReq.Text
@@ -2084,6 +2194,9 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			if IsRateLimited(err) && time.Duration(RetryAfterSeconds(err))*time.Second <= stickyWindow {
 				if retryErr := waitRetryAfter(ctx, err, stickyWindow); retryErr == nil {
 					res, err = s.chatWithAccount(ctx, acc.ID, account, answerReq)
+					if err == nil && strings.TrimSpace(res.Text) == "" {
+						err = chathub.ErrEmptyCompletion
+					}
 					if err == nil {
 						s.markAccountSuccess(acc.ID)
 					}
@@ -2099,7 +2212,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					migrationBody.ConversationID = ""
 					migrationBody.SessionID = ""
 					migrationBody.Attachments = fullAttachments
-					migrationReq := buildAnswerRequest(prompt, tone, migrationBody, ledger, planningMode)
+					migrationReq := buildAnswerRequest(prompt, tone, migrationBody, ledger, planningMode, mcpServerURL)
 					res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, migrationReq)
 					if err2 == nil {
 						res = res2

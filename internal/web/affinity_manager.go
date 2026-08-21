@@ -26,13 +26,14 @@ const (
 )
 
 type affinityConfig struct {
-	Mode             affinityMode
-	TTL              time.Duration
-	MaxSessions      int
-	LockTTL          time.Duration
-	LockWait         time.Duration
-	StickyRetryAfter time.Duration
-	AnonymousScope   string
+	Mode                    affinityMode
+	TTL                     time.Duration
+	MaxSessions             int
+	LockTTL                 time.Duration
+	LockWait                time.Duration
+	StickyRetryAfter        time.Duration
+	AnonymousScope          string
+	ReuseRouterConversation bool
 }
 
 func loadAffinityConfig() affinityConfig {
@@ -45,13 +46,14 @@ func loadAffinityConfig() affinityConfig {
 		anonymousScope = "ip"
 	}
 	return affinityConfig{
-		Mode:             mode,
-		TTL:              time.Duration(affinityEnvInt("M365_AFFINITY_TTL_MINUTES", 120)) * time.Minute,
-		MaxSessions:      affinityEnvInt("M365_AFFINITY_MAX_SESSIONS", 10000),
-		LockTTL:          time.Duration(affinityEnvInt("M365_SESSION_LOCK_TTL_SECONDS", 180)) * time.Second,
-		LockWait:         time.Duration(affinityEnvInt("M365_SESSION_LOCK_WAIT_SECONDS", 120)) * time.Second,
-		StickyRetryAfter: time.Duration(affinityEnvInt("M365_STICKY_RETRY_AFTER_SECONDS", 5)) * time.Second,
-		AnonymousScope:   anonymousScope,
+		Mode:                    mode,
+		TTL:                     time.Duration(affinityEnvInt("M365_AFFINITY_TTL_MINUTES", 120)) * time.Minute,
+		MaxSessions:             affinityEnvInt("M365_AFFINITY_MAX_SESSIONS", 10000),
+		LockTTL:                 time.Duration(affinityEnvInt("M365_SESSION_LOCK_TTL_SECONDS", 180)) * time.Second,
+		LockWait:                time.Duration(affinityEnvInt("M365_SESSION_LOCK_WAIT_SECONDS", 120)) * time.Second,
+		StickyRetryAfter:        time.Duration(affinityEnvInt("M365_STICKY_RETRY_AFTER_SECONDS", 5)) * time.Second,
+		AnonymousScope:          anonymousScope,
+		ReuseRouterConversation: affinityEnvBool("M365_AFFINITY_REUSE_ROUTER_CONVERSATION", false),
 	}
 }
 
@@ -59,6 +61,17 @@ func affinityEnvInt(name string, fallback int) int {
 	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(name)))
 	if err == nil && value > 0 {
 		return value
+	}
+	return fallback
+}
+
+func affinityEnvBool(name string, fallback bool) bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
+	if value == "true" || value == "1" || value == "yes" || value == "on" {
+		return true
+	}
+	if value == "false" || value == "0" || value == "no" || value == "off" {
+		return false
 	}
 	return fallback
 }
@@ -317,7 +330,7 @@ func (m *affinityManager) bindResponse(ctx context.Context, tenant, responseID, 
 	if m == nil || m.config.Mode == affinityOff || responseID == "" || sessionID == "" {
 		return
 	}
-	tenantHash := hashString(strings.TrimSpace(tenant))
+	tenantHash := normalizeAffinityTenantHash(tenant)
 	responseHash := affinityExplicitHash(tenantHash, "previous_response", responseID)
 	store := m.store(ctx)
 	sessionHash := affinityExplicitHash(tenantHash, "previous_response", sessionID)
@@ -365,7 +378,7 @@ func (m *affinityManager) hasResponseBinding(ctx context.Context, tenant, respon
 	if m == nil || m.config.Mode == affinityOff || responseID == "" {
 		return false
 	}
-	tenantHash := hashString(strings.TrimSpace(tenant))
+	tenantHash := normalizeAffinityTenantHash(tenant)
 	responseHash := affinityExplicitHash(tenantHash, "previous_response", responseID)
 	store := m.store(ctx)
 	_, ok, err := verifiedResponseBinding(ctx, store, tenantHash, responseHash)
@@ -505,6 +518,9 @@ func (state *affinityRequest) complete(ctx context.Context, body *oaiReq, accoun
 			state.store = fallback
 		} else if !ok {
 			log.Printf("[affinity] binding CAS lost id=%s generation=%d", state.binding.ID, state.binding.Generation)
+			state.incremental = false
+			usage.CachedTokens = 0
+			usage.Confirmed = false
 		}
 	} else if err := state.store.PutBinding(ctx, binding, state.manager.config.TTL); err != nil {
 		fallback := state.manager.markStoreError(err)
@@ -548,13 +564,13 @@ func affinityTenantIdentity(r *http.Request) string {
 
 func affinityTenantIdentityWithScope(r *http.Request, scope string) string {
 	if key := strings.TrimSpace(r.Header.Get("X-API-Key")); key != "" {
-		return key
+		return hashString(key)
 	}
 	if authHeader := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-		return strings.TrimSpace(authHeader[7:])
+		return hashString(strings.TrimSpace(authHeader[7:]))
 	}
 	if scope == "global" {
-		return "anonymous"
+		return hashString("anonymous")
 	}
 	host := strings.TrimSpace(r.RemoteAddr)
 	if parsed, _, err := net.SplitHostPort(host); err == nil {
@@ -563,7 +579,7 @@ func affinityTenantIdentityWithScope(r *http.Request, scope string) string {
 	if host == "" {
 		host = "unknown"
 	}
-	return "anonymous-ip:" + host
+	return hashString("anonymous-ip:" + host)
 }
 
 func (m *affinityManager) tenantIdentity(r *http.Request) string {

@@ -183,6 +183,10 @@ python manage.py stop     # 停止服务
 | `M365_CONTEXT_SIMILARITY` | `0.6` | 上下文相似度复用阈值（0~1，Jaccard 相似度） |
 | `M365_LOG_LEVEL` | `info` | 日志级别 |
 | `M365_ACCOUNT_DEFAULT_CONCURRENCY` | `8` | 每个账号同时进行的上游调用上限；其余账号仍可继续接收请求 |
+| `M365_TOKEN_PRE_REFRESH` | 开启 | 后台令牌预刷新；设为 `0` / `false` / `no` / `off` 关闭 |
+| `M365_TOKEN_PRE_REFRESH_MINUTES` | `5` | 访问令牌剩余多少分钟时提前刷新，避免请求同步等待 OAuth |
+| `M365_TOKEN_PRE_REFRESH_INTERVAL_SECONDS` | `60` | 后台检查令牌的周期（秒） |
+| `M365_TOKEN_PRE_REFRESH_CONCURRENCY` | `4` | 同时刷新账号的上限，避免 OAuth 突发请求 |
 | `M365_PUBLIC_IDENTITY_POLICY` | `false` | 公开身份策略总开关；仅在微软反代渠道显式设为 `true` 时启用身份预设及正文、推理、引用和流式清洗 |
 
 ### 自动清理
@@ -219,8 +223,8 @@ python manage.py stop     # 停止服务
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `M365_PROXY_POOL` | 空 | 代理列表（逗号或换行分隔，支持 http / https / socks5） |
+| `M365_PROXY_HEALTH_URL` | Microsoft 登录发现端点 | 代理健康检查目标；默认贴近 OAuth 真实链路 |
 | `M365_PROXY_INSECURE_TLS` | — | 信任自签代理证书（`1` / `true`） |
-| `M365_PROXY_HEALTH_URL` | 默认探测地址 | 代理健康检查目标 |
 | `M365_BROWSER_CLIENT_ID` / `M365_BROWSER_AUTHORITY` / `M365_BROWSER_REDIRECT_URI` / `M365_BROWSER_SCOPE` | 内置 | 浏览器 PKCE 的 OAuth 配置 |
 | `M365_DEVICE_CLIENT_ID` / `M365_DEVICE_AUTHORITY` / `M365_DEVICE_SCOPE` | 内置 | Device Code 的 OAuth 配置 |
 | `M365_CLIENT_ID` / `M365_AUTHORITY` / `M365_REDIRECT_URI` / `M365_SCOPE` | 内置 | 兼容旧配置；流程专用变量未设置时作为回退 |
@@ -359,7 +363,9 @@ curl http://127.0.0.1:4141/v1/messages \
 - Anthropic Messages：`usage.cache_read_input_tokens`
 - 流式响应：只在成功终止 usage 事件中输出
 
-`M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。核心实现使用进程内存储，缓存统计保持保守值，不会把普通历史消息误报成命中。
+`M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。Responses API 在 `off` 模式保持原有的 `extractAPIKey` 租户命名空间，滚动升级不会破坏 `previous_response_id` 查找；启用亲和后才使用哈希租户键。核心实现使用进程内存储，缓存统计保持保守值，不会把普通历史消息误报成命中。
+
+工具规划器默认使用一次性云端会话，成功后自动清理；需要让规划器复用调用方会话时显式设置 `M365_AFFINITY_REUSE_ROUTER_CONVERSATION=true`。请求中的 `prompt_cache_key` 只用于稳定账号亲和路由，不等同于会话续接，也不会单独声称缓存命中。
 
 未携带 API key 或 Bearer token 的请求默认通过 `M365_AFFINITY_ANONYMOUS_SCOPE=ip` 按远端 IP 隔离。仅在可信的单租户部署中可设为 `global`，共享匿名亲和范围。
 

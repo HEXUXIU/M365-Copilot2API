@@ -331,17 +331,23 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		s.responseMu.Lock()
 		if len(s.responseMessages) >= maxResponseTenants {
+			// Evict the least recently active tenant: compare tenants by the
+			// NEWEST record in each bucket, so a tenant that wrote anything
+			// recently is never chosen over a fully idle one. (Scanning only
+			// the first entry per bucket — as before — made eviction depend
+			// on Go's random map iteration order.)
 			var oldestTenant string
-			var oldestTime time.Time
+			var oldestActive time.Time
 			for t, b := range s.responseMessages {
+				newest := time.Time{}
 				for _, h := range b {
-					if oldestTenant == "" || h.At.Before(oldestTime) {
-						oldestTenant = t
-						oldestTime = h.At
+					if h.At.After(newest) {
+						newest = h.At
 					}
-					// Do not break here: b holds many entries and we must scan
-					// all of them to find this tenant's oldest record, otherwise
-					// Go's random map order makes the eviction arbitrary.
+				}
+				if oldestTenant == "" || newest.Before(oldestActive) {
+					oldestTenant = t
+					oldestActive = newest
 				}
 			}
 			if oldestTenant != "" {

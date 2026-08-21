@@ -33,17 +33,21 @@ type sessionBinding struct {
 }
 
 type sessionResolver struct {
-	mu          sync.Mutex
-	path        string
-	sessions    map[string]sessionBinding
-	byExplicit  map[string]string // explicitID -> sessionID
-	byUserField map[string]string // userField -> sessionID
-	byIPFinger  map[string]string // ipFingerprint -> sessionID
-	byContext   map[string]string // contextFingerprint -> sessionID
-	ttl         time.Duration
-	contextTTL  time.Duration
-	maxSessions int
-	persist     *persistStore
+	mu         sync.Mutex
+	path       string
+	sessions   map[string]sessionBinding
+	byExplicit map[string]string // explicitID -> sessionID
+	// reverse index: sessionID -> set of explicitIDs pointing at it,
+	// so dropLocked can remove explicit entries in O(1) instead of
+	// scanning the whole byExplicit map.
+	explicitBySession map[string]map[string]struct{}
+	byUserField       map[string]string // userField -> sessionID
+	byIPFinger        map[string]string // ipFingerprint -> sessionID
+	byContext         map[string]string // contextFingerprint -> sessionID
+	ttl               time.Duration
+	contextTTL        time.Duration
+	maxSessions       int
+	persist           *persistStore
 }
 
 const defaultMaxSessions = 1000
@@ -68,15 +72,16 @@ func openSessionResolver() *sessionResolver {
 		path = "sessions.json"
 	}
 	sr := &sessionResolver{
-		path:        path,
-		sessions:    map[string]sessionBinding{},
-		byExplicit:  map[string]string{},
-		byUserField: map[string]string{},
-		byIPFinger:  map[string]string{},
-		byContext:   map[string]string{},
-		ttl:         ttl,
-		contextTTL:  contextTTL,
-		maxSessions: defaultMaxSessions,
+		path:              path,
+		sessions:          map[string]sessionBinding{},
+		byExplicit:        map[string]string{},
+		explicitBySession: map[string]map[string]struct{}{},
+		byUserField:       map[string]string{},
+		byIPFinger:        map[string]string{},
+		byContext:         map[string]string{},
+		ttl:               ttl,
+		contextTTL:        contextTTL,
+		maxSessions:       defaultMaxSessions,
 	}
 	sr.persist = &persistStore{flush: sr.flush}
 	sr.loadLocked()
@@ -140,7 +145,25 @@ func (sr *sessionResolver) reindexLocked(s sessionBinding) {
 func (sr *sessionResolver) reindexExplicitLocked(sessionID, explicitID string) {
 	if explicitID != "" {
 		sr.byExplicit[explicitID] = sessionID
+		set := sr.explicitBySession[sessionID]
+		if set == nil {
+			set = map[string]struct{}{}
+			sr.explicitBySession[sessionID] = set
+		}
+		set[explicitID] = struct{}{}
 	}
+}
+
+// unbindExplicitForSessionLocked removes every explicit entry pointing at the
+// given session via the reverse index. O(#explicit bindings) instead of a
+// full byExplicit scan. Callers must hold sr.mu.
+func (sr *sessionResolver) unbindExplicitForSessionLocked(sessionID string) {
+	for explicitID := range sr.explicitBySession[sessionID] {
+		if sr.byExplicit[explicitID] == sessionID {
+			delete(sr.byExplicit, explicitID)
+		}
+	}
+	delete(sr.explicitBySession, sessionID)
 }
 
 func (sr *sessionResolver) evictLocked() {
@@ -167,11 +190,7 @@ func (sr *sessionResolver) evictLocked() {
 
 func (sr *sessionResolver) dropLocked(id string, s sessionBinding) {
 	delete(sr.sessions, id)
-	for explicitID, sessID := range sr.byExplicit {
-		if sessID == id {
-			delete(sr.byExplicit, explicitID)
-		}
-	}
+	sr.unbindExplicitForSessionLocked(id)
 	if sr.byUserField[s.UserField] == id {
 		delete(sr.byUserField, s.UserField)
 	}
@@ -232,17 +251,17 @@ func (sr *sessionResolver) Resolve(r *http.Request, body *oaiReq) ResolveResult 
 	if explicitID != "" {
 		if sessID, ok := sr.byExplicit[explicitID]; ok {
 			if sess, ok := sr.sessions[sessID]; ok {
-			sess.LastUsedAt = time.Now().UTC()
-			sr.sessions[sessID] = sess
-			sr.persist.markDirty()
-			return ResolveResult{
-				SessionID:      sess.SessionID,
-				ConversationID: sess.ConversationID,
-				AccountID:      sess.AccountID,
-				MatchedBy:      "explicit",
-				IsNew:          false,
-				HistoryLen:     len(sess.ContextHistory),
-			}
+				sess.LastUsedAt = time.Now().UTC()
+				sr.sessions[sessID] = sess
+				sr.persist.markDirty()
+				return ResolveResult{
+					SessionID:      sess.SessionID,
+					ConversationID: sess.ConversationID,
+					AccountID:      sess.AccountID,
+					MatchedBy:      "explicit",
+					IsNew:          false,
+					HistoryLen:     len(sess.ContextHistory),
+				}
 			}
 		}
 		if sess, ok := sr.sessions[explicitID]; ok {
@@ -354,9 +373,9 @@ func (sr *sessionResolver) matchContextLocked(ipFinger string, messages []oaiMsg
 		return "", 0
 	}
 	type match struct {
-		id      string
-		n       int
-		recent  time.Time
+		id     string
+		n      int
+		recent time.Time
 	}
 	best := match{}
 	for id, sess := range sr.sessions {
@@ -537,11 +556,7 @@ func (sr *sessionResolver) DeleteSession(sessionID string) bool {
 		return false
 	}
 	delete(sr.sessions, sessionID)
-	for explicitID, sessID := range sr.byExplicit {
-		if sessID == sessionID {
-			delete(sr.byExplicit, explicitID)
-		}
-	}
+	sr.unbindExplicitForSessionLocked(sessionID)
 	if s.UserField != "" {
 		delete(sr.byUserField, s.UserField)
 	}
@@ -567,11 +582,7 @@ func (sr *sessionResolver) UnbindByConversation(conversationID string) int {
 			continue
 		}
 		delete(sr.sessions, sid)
-		for explicitID, sessID := range sr.byExplicit {
-			if sessID == sid {
-				delete(sr.byExplicit, explicitID)
-			}
-		}
+		sr.unbindExplicitForSessionLocked(sid)
 		if s.UserField != "" {
 			delete(sr.byUserField, s.UserField)
 		}

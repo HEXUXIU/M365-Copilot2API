@@ -30,13 +30,13 @@ type errUnknownResource string
 func (e errUnknownResource) Error() string { return "unknown resource: " + string(e) }
 
 func TestResourcesListReturnsRegisteredResources(t *testing.T) {
-	orig := GlobalResourceProvider
-	GlobalResourceProvider = &stubResourceProvider{
+	orig := resourceProvider()
+	SetGlobalResourceProvider(&stubResourceProvider{
 		resources: []Resource{
 			{URI: "m365://test/foo", Name: "Test Foo", MIMEType: "text/plain"},
 		},
-	}
-	defer func() { GlobalResourceProvider = orig }()
+	})
+	defer SetGlobalResourceProvider(orig)
 
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/mcp/message?sessionId=test-rsrc", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`))
@@ -69,14 +69,14 @@ func TestResourcesListReturnsRegisteredResources(t *testing.T) {
 }
 
 func TestResourcesReadReturnsContent(t *testing.T) {
-	orig := GlobalResourceProvider
-	GlobalResourceProvider = &stubResourceProvider{
+	orig := resourceProvider()
+	SetGlobalResourceProvider(&stubResourceProvider{
 		resources: []Resource{{URI: "m365://test/bar", Name: "Test Bar", MIMEType: "application/json"}},
 		content: map[string]ResourceContent{
 			"m365://test/bar": {URI: "m365://test/bar", MIMEType: "application/json", Text: `{"ok":true}`},
 		},
-	}
-	defer func() { GlobalResourceProvider = orig }()
+	})
+	defer SetGlobalResourceProvider(orig)
 
 	GlobalRegistry = &sessionRegistry{sessions: map[string]*session{}}
 	sessID := GlobalRegistry.RegisterSession(nil)

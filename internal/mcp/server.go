@@ -62,13 +62,48 @@ func (r *toolRegistry) ClearTools() {
 	r.tools = []Tool{}
 }
 
-var GlobalResourceProvider ResourceProvider
+// globalResourceProvider is guarded by its own RWMutex: handleRPC runs on
+// per-request goroutines while tests (and any future registration path) may
+// swap the provider concurrently. Access it only through resourceProvider()
+// and setResourceProvider().
+var globalResourceProvider struct {
+	mu       sync.RWMutex
+	provider ResourceProvider
+}
+
+func resourceProvider() ResourceProvider {
+	globalResourceProvider.mu.RLock()
+	defer globalResourceProvider.mu.RUnlock()
+	return globalResourceProvider.provider
+}
+
+// SetGlobalResourceProvider installs the resource provider used by
+// resources/list and resources/read. Safe for concurrent use.
+func SetGlobalResourceProvider(p ResourceProvider) {
+	globalResourceProvider.mu.Lock()
+	defer globalResourceProvider.mu.Unlock()
+	globalResourceProvider.provider = p
+}
 
 // GlobalRegistry is a global registry of MCP sessions, keyed by session ID.
 var GlobalRegistry = &sessionRegistry{sessions: map[string]*session{}}
 
+// AuthHook, when non-nil, gates every MCP endpoint: HandleSSE and HandleMessage
+// reject requests that fail it with 401 before doing any work. The web server
+// wires this to its API-key validation at startup so resource enumeration and
+// reads are never reachable by unauthenticated clients. Tests leave it nil.
+var AuthHook func(r *http.Request) bool
+
+func authorized(r *http.Request) bool {
+	return AuthHook == nil || AuthHook(r)
+}
+
 // HandleToolsList returns the currently registered tools as JSON. Mount at /v1/mcp/tools.
 func HandleToolsList(w http.ResponseWriter, r *http.Request) {
+	if !authorized(r) {
+		http.Error(w, "valid API key required", http.StatusUnauthorized)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	tools := GlobalToolRegistry.ListTools()
@@ -85,12 +120,12 @@ type sessionRegistry struct {
 }
 
 type session struct {
-	id       string
+	id         string
 	providerMu sync.RWMutex
-	provider ToolProvider
-	created  time.Time
-	msgCh    chan json.RawMessage
-	done     chan struct{}
+	provider   ToolProvider
+	created    time.Time
+	msgCh      chan json.RawMessage
+	done       chan struct{}
 }
 
 // RegisterSession creates a new MCP session with the given tool provider and returns the session ID.
@@ -126,6 +161,10 @@ func (r *sessionRegistry) getSession(id string) *session {
 
 // HandleSSE handles MCP SSE connections. Mount at /v1/mcp/sse.
 func HandleSSE(w http.ResponseWriter, r *http.Request) {
+	if !authorized(r) {
+		http.Error(w, "valid API key required", http.StatusUnauthorized)
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -168,6 +207,10 @@ func HandleSSE(w http.ResponseWriter, r *http.Request) {
 
 // HandleMessage handles MCP JSON-RPC messages. Mount at /v1/mcp/message.
 func HandleMessage(w http.ResponseWriter, r *http.Request) {
+	if !authorized(r) {
+		http.Error(w, "valid API key required", http.StatusUnauthorized)
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -297,8 +340,8 @@ func handleRPC(ctx context.Context, sess *session, req *jsonRPCRequest) *jsonRPC
 		}
 		return jsonRPCResult(req.ID, result)
 	case "resources/list":
-		if GlobalResourceProvider != nil {
-			resources, err := GlobalResourceProvider.ListResources(ctx)
+		if rp := resourceProvider(); rp != nil {
+			resources, err := rp.ListResources(ctx)
 			if err != nil {
 				return newRPCError(req.ID, -32603, "resource list failed: "+err.Error())
 			}
@@ -321,10 +364,29 @@ func handleRPC(ctx context.Context, sess *session, req *jsonRPCRequest) *jsonRPC
 		if !strings.HasPrefix(params.URI, "mcp://") && !strings.HasPrefix(params.URI, "gateway://") && !strings.HasPrefix(params.URI, "m365://") {
 			return newRPCError(req.ID, -32602, "unsupported uri scheme: allowed prefixes are mcp://, gateway://, m365://")
 		}
-		if GlobalResourceProvider == nil {
+		rp := resourceProvider()
+		if rp == nil {
 			return newRPCError(req.ID, -32603, "no resources available")
 		}
-		content, err := GlobalResourceProvider.ReadResource(ctx, params.URI)
+		// SSRF guard: a URI prefix check alone is not enough — an allowed
+		// scheme can still point at internal data. Only URIs the provider
+		// itself advertised via resources/list are readable, so reads are
+		// tied to the enumerated surface and cannot probe arbitrary targets.
+		listed, err := rp.ListResources(ctx)
+		if err != nil {
+			return newRPCError(req.ID, -32603, "resource list failed: "+err.Error())
+		}
+		allowed := false
+		for _, res := range listed {
+			if res.URI == params.URI {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return newRPCError(req.ID, -32002, "resource not found: "+params.URI)
+		}
+		content, err := rp.ReadResource(ctx, params.URI)
 		if err != nil {
 			return newRPCError(req.ID, -32603, "resource read failed: "+err.Error())
 		}

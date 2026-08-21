@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,7 +16,7 @@ import (
 // Client is an MCP client that connects to an MCP server via HTTP SSE.
 // It implements the MCP client protocol: discover tools, invoke tools.
 type Client struct {
-	serverURL string
+	serverURL  string
 	httpClient *http.Client
 	sessionID  string
 	mu         sync.Mutex
@@ -126,7 +127,7 @@ func (c *Client) Connect(ctx context.Context) error {
 func (c *Client) readSSE(body io.ReadCloser) {
 	defer body.Close()
 	defer c.setConnected(false)
-	
+
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -134,11 +135,17 @@ func (c *Client) readSSE(body io.ReadCloser) {
 			data := strings.TrimPrefix(line, "data: ")
 			var msg json.RawMessage
 			if err := json.Unmarshal([]byte(data), &msg); err == nil {
-				// Blocking send: dropping a response here would hang the
-				// pending sendRequest caller forever. The channel is drained
-				// by ListTools/CallTool waiters, so this only blocks if the
-				// server pipelines more responses than outstanding requests.
-				c.msgCh <- msg
+				// Bounded blocking send. A plain drop (select/default) can hang
+				// the pending sendRequest caller forever, but an unbounded
+				// blocking send deadlocks the whole SSE session when the
+				// channel fills up and no waiter ever arrives. Give each send
+				// a grace window; if it still doesn't fit, drop and log so the
+				// reader keeps draining the HTTP body.
+				select {
+				case c.msgCh <- msg:
+				case <-time.After(5 * time.Second):
+					log.Printf("[mcp] msgCh full for session %s, dropping message after 5s wait", c.sessionID)
+				}
 			}
 		}
 	}
@@ -218,7 +225,7 @@ func (c *Client) sendRequest(ctx context.Context, method string, params any) err
 	body, _ := json.Marshal(req)
 
 	messageURL := fmt.Sprintf("%s/message?sessionId=%s", strings.TrimRight(strings.Split(c.serverURL, "/sse")[0], "/"), c.sessionID)
-	
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messageURL, strings.NewReader(string(body)))
 	if err != nil {
 		return err
@@ -247,7 +254,7 @@ func (c *Client) sendNotification(method string, params any) error {
 	body, _ := json.Marshal(req)
 
 	messageURL := fmt.Sprintf("%s/message?sessionId=%s", strings.TrimRight(strings.Split(c.serverURL, "/sse")[0], "/"), c.sessionID)
-	
+
 	httpReq, err := http.NewRequest(http.MethodPost, messageURL, strings.NewReader(string(body)))
 	if err != nil {
 		return err

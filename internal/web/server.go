@@ -22,7 +22,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -41,6 +40,68 @@ const rateLimitCooldown = 30 * time.Second
 const maxAccountProbe = 16
 
 const rateLimitProbePrompt = "Reply with exactly: OK"
+
+var streamToolPrefixes = []string{"```bash", "```sh", "```shell", "```json", "\"command\""}
+
+// consumeStreamText emits ordinary text immediately and retains only a short
+// suffix that could become a fenced tool block across upstream chunks.
+func consumeStreamText(pending *strings.Builder, fragment string, emit func(string) error) error {
+	if pending == nil || fragment == "" {
+		return nil
+	}
+	pending.WriteString(fragment)
+	v := pending.String()
+	if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
+		return nil
+	}
+	if i := strings.Index(v, "```"); i >= 0 {
+		if err := emit(v[:i]); err != nil {
+			return err
+		}
+		pending.Reset()
+		pending.WriteString(v[i:])
+		return nil
+	}
+	keep := streamToolPrefixSuffix(v)
+	if keep > 0 {
+		cut := len(v) - keep
+		if cut > 0 {
+			if err := emit(v[:cut]); err != nil {
+				return err
+			}
+			pending.Reset()
+			pending.WriteString(v[cut:])
+		}
+		return nil
+	}
+	if err := emit(v); err != nil {
+		return err
+	}
+	pending.Reset()
+	return nil
+}
+
+func streamToolPrefixSuffix(value string) int {
+	trimmed := strings.TrimLeft(value, " \t\r\n")
+	if strings.HasPrefix(trimmed, "{") && !strings.Contains(trimmed, "\n") && len(trimmed) < 64 {
+		// JSON tool calls commonly reveal the command key several chunks after
+		// the opening brace. Keep the whole short prefix until that is known.
+		return len(value)
+	}
+	max := 0
+	for _, marker := range streamToolPrefixes {
+		limit := len(marker)
+		if len(value) < limit {
+			limit = len(value)
+		}
+		for n := 1; n <= limit; n++ {
+			if strings.HasSuffix(value, marker[:n]) && n > max {
+				max = n
+			}
+		}
+	}
+	return max
+}
 
 func (s *Server) markAccountResult(accountID string, err error) {
 	if s == nil || accountID == "" {
@@ -1780,38 +1841,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			text.WriteString(ev.Text)
-			pending.WriteString(ev.Text)
-			v := pending.String()
-			// If the text contains a bash block or a JSON command, don't emit it as text
-			// It will be caught by fencedToolCalls after the stream completes
-			if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
-				return nil
-			}
-			if i := strings.Index(v, "```"); i >= 0 {
-				if err := emitText(v[:i]); err != nil {
-					return err
-				}
-				pending.Reset()
-				pending.WriteString(v[i:])
-				return nil
-			}
-			if runeCount := utf8.RuneCountInString(v); runeCount > 8 {
-				cut := 0
-				seen := 0
-				for i := range v {
-					if seen == runeCount-8 {
-						cut = i
-						break
-					}
-					seen++
-				}
-				if err := emitText(v[:cut]); err != nil {
-					return err
-				}
-				pending.Reset()
-				pending.WriteString(v[cut:])
-			}
-			return nil
+			return consumeStreamText(&pending, ev.Text, emitText)
 		})
 		if err != nil && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
 			// A throttled stream may retry on the next healthy account: only the
@@ -1837,36 +1867,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 						return nil
 					}
 					text.WriteString(ev.Text)
-					pending.WriteString(ev.Text)
-					v := pending.String()
-					if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
-						return nil
-					}
-					if i := strings.Index(v, "```"); i >= 0 {
-						if err := emitText(v[:i]); err != nil {
-							return err
-						}
-						pending.Reset()
-						pending.WriteString(v[i:])
-						return nil
-					}
-					if runeCount := utf8.RuneCountInString(v); runeCount > 8 {
-						cut := 0
-						seen := 0
-						for i := range v {
-							if seen == runeCount-8 {
-								cut = i
-								break
-							}
-							seen++
-						}
-						if err := emitText(v[:cut]); err != nil {
-							return err
-						}
-						pending.Reset()
-						pending.WriteString(v[cut:])
-					}
-					return nil
+					return consumeStreamText(&pending, ev.Text, emitText)
 				})
 				if err2 == nil {
 					res = res2

@@ -328,6 +328,28 @@ func TestPublicIdentityStreamFilterHandlesSplitProviderName(t *testing.T) {
 	}
 }
 
+func TestPublicIdentityStreamFilterEmitsOrdinaryTextImmediately(t *testing.T) {
+	filter := newPublicIdentityStreamFilter("gpt-5.6-sol")
+	if got := filter.Push("首字无需等待句号"); got != "首字无需等待句号" {
+		t.Fatalf("ordinary stream text was buffered: %q", got)
+	}
+}
+
+func TestPublicIdentityStreamFilterKeepsChineseProviderPrefixSplit(t *testing.T) {
+	filter := newPublicIdentityStreamFilter("gpt-5.6-sol")
+	var got strings.Builder
+	for _, chunk := range []string{"我是微软的", " Cop", "ilot，基于 GPT-5。"} {
+		got.WriteString(filter.Push(chunk))
+	}
+	got.WriteString(filter.Flush())
+	if publicProviderIdentityPattern.MatchString(got.String()) || strings.Contains(strings.ToLower(got.String()), "copilot") {
+		t.Fatalf("split Chinese provider identity leaked: %q", got.String())
+	}
+	if strings.Count(got.String(), "GPT-5 系列 AI 助手") != 1 {
+		t.Fatalf("expected one neutral identity: %q", got.String())
+	}
+}
+
 func TestPublicIdentityStreamFilterUsesRequestedClaudeModel(t *testing.T) {
 	filter := newPublicIdentityStreamFilter("claude-sonnet-reasoning")
 	chunks := []string{"Microsoft Cop", "ilot, a conversational AI model ", "based on Claude Sonnet 4.5."}

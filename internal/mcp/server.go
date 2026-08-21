@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -60,6 +61,8 @@ func (r *toolRegistry) ClearTools() {
 	defer r.mu.Unlock()
 	r.tools = []Tool{}
 }
+
+var GlobalResourceProvider ResourceProvider
 
 // GlobalRegistry is a global registry of MCP sessions, keyed by session ID.
 var GlobalRegistry = &sessionRegistry{sessions: map[string]*session{}}
@@ -246,8 +249,11 @@ func handleRPC(ctx context.Context, sess *session, req *jsonRPCRequest) *jsonRPC
 	case "initialize":
 		return jsonRPCResult(req.ID, map[string]any{
 			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]any{"tools": map[string]any{}},
-			"serverInfo":      map[string]any{"name": "m365-copilot2api", "version": "0.1.0"},
+			"capabilities": map[string]any{
+				"tools":     map[string]any{},
+				"resources": map[string]any{"subscribe": false, "listChanged": false},
+			},
+			"serverInfo": map[string]any{"name": "m365-copilot2api", "version": "0.1.0"},
 		})
 	case "tools/list":
 		// First check session-specific tools, then fall back to global registry
@@ -290,6 +296,41 @@ func handleRPC(ctx context.Context, sess *session, req *jsonRPCRequest) *jsonRPC
 			})
 		}
 		return jsonRPCResult(req.ID, result)
+	case "resources/list":
+		if GlobalResourceProvider != nil {
+			resources, err := GlobalResourceProvider.ListResources(ctx)
+			if err != nil {
+				return newRPCError(req.ID, -32603, "resource list failed: "+err.Error())
+			}
+			if resources == nil {
+				resources = []Resource{}
+			}
+			return jsonRPCResult(req.ID, map[string]any{"resources": resources})
+		}
+		return jsonRPCResult(req.ID, map[string]any{"resources": []Resource{}})
+	case "resources/read":
+		var params struct {
+			URI string `json:"uri"`
+		}
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return newRPCError(req.ID, -32602, "invalid params: "+err.Error())
+		}
+		if params.URI == "" {
+			return newRPCError(req.ID, -32602, "missing uri")
+		}
+		if !strings.HasPrefix(params.URI, "mcp://") && !strings.HasPrefix(params.URI, "gateway://") && !strings.HasPrefix(params.URI, "m365://") {
+			return newRPCError(req.ID, -32602, "unsupported uri scheme: allowed prefixes are mcp://, gateway://, m365://")
+		}
+		if GlobalResourceProvider == nil {
+			return newRPCError(req.ID, -32603, "no resources available")
+		}
+		content, err := GlobalResourceProvider.ReadResource(ctx, params.URI)
+		if err != nil {
+			return newRPCError(req.ID, -32603, "resource read failed: "+err.Error())
+		}
+		return jsonRPCResult(req.ID, map[string]any{
+			"contents": []ResourceContent{content},
+		})
 	case "notifications/initialized":
 		return nil
 	default:

@@ -1641,6 +1641,22 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			if buffering {
+				firstFence := strings.Index(v, "```")
+				if firstFence >= 0 {
+					secondFence := strings.Index(v[firstFence+3:], "```")
+					if secondFence >= 0 {
+						closeEnd := firstFence + 3 + secondFence + 3
+						buffering = false
+						if err := emitText(v[:closeEnd]); err != nil {
+							return err
+						}
+						pending.Reset()
+						if closeEnd < len(v) {
+							pending.WriteString(v[closeEnd:])
+						}
+						return nil
+					}
+				}
 				return nil
 			}
 			if i := strings.Index(v, "```"); i >= 0 {
@@ -1704,6 +1720,22 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 						return nil
 					}
 					if buffering {
+						firstFence := strings.Index(v, "```")
+						if firstFence >= 0 {
+							secondFence := strings.Index(v[firstFence+3:], "```")
+							if secondFence >= 0 {
+								closeEnd := firstFence + 3 + secondFence + 3
+								buffering = false
+								if err := emitText(v[:closeEnd]); err != nil {
+									return err
+								}
+								pending.Reset()
+								if closeEnd < len(v) {
+									pending.WriteString(v[closeEnd:])
+								}
+								return nil
+							}
+						}
 						return nil
 					}
 					if i := strings.Index(v, "```"); i >= 0 {

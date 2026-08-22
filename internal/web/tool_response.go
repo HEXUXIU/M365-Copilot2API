@@ -4,6 +4,7 @@ import (
 	"m365-copilot2api/internal/chathub"
 	"net/http"
 	"time"
+	"unicode/utf8"
 )
 
 func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, sendUsage bool, calls []detectedToolCall, res chathub.Result) error {
@@ -50,6 +51,9 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, sen
 				end := off + chunkSize
 				if end > len(args) {
 					end = len(args)
+				}
+				for end < len(args) && !utf8.RuneStart(args[end]) {
+					end++
 				}
 				argChunk := args[off:end]
 				isLastArgChunk := off+chunkSize >= len(args)

@@ -156,7 +156,7 @@ func New() (*Server, error) {
 			sessionTTL = d
 		}
 	}
-	return &Server{
+	s := &Server{
 		tokens:             store,
 		accountPool:        newAccountHealth(),
 		accountConcurrency: newAccountConcurrency(),
@@ -181,7 +181,16 @@ func New() (*Server, error) {
 		usage:               openUsageLog(),
 		generatedImages:     map[string]generatedImage{},
 		convCache:           newConversationCache(),
-	}, nil
+	}
+	s.initMCPAuth()
+	return s, nil
+}
+
+// initMCPAuth wires the MCP endpoint auth hook to this server's API-key
+// validation. Called from New(); the mcp package cannot import web (cycle),
+// so it exposes a hook variable instead.
+func (s *Server) initMCPAuth() {
+	mcp.AuthHook = s.validAPIKey
 }
 
 func (s *Server) StartConvCacheGC() {

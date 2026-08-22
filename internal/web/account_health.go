@@ -71,6 +71,26 @@ func IsAuthFailure(err error) bool {
 	return false
 }
 
+// IsTransientUpstreamFailure identifies connection failures that are safe to
+// retry before any assistant text has reached the client.
+func IsTransientUpstreamFailure(err error) bool {
+	if err == nil || IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"ws dial:", "handshake send:", "handshake recv:", "chat send:",
+		"ws read before completion:", "connection reset", "connection refused",
+		"broken pipe", "unexpected eof", "use of closed network connection",
+		"i/o timeout", "timeout",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsEmptyCompletion(err error) bool {
 	return errors.Is(err, chathub.ErrEmptyCompletion)
 }

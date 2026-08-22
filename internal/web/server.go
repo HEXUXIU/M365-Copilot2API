@@ -1226,7 +1226,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		// request when the pool has other healthy accounts. Only auto-selected
 		// requests fail over; an explicitly chosen account is respected, and a
 		// conversation-bound chat stays on its account.
-		if body.AccountID == "" && body.ConversationID == "" && (IsRateLimited(err) || IsAuthFailure(err)) {
+		if body.AccountID == "" && body.ConversationID == "" && (IsRateLimited(err) || IsAuthFailure(err) || IsTransientUpstreamFailure(err)) {
 			next, nerr := s.nextHealthyAccount(acc.ID)
 			if nerr == nil {
 				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
@@ -1843,7 +1843,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			text.WriteString(ev.Text)
 			return consumeStreamText(&pending, ev.Text, emitText)
 		})
-		if err != nil && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
+		if err != nil && text.Len() == 0 && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsTransientUpstreamFailure(err)) {
 			// A throttled stream may retry on the next healthy account: only the
 			// ": connected" preamble reached the client, so the retried stream is
 			// indistinguishable from a fresh request.
@@ -2117,7 +2117,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			return
 		}
 		res, err = s.chatWithAccountReasoning(ctx, acc.ID, account, answerReq, onDelta, onReasoning)
-		if err != nil && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
+		if err != nil && firstDelta && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsTransientUpstreamFailure(err)) {
 			// Retry a throttled stream on the next healthy account; the client
 			// has only seen the ": connected" preamble so far, so the retry is
 			// indistinguishable from a fresh request.

@@ -2,7 +2,9 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,6 +50,21 @@ func TestUpstreamErrorClassification(t *testing.T) {
 		if got := upstreamStatus(c.err); got != c.status {
 			t.Errorf("upstreamStatus(%v)=%d want %d", c.err, got, c.status)
 		}
+	}
+}
+
+func TestTransientUpstreamFailureClassification(t *testing.T) {
+	for _, err := range []error{
+		fmt.Errorf("ws dial: %w", errors.New("connection reset by peer")),
+		fmt.Errorf("ws read before completion: %w", io.ErrUnexpectedEOF),
+		fmt.Errorf("chat send: i/o timeout"),
+	} {
+		if !IsTransientUpstreamFailure(err) {
+			t.Fatalf("expected transient failure: %v", err)
+		}
+	}
+	if IsTransientUpstreamFailure(&UpstreamHTTPError{Status: 429}) || IsTransientUpstreamFailure(&UpstreamHTTPError{Status: 401}) {
+		t.Fatal("rate-limit/auth failures should use their dedicated classifications")
 	}
 }
 

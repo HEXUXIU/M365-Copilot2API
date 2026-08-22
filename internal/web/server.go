@@ -756,8 +756,8 @@ func (s *Server) startPKCE(w http.ResponseWriter, _ *http.Request) {
 	redirectURI := auth.RedirectURI()
 	s.mu.Lock()
 	now := time.Now()
-	for k, v := range s.pkce {
-		if now.Sub(v.Created) > 10*time.Minute {
+	for k, pkce := range s.pkce {
+		if now.Sub(pkce.Created) > 10*time.Minute {
 			delete(s.pkce, k)
 		}
 	}

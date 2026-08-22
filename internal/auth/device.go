@@ -106,9 +106,7 @@ func PollDeviceCode(deviceCode string) (TokenSet, bool, error) {
 	case "expired_token", "authorization_declined", "bad_verification_code":
 		return TokenSet{}, false, fmt.Errorf("%s: %s", tr.Error, tr.ErrorDesc)
 	default:
-		if tr.AccessToken == "" {
-			return TokenSet{}, false, fmt.Errorf("%s: %s", tr.Error, tr.ErrorDesc)
-		}
+		return TokenSet{}, false, fmt.Errorf("%s: %s", tr.Error, tr.ErrorDesc)
 	}
 	if tr.AccessToken == "" {
 		return TokenSet{}, false, fmt.Errorf("token endpoint returned no access token")

@@ -73,13 +73,19 @@ func ExchangeCode(code, verifier, redirect string) (TokenSet, error) {
 	return requestToken(form)
 }
 
-func Refresh(refreshToken string) (TokenSet, error) {
+func Refresh(refreshToken, clientID, tokenEndpoint string) (TokenSet, error) {
 	form := url.Values{}
-	form.Set("client_id", ClientID())
+	if clientID == "" {
+		clientID = ClientID()
+	}
+	if tokenEndpoint == "" {
+		tokenEndpoint = TokenEndpoint()
+	}
+	form.Set("client_id", clientID)
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 	form.Set("scope", Scope())
-	return requestToken(form)
+	return requestTokenTenant(form, tokenEndpoint)
 }
 
 // RefreshWithScope redeems the same account refresh token for a separately

@@ -3,6 +3,8 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,7 +180,7 @@ func (s *Store) Upsert(tok TokenSet) (AccountToken, error) {
 		id = tok.Email
 	}
 	if id == "" {
-		id = "account-" + time.Now().Format("150405")
+		id = fmt.Sprintf("account-%s-%04x", time.Now().Format("150405"), rand.Intn(0x10000))
 	}
 	acc := AccountToken{
 		ID:           id,
@@ -280,26 +282,37 @@ func (s *Store) Next() (AccountToken, bool) {
 }
 
 func (s *Store) EnsureValid(id string) (AccountToken, error) {
-	acc, ok := s.Get(id)
-	if !ok {
+	s.mu.Lock()
+	var acc AccountToken
+	found := false
+	for _, a := range s.data.Accounts {
+		if a.ID == id || a.OID == id || a.Email == id {
+			acc = a
+			found = true
+			break
+		}
+	}
+	if !found {
+		s.mu.Unlock()
 		return AccountToken{}, os.ErrNotExist
 	}
 	if time.Now().Before(acc.ExpiresAt.Add(-30 * time.Second)) {
+		s.mu.Unlock()
 		return acc, nil
 	}
 	if acc.RefreshToken == "" {
-		acc.Status = "expired"
-		s.mu.Lock()
 		for i, a := range s.data.Accounts {
 			if a.ID == acc.ID {
-				s.data.Accounts[i] = acc
+				s.data.Accounts[i].Status = "expired"
 				_ = s.saveLocked()
 				break
 			}
 		}
 		s.mu.Unlock()
+		acc.Status = "expired"
 		return acc, fmtExpired()
 	}
+	s.mu.Unlock()
 	return s.refreshInflight(acc)
 }
 
@@ -320,13 +333,16 @@ func (s *Store) refreshInflight(acc AccountToken) (AccountToken, error) {
 	s.inflight[acc.ID] = f
 	s.mu.Unlock()
 
-	tok, err := Refresh(acc.RefreshToken)
+	endpoint := TokenEndpoint()
+	if acc.ClientID == DeviceClientID() {
+		endpoint = DeviceTokenEndpoint()
+	}
+	tok, err := Refresh(acc.RefreshToken, acc.ClientID, endpoint)
 	if err != nil {
-		acc.Status = "expired"
 		s.mu.Lock()
 		for i, a := range s.data.Accounts {
 			if a.ID == acc.ID {
-				s.data.Accounts[i] = acc
+				s.data.Accounts[i].Status = "expired"
 				_ = s.saveLocked()
 				break
 			}

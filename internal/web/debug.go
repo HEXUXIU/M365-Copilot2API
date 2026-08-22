@@ -44,11 +44,13 @@ func openDebugStore() *debugStore {
 	return &debugStore{path: p}
 }
 var sensitiveKeys = map[string]bool{
-	"api_key": true, "apikey": true, "apiKey": true, "authorization": true,
-	"access_token": true, "accessToken": true, "refresh_token": true, "refreshToken": true,
-	"client_secret": true, "clientSecret": true, "password": true, "current_password": true,
+	"api_key": true, "apikey": true, "accesstoken": true, "authorization": true,
+	"access_token": true, "refreshtoken": true, "refresh_token": true,
+	"clientsecret": true, "client_secret": true, "password": true, "current_password": true,
 	"new_password": true, "token": true, "bearer": true, "session_key": true,
 	"secret": true, "next_token": true, "pkce_verifier": true, "code_verifier": true,
+	"sessionkey": true, "nexttoken": true, "pkceverifier": true, "codeverifier": true,
+	"currentpassword": true, "newpassword": true,
 }
 
 func redactBody(b []byte) any {

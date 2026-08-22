@@ -148,10 +148,14 @@ func (s *apiKeyStore) delete(id string) (bool, error) {
 func (s *apiKeyStore) update(id, name string, revoked *bool) (bool, error) {
 	s.mu.Lock()
 	found := false
+	var oldName string
+	var oldRevoked bool
 	for i := range s.Keys {
 		if s.Keys[i].ID != id {
 			continue
 		}
+		oldName = s.Keys[i].Name
+		oldRevoked = s.Keys[i].Revoked
 		if name != "" {
 			s.Keys[i].Name = name
 		}
@@ -166,6 +170,15 @@ func (s *apiKeyStore) update(id, name string, revoked *bool) (bool, error) {
 		return false, nil
 	}
 	if err := s.persist.flushNowBlocking(); err != nil {
+		s.mu.Lock()
+		for i := range s.Keys {
+			if s.Keys[i].ID == id {
+				s.Keys[i].Name = oldName
+				s.Keys[i].Revoked = oldRevoked
+				break
+			}
+		}
+		s.mu.Unlock()
 		return false, err
 	}
 	return true, nil

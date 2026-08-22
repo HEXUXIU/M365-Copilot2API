@@ -487,9 +487,6 @@ func (s *Server) validAPIKey(r *http.Request) bool {
 	if raw != "" && s.apiKeys.valid(raw) {
 		return true
 	}
-	if strings.HasPrefix(raw, "eyJ") {
-		return true
-	}
 	return false
 }
 
@@ -722,19 +719,15 @@ func (s *Server) bindProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	oldAcc, _ := s.tokens.Get(body.ID)
 	if err := s.tokens.SetBoundProxy(body.ID, body.ProxyURL); err != nil {
 		writeOpenAIError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	acc, _ := s.tokens.Get(body.ID)
-	if acc.BoundProxy == "" {
-		s.proxyClients.Range(func(key, _ any) bool {
-			if keyStr, ok := key.(string); ok && keyStr != "" {
-				s.proxyClients.Delete(keyStr)
-			}
-			return true
-		})
+	if body.ProxyURL == "" && oldAcc.BoundProxy != "" {
+		s.proxyClients.Delete(oldAcc.BoundProxy)
 	}
+	acc, _ := s.tokens.Get(body.ID)
 	jsonOut(w, map[string]any{"ok": true, "id": body.ID, "boundProxy": acc.BoundProxy})
 }
 
@@ -1714,7 +1707,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				msg = "upstream is rate limiting; try again shortly"
 			}
 			msg = sanitizePublicInternalText(msg)
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
+			errCode := "upstream_error"
+			if IsRateLimited(err) {
+				errCode = "rate_limit"
+			} else if IsAuthFailure(err) {
+				errCode = "auth_failure"
+			}
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": errCode}})+"\n\n")
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 			return
 		}
@@ -1768,6 +1767,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
 			s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 			return
+		}
+		if responseFormat != nil && (responseFormat.Type == "json_object" || responseFormat.Type == "json_schema") {
+			normalized := normalizeJSONText(text.String())
+			if normalized != text.String() {
+				text.Reset()
+				text.WriteString(normalized)
+				pending.Reset()
+				pending.WriteString(normalized)
+			}
+			res.Text = normalized
 		}
 		if err := emitText(pending.String()); err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
@@ -1954,6 +1963,9 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			}
 			res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
 			res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
+			if responseFormat != nil && (responseFormat.Type == "json_object" || responseFormat.Type == "json_schema") {
+				res.Text = normalizeJSONText(res.Text)
+			}
 			s.accountPool.MarkSuccess(acc.ID)
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
@@ -1966,7 +1978,13 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				msg = "upstream is rate limiting; try again shortly"
 			}
 			msg = sanitizePublicInternalText(msg)
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
+			errCode := "upstream_error"
+			if IsRateLimited(err) {
+				errCode = "rate_limit"
+			} else if IsAuthFailure(err) {
+				errCode = "auth_failure"
+			}
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": errCode}})+"\n\n")
 		}
 		pt := EstimateTokens(prompt)
 		ct := EstimateTokens(res.Text)
@@ -2027,6 +2045,9 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	s.accountPool.MarkSuccess(acc.ID)
 	if body.Stream {
+		if body.SessionKey != "" {
+			s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: prompt})
+		}
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		}

@@ -85,7 +85,7 @@ func Refresh(refreshToken, clientID, tokenEndpoint string) (TokenSet, error) {
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
 	form.Set("scope", Scope())
-	return requestTokenTenant(form, tokenEndpoint)
+	return requestTokenTenant(form, tokenEndpoint, "Refresh")
 }
 
 // RefreshWithScope redeems the same account refresh token for a separately
@@ -111,10 +111,10 @@ func ROPC(username, password string) (TokenSet, error) {
 	form.Set("username", username)
 	form.Set("password", password)
 	form.Set("scope", Scope())
-	return requestTokenTenant(form, Authority()+"/organizations/oauth2/v2.0/token")
+	return requestTokenTenant(form, Authority()+"/organizations/oauth2/v2.0/token", "ROPC")
 }
 
-func requestTokenTenant(form url.Values, endpoint string) (TokenSet, error) {
+func requestTokenTenant(form url.Values, endpoint string, caller string) (TokenSet, error) {
 	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return TokenSet{}, err
@@ -134,10 +134,10 @@ func requestTokenTenant(form url.Values, endpoint string) (TokenSet, error) {
 		return TokenSet{}, fmt.Errorf("decode token response: %w", err)
 	}
 	if tr.Error != "" {
-		return TokenSet{}, fmt.Errorf("ROPC %s: %s", tr.Error, tr.ErrorDesc)
+		return TokenSet{}, fmt.Errorf("%s %s: %s", caller, tr.Error, tr.ErrorDesc)
 	}
 	if tr.AccessToken == "" {
-		return TokenSet{}, fmt.Errorf("ROPC HTTP %d: empty access token", resp.StatusCode)
+		return TokenSet{}, fmt.Errorf("%s HTTP %d: empty access token", caller, resp.StatusCode)
 	}
 	set := TokenSet{
 		AccessToken:  tr.AccessToken,

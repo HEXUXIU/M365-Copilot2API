@@ -49,13 +49,13 @@ type imageGenerationRequest struct {
 func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", 405)
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
 		return
 	}
 	var b imageGenerationRequest
 	r.Body = http.MaxBytesReader(w, r.Body, maxImageEditRequestBytes)
 	if json.NewDecoder(r.Body).Decode(&b) != nil || strings.TrimSpace(b.Prompt) == "" {
-		http.Error(w, `{"error":{"message":"prompt is required","type":"invalid_request_error"}}`, 400)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "prompt is required")
 		return
 	}
 	if b.N <= 0 {
@@ -70,7 +70,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		format = "url"
 	}
 	if format != "url" && format != "b64_json" {
-		http.Error(w, `{"error":{"message":"response_format must be url or b64_json","type":"invalid_request_error"}}`, 400)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "response_format must be url or b64_json")
 		return
 	}
 	acc, err := s.resolveAccount(firstNonEmpty(b.AccountID, b.User))
@@ -138,7 +138,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		debug := map[string]any{"text": textPreview, "raw_len": len(res.RawResult), "events": len(res.Events), "images": res.Images, "raw_preview": rawPreview}
 		b, _ := json.Marshal(debug)
 		log.Printf("[image-gen-debug] %s", string(b))
-		http.Error(w, `{"error":{"message":"upstream returned no image resource","type":"upstream_error"}}`, 502)
+		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "upstream returned no image resource")
 		return
 	}
 	images := res.Images
@@ -153,7 +153,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 			if format == "b64_json" {
 				parts := strings.SplitN(sourceURL, ",", 2)
 				if len(parts) != 2 {
-					http.Error(w, `{"error":{"message":"invalid upstream image data","type":"upstream_error"}}`, 502)
+					writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "invalid upstream image data")
 					return
 				}
 				data = append(data, map[string]string{"b64_json": parts[1]})
@@ -164,7 +164,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		}
 		if !isDesignerImageURL(sourceURL) {
 			if format == "b64_json" {
-				http.Error(w, `{"error":{"message":"upstream returned URL, not b64_json","type":"unsupported_response_format"}}`, 502)
+				writeOpenAIError(w, http.StatusBadGateway, "unsupported_response_format", "upstream returned URL, not b64_json")
 				return
 			}
 			data = append(data, map[string]string{"url": sourceURL})
@@ -173,14 +173,14 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		if designerToken == "" {
 			designerToken, err = s.designerAccessToken(acc)
 			if err != nil {
-				http.Error(w, upstreamError(err), 502)
+				writeOpenAIError(w, http.StatusBadGateway, "upstream_error", upstreamError(err))
 				return
 			}
 		}
 		imageData, contentType, err := downloadDesignerImage(ctx, sourceURL, designerToken)
 		if err != nil {
 			log.Printf("[image-gen-download] err=%v", err)
-			http.Error(w, upstreamError(err), 502)
+			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", upstreamError(err))
 			return
 		}
 		if format == "b64_json" {
@@ -400,7 +400,7 @@ func generatedImageURL(r *http.Request, id string) string {
 
 func (s *Server) generatedImageFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
 		return
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/v1/images/files/")

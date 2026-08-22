@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -49,7 +50,9 @@ func openUsageLog() *usageLog {
 	}
 	s := &usageLog{Path: p}
 	s.persist = &persistStore{flush: s.flush}
-	_ = os.MkdirAll(filepath.Dir(p), 0700)
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		log.Printf("[usage] MkdirAll failed: %v", err)
+	}
 	s.load()
 	return s
 }

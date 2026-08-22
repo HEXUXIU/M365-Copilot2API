@@ -9,11 +9,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 // Client is an MCP client that connects to an MCP server via HTTP SSE.
 // It implements the MCP client protocol: discover tools, invoke tools.
+var nextRequestID int64
+
 type Client struct {
 	serverURL  string
 	httpClient *http.Client
@@ -51,12 +54,12 @@ func (c *Client) setConnected(v bool) {
 // Connect establishes the SSE connection to the MCP server and initializes the session.
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.connected {
+		c.mu.Unlock()
 		return nil
 	}
+	c.mu.Unlock()
 
-	// Establish SSE connection
 	sseURL := c.serverURL
 	if !strings.Contains(sseURL, "/sse") {
 		sseURL = strings.TrimRight(sseURL, "/") + "/sse"
@@ -76,8 +79,8 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("sse status: %s", resp.Status)
 	}
 
-	// Parse the SSE response to get the session ID and endpoint
 	scanner := bufio.NewScanner(resp.Body)
+	var sessionID string
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -85,28 +88,31 @@ func (c *Client) Connect(ctx context.Context) error {
 			fmt.Printf("[mcp-client] sse data: %s\n", data)
 		}
 		if strings.HasPrefix(line, "event: endpoint") {
-			// Next line should contain the data with the message URL
 			continue
 		}
 		if strings.Contains(line, "sessionId=") {
 			data := strings.TrimPrefix(line, "data: ")
 			if idx := strings.Index(data, "sessionId="); idx >= 0 {
-				c.sessionID = data[idx+10:]
+				sessionID = data[idx+10:]
 			}
 			break
 		}
 	}
 
-	if c.sessionID == "" {
+	if sessionID == "" {
 		resp.Body.Close()
 		return fmt.Errorf("no session ID received from MCP server")
 	}
 
-	// Start background goroutine to read SSE events
 	sseCtx, cancel := context.WithCancel(ctx)
+
+	c.mu.Lock()
+	c.sessionID = sessionID
 	c.sseCancel = cancel
 	c.sseBody = resp.Body
 	c.connected = true
+	c.mu.Unlock()
+
 	go c.readSSE(resp.Body)
 
 	_, initCh, err := c.sendRequest(sseCtx, "initialize", map[string]any{
@@ -125,7 +131,6 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("timeout waiting for initialize response")
 	}
 
-	// Send initialized notification
 	_ = c.sendNotification("notifications/initialized", nil)
 
 	return nil
@@ -226,7 +231,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 }
 
 func (c *Client) sendRequest(ctx context.Context, method string, params any) (int64, chan json.RawMessage, error) {
-	id := time.Now().UnixNano()
+	id := atomic.AddInt64(&nextRequestID, 1)
 	req := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -304,6 +309,10 @@ func (c *Client) Close() error {
 	body := c.sseBody
 	c.sseCancel = nil
 	c.sseBody = nil
+	for id, ch := range c.pending {
+		close(ch)
+		delete(c.pending, id)
+	}
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()

@@ -244,10 +244,15 @@ func (h *accountHealth) ClearAllCooldowns() {
 func (h *accountHealth) EarliestRecovery() time.Time {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	earliest := time.Now().Add(5 * time.Minute)
+	if len(h.cooldown) == 0 {
+		return time.Time{}
+	}
+	var earliest time.Time
+	first := true
 	for _, until := range h.cooldown {
-		if until.Before(earliest) {
+		if first || until.Before(earliest) {
 			earliest = until
+			first = false
 		}
 	}
 	return earliest

@@ -365,14 +365,18 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		msg []byte
 		err error
 	}
-	for time.Now().Before(deadline) {
-		_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
-		// ReadMessage 阻塞期间无法响应 ctx 取消，放入独立 goroutine 由 select 联动。
-		readCh := make(chan wsRead, 1)
-		go func() {
+	readCh := make(chan wsRead, 1)
+	go func() {
+		for {
+			_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 			_, msg, err := conn.ReadMessage()
 			readCh <- wsRead{msg: msg, err: err}
-		}()
+			if err != nil {
+				return
+			}
+		}
+	}()
+	for time.Now().Before(deadline) {
 		var read wsRead
 		select {
 		case <-ctx.Done():
@@ -610,7 +614,7 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 			return fmt.Errorf("invalid image data URL")
 		}
 		encoded := imageData[comma+1:]
-		if strings.Contains(strings.ToLower(imageData[:comma]), ";base64") == false {
+		if !strings.Contains(strings.ToLower(imageData[:comma]), ";base64") {
 			return fmt.Errorf("image URL is not base64")
 		}
 		if _, err := base64.StdEncoding.DecodeString(encoded); err != nil {

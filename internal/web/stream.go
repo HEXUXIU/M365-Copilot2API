@@ -13,18 +13,18 @@ import (
 
 func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
 		return
 	}
 	var body chatBody
 	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
 	if json.NewDecoder(r.Body).Decode(&body) != nil {
-		http.Error(w, "bad json", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad json")
 		return
 	}
 	text := strings.TrimSpace(firstNonEmpty(body.Message, body.Prompt))
 	if text == "" {
-		http.Error(w, "message required", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "message required")
 		return
 	}
 	if body.SessionKey != "" {
@@ -45,7 +45,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if acc.OID == "" || acc.TID == "" {
-		http.Error(w, "account missing oid/tid", http.StatusBadRequest)
+		writeOpenAIError(w, http.StatusBadRequest, "account_error", "account missing oid/tid")
 		return
 	}
 
@@ -55,7 +55,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		Text: text, Tone: body.Tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments,
 	})
 	if err != nil {
-		http.Error(w, upstreamError(err), http.StatusBadGateway)
+		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", upstreamError(err))
 		return
 	}
 	if body.SessionKey != "" {
@@ -69,7 +69,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "stream unsupported", http.StatusInternalServerError)
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error", "stream unsupported")
 		return
 	}
 	for i, event := range res.Normalized {

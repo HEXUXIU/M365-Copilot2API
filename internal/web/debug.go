@@ -223,5 +223,5 @@ func (s *Server) debugDetail(w http.ResponseWriter, r *http.Request) {
 		jsonOut(w, x)
 		return
 	}
-	http.Error(w, "not found", 404)
+	writeOpenAIError(w, http.StatusNotFound, "not_found", "not found")
 }

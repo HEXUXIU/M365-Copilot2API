@@ -106,7 +106,7 @@ func toolChoiceAllows(choice any, name string) bool {
 // collided when the same tool+arguments was invoked again (duplicate tool call
 // id errors from clients), so uniqueness must not depend on call content.
 func callID(name, args string, index int) string {
-	return "call_" + uuid.NewString()
+	return "call_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
 func extractToolCalls(text string, tools []map[string]any, choice any) ([]detectedToolCall, bool) {

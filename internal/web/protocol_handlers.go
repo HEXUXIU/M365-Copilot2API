@@ -244,6 +244,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tenant := extractAPIKey(r)
+	originalMessages := o.Messages
 	if body.PreviousResponseID != "" {
 		s.responseMu.Lock()
 		prior, ok := s.responseMessages[tenant][body.PreviousResponseID]
@@ -299,7 +300,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		// Use the same public response id that writeResponsesResult exposes.
 		publicID := "resp_" + uuid.NewString()
 		out["m365_response_id"] = publicID
-		stored := append([]oaiMsg(nil), o.Messages...)
+		stored := append([]oaiMsg(nil), originalMessages...)
 		if msg, _ := openAIChoice(out); msg != nil {
 			if calls, ok := msg["tool_calls"].([]any); ok && len(calls) > 0 {
 				converted := make([]map[string]any, 0, len(calls))

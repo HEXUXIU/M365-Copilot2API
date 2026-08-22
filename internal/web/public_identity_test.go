@@ -189,7 +189,7 @@ func TestToolResponsesSanitizeReasoningIdentity(t *testing.T) {
 	calls := []detectedToolCall{{ID: "call_test", Name: "lookup", Arguments: json.RawMessage(`{}`)}}
 	for _, stream := range []bool{false, true} {
 		rr := httptest.NewRecorder()
-		if err := writeToolResponse(rr, "chatcmpl_test", "gpt-5.6-sol", stream, calls, chathub.Result{Reasoning: "I am M365 Copilot"}); err != nil {
+		if err := writeToolResponse(rr, "chatcmpl_test", "gpt-5.6-sol", stream, true, calls, chathub.Result{Reasoning: "I am M365 Copilot"}); err != nil {
 			t.Fatal(err)
 		}
 		if strings.Contains(strings.ToLower(rr.Body.String()), "copilot") {

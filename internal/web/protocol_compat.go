@@ -22,12 +22,24 @@ type responsesRequest struct {
 	PreviousResponseID string           `json:"previous_response_id,omitempty"`
 	Conversation       string           `json:"conversation,omitempty"`
 	NewConversation    bool             `json:"new_conversation,omitempty"`
+	Temperature        *float64         `json:"temperature,omitempty"`
+	TopP               *float64         `json:"top_p,omitempty"`
+	MaxOutputTokens    *int             `json:"max_output_tokens,omitempty"`
 }
 
 const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`
 
 func (r responsesRequest) openAI() (oaiReq, error) {
 	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User}
+	if r.Temperature != nil {
+		o.Temperature = r.Temperature
+	}
+	if r.TopP != nil {
+		o.TopP = r.TopP
+	}
+	if r.MaxOutputTokens != nil {
+		o.MaxCompletionTokens = r.MaxOutputTokens
+	}
 	if instructions := strings.TrimSpace(r.Instructions); instructions != "" {
 		o.Messages = append(o.Messages, oaiMsg{Role: "system", Content: instructions})
 	}
@@ -148,10 +160,18 @@ type anthropicRequest struct {
 	ToolChoice any                `json:"tool_choice,omitempty"`
 	Stream     bool               `json:"stream,omitempty"`
 	MaxTokens  int                `json:"max_tokens,omitempty"`
+	StopSequences []string       `json:"stop_sequences,omitempty"`
 }
 
 func (r anthropicRequest) openAI() (oaiReq, error) {
 	o := oaiReq{Model: r.Model, Stream: r.Stream}
+	if r.MaxTokens > 0 {
+		mt := r.MaxTokens
+		o.MaxCompletionTokens = &mt
+	}
+	if len(r.StopSequences) > 0 {
+		o.Stop = r.StopSequences
+	}
 	if r.System != nil {
 		o.Messages = append(o.Messages, oaiMsg{Role: "system", Content: r.System})
 	}

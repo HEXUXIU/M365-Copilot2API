@@ -28,7 +28,7 @@ type conversationCache struct {
 func newConversationCache() *conversationCache {
 	return &conversationCache{
 		entries: make(map[string]*cachedConversation),
-		maxAge:  20 * time.Minute,
+		maxAge:  2 * time.Hour,
 	}
 }
 
@@ -84,9 +84,6 @@ func systemPromptHash(messages []oaiMsg) string {
 	for _, m := range messages {
 		if m.Role == "system" || m.Role == "developer" {
 			text := contentToString(m.Content)
-			if len(text) > 500 {
-				text = text[:500]
-			}
 			h := sha256.Sum256([]byte(text))
 			return hex.EncodeToString(h[:])
 		}

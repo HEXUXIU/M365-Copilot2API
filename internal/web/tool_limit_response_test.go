@@ -12,7 +12,7 @@ func TestConfiguredLimitSerializesOneToolCall(t *testing.T) {
 	calls := []detectedToolCall{{ID: "call_1", Name: "first", Arguments: json.RawMessage(`{"x":1}`)}, {ID: "call_2", Name: "second", Arguments: json.RawMessage(`{"y":2}`)}}
 	w := httptest.NewRecorder()
 	limited := limitToolCalls(calls, 1)
-	if err := writeToolResponse(w, "chatcmpl_test", "test", false, limited, chathub.Result{}); err != nil {
+	if err := writeToolResponse(w, "chatcmpl_test", "test", false, true, limited, chathub.Result{}); err != nil {
 		t.Fatal(err)
 	}
 	var out map[string]any

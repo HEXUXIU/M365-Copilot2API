@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 type CacheStats struct {
@@ -164,5 +165,5 @@ func (s *CacheStats) flush() error {
 }
 
 func EstimateTokens(text string) int64 {
-	return int64(len(text) / 4)
+	return int64(utf8.RuneCountInString(text) * 2 / 3)
 }

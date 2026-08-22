@@ -343,7 +343,11 @@ func handleRPC(ctx context.Context, sess *session, req *jsonRPCRequest) *jsonRPC
 		if rp := resourceProvider(); rp != nil {
 			resources, err := rp.ListResources(ctx)
 			if err != nil {
-				return newRPCError(req.ID, -32603, "resource list failed: "+err.Error())
+				// Review P2 (PR #48): forwarding err.Error() can leak internal
+				// details (paths, connection strings). Log it server-side and
+				// return a generic message instead.
+				log.Printf("[mcp] resources/list failed: %v", err)
+				return newRPCError(req.ID, -32603, "internal error: unable to list resources")
 			}
 			if resources == nil {
 				resources = []Resource{}
@@ -374,7 +378,8 @@ func handleRPC(ctx context.Context, sess *session, req *jsonRPCRequest) *jsonRPC
 		// tied to the enumerated surface and cannot probe arbitrary targets.
 		listed, err := rp.ListResources(ctx)
 		if err != nil {
-			return newRPCError(req.ID, -32603, "resource list failed: "+err.Error())
+			log.Printf("[mcp] resources/read allowlist check failed: %v", err)
+			return newRPCError(req.ID, -32603, "internal error: unable to read resource")
 		}
 		allowed := false
 		for _, res := range listed {
@@ -388,7 +393,8 @@ func handleRPC(ctx context.Context, sess *session, req *jsonRPCRequest) *jsonRPC
 		}
 		content, err := rp.ReadResource(ctx, params.URI)
 		if err != nil {
-			return newRPCError(req.ID, -32603, "resource read failed: "+err.Error())
+			log.Printf("[mcp] resources/read %q failed: %v", params.URI, err)
+			return newRPCError(req.ID, -32603, "internal error: unable to read resource")
 		}
 		return jsonRPCResult(req.ID, map[string]any{
 			"contents": []ResourceContent{content},

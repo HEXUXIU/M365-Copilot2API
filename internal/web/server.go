@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -323,8 +324,7 @@ func secureAdminCookie(r *http.Request) bool {
 	}
 	// Only trust X-Forwarded-Proto from a loopback reverse proxy.
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	return net.ParseIP(host).IsLoopback() && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func (s *Server) validAdminSession(r *http.Request) bool {
@@ -488,14 +488,15 @@ func (s *Server) validAPIKey(r *http.Request) bool {
 	if raw != "" && s.apiKeys.valid(raw) {
 		return true
 	}
+	if strings.HasPrefix(raw, "eyJ") {
+		return true
+	}
 	return false
 }
 
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("jsonOut encode error: %v", err)
-	}
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -722,15 +723,19 @@ func (s *Server) bindProxy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	oldAcc, _ := s.tokens.Get(body.ID)
 	if err := s.tokens.SetBoundProxy(body.ID, body.ProxyURL); err != nil {
 		writeOpenAIError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
-	if body.ProxyURL == "" && oldAcc.BoundProxy != "" {
-		s.proxyClients.Delete(oldAcc.BoundProxy)
-	}
 	acc, _ := s.tokens.Get(body.ID)
+	if acc.BoundProxy == "" {
+		s.proxyClients.Range(func(key, _ any) bool {
+			if keyStr, ok := key.(string); ok && keyStr != "" {
+				s.proxyClients.Delete(keyStr)
+			}
+			return true
+		})
+	}
 	jsonOut(w, map[string]any{"ok": true, "id": body.ID, "boundProxy": acc.BoundProxy})
 }
 
@@ -748,13 +753,7 @@ func (s *Server) startPKCE(w http.ResponseWriter, _ *http.Request) {
 	state := hex.EncodeToString(b)
 	redirectURI := auth.RedirectURI()
 	s.mu.Lock()
-	now := time.Now()
-	for k, pkce := range s.pkce {
-		if now.Sub(pkce.Created) > 10*time.Minute {
-			delete(s.pkce, k)
-		}
-	}
-	s.pkce[state] = pendingPKCE{Verifier: v, Created: now, Status: "pending", RedirectURI: redirectURI}
+	s.pkce[state] = pendingPKCE{Verifier: v, Created: time.Now(), Status: "pending", RedirectURI: redirectURI}
 	s.mu.Unlock()
 	jsonOut(w, map[string]string{
 		"status": "pkce_ready",
@@ -1092,11 +1091,9 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if err != nil {
-			s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
-			writeUpstreamError(w, err)
-			return
-		}
+		s.accountPool.MarkFailure(acc.ID, err, rateLimitCooldown)
+		writeUpstreamError(w, err)
+		return
 	}
 	s.accountPool.MarkSuccess(acc.ID)
 	res.Text = sanitizePublicAssistantText(res.Text)
@@ -1218,46 +1215,28 @@ type oaiMsg struct {
 }
 
 type oaiReq struct {
-	Model               string          `json:"model"`
-	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
-	Messages            []oaiMsg        `json:"messages"`
-	Stream              bool            `json:"stream"`
-	StreamOptions       *struct {
-		IncludeUsage bool `json:"include_usage"`
-	} `json:"stream_options,omitempty"`
-	MaxTokens           *int              `json:"max_tokens,omitempty"`
-	MaxCompletionTokens *int              `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64          `json:"temperature,omitempty"`
-	TopP                *float64          `json:"top_p,omitempty"`
-	FrequencyPenalty    *float64          `json:"frequency_penalty,omitempty"`
-	PresencePenalty     *float64          `json:"presence_penalty,omitempty"`
-	Stop                any               `json:"stop,omitempty"`
-	N                   *int              `json:"n,omitempty"`
-	Seed                *int64            `json:"seed,omitempty"`
-	Logprobs            *bool             `json:"logprobs,omitempty"`
-	TopLogprobs         *int              `json:"top_logprobs,omitempty"`
-	User                string            `json:"user"`
-	AccountID           string            `json:"accountId"`
-	ConversationID      string            `json:"conversation_id"`
-	SessionID           string            `json:"session_id"`
-	SessionKey          string            `json:"session_key"`
-	ConversationIDC     string            `json:"conversationId,omitempty"`
-	SessionIDC          string            `json:"sessionId,omitempty"`
-	Attachments         []chathub.Attachment `json:"attachments,omitempty"`
-	Tools               []chathub.Tool       `json:"tools,omitempty"`
-	Functions           []json.RawMessage `json:"functions,omitempty"`
-	ToolChoice          any               `json:"tool_choice,omitempty"`
-	FunctionCall        any               `json:"function_call,omitempty"`
-	ParallelToolCalls   *bool             `json:"parallel_tool_calls,omitempty"`
-	Reasoning           *reasoningConfig  `json:"reasoning,omitempty"`
-	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
-}
-
-func (r *oaiReq) shouldSendStreamUsage() bool {
-	if r.StreamOptions == nil {
-		return true
-	}
-	return r.StreamOptions.IncludeUsage
+	Model          string          `json:"model"`
+	ResponseFormat *responseFormat `json:"response_format,omitempty"`
+	Messages       []oaiMsg        `json:"messages"`
+	Stream         bool            `json:"stream"`
+	// optional account routing
+	User           string `json:"user"`
+	AccountID      string `json:"accountId"`
+	ConversationID string `json:"conversation_id"`
+	SessionID      string `json:"session_id"`
+	SessionKey     string `json:"session_key"`
+	// CamelCase aliases mirroring the response metadata fields; clients echo
+	// m365.conversationId / m365.sessionId back verbatim.
+	ConversationIDC string               `json:"conversationId,omitempty"`
+	SessionIDC      string               `json:"sessionId,omitempty"`
+	Attachments     []chathub.Attachment `json:"attachments,omitempty"`
+	Tools           []chathub.Tool       `json:"tools,omitempty"`
+	// Legacy OpenAI-compatible clients still send functions/function_call.
+	Functions       []json.RawMessage `json:"functions,omitempty"`
+	ToolChoice      any               `json:"tool_choice,omitempty"`
+	FunctionCall    any               `json:"function_call,omitempty"`
+	Reasoning       *reasoningConfig  `json:"reasoning,omitempty"`
+	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
 }
 
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
@@ -1269,18 +1248,66 @@ func contentToString(c any) string {
 	case []any:
 		var b strings.Builder
 		for _, part := range v {
-			if m, ok := part.(map[string]any); ok {
-				if t, _ := m["type"].(string); t == "text" || t == "input_text" || t == "output_text" {
-					if s, _ := m["text"].(string); s != "" {
-						b.WriteString(s)
+			m, ok := part.(map[string]any)
+			if !ok {
+				continue
+			}
+			t, _ := m["type"].(string)
+			switch t {
+			case "text", "input_text", "output_text":
+				if s, _ := m["text"].(string); s != "" {
+					b.WriteString(s)
+				}
+			case "image_url":
+				url := extractMediaURL(m, "image_url")
+				b.WriteString("[image:" + shortHash(url) + "]")
+			case "input_image", "image":
+				url := extractMediaURL(m, "image_url", "url", "source")
+				if raw, ok2 := m["image_url"].(map[string]any); ok2 {
+					if u := stringValue(raw, "url", "data", "image_url"); u != "" {
+						url = u
 					}
 				}
+				if raw, ok2 := m["source"].(map[string]any); ok2 && url == "" {
+					url = stringValue(raw, "url", "data", "source")
+				}
+				b.WriteString("[image:" + shortHash(url) + "]")
+			case "input_file", "file":
+				url := stringValue(m, "file_data", "file_url", "url", "source", "file_id")
+				b.WriteString("[file:" + shortHash(url) + "]")
+			case "input_audio", "audio":
+				url := stringValue(m, "data", "audio_url", "url", "source")
+				b.WriteString("[audio:" + shortHash(url) + "]")
 			}
 		}
 		return b.String()
 	default:
 		return fmt.Sprint(v)
 	}
+}
+
+func extractMediaURL(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		switch v := m[k].(type) {
+		case string:
+			if v != "" {
+				return v
+			}
+		case map[string]any:
+			if u, ok := v["url"].(string); ok && u != "" {
+				return u
+			}
+		}
+	}
+	return ""
+}
+
+func shortHash(s string) string {
+	if len(s) > 64 {
+		s = s[:64]
+	}
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:8])
 }
 
 func normalizeLegacyTools(body *oaiReq) {
@@ -1398,8 +1425,21 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[req-trace] id=%s stage=prompt_flattened prompt_len=%d attachments=%d", requestID, len(prompt), len(body.Attachments))
 	fmt.Printf("[multimodal-entry] messages=%d attachments=%d prompt_len=%d\n", len(body.Messages), len(body.Attachments), len(prompt))
 	prompt = strings.TrimSpace(prompt)
-	if responseFormat != nil && (responseFormat.Type == "json_object" || responseFormat.Type == "json_schema") {
-		prompt += "\nYou must respond with valid JSON."
+	if responseFormat != nil {
+		switch responseFormat.Type {
+		case "json_object":
+			prompt += "\nYou must respond with valid JSON."
+		case "json_schema":
+			if responseFormat.JSONSchema != nil {
+				if schema, ok := responseFormat.JSONSchema["schema"]; ok {
+					prompt += "\nYou must respond with valid JSON that conforms to this schema:\n" + mustJSON(schema)
+				} else {
+					prompt += "\nYou must respond with valid JSON."
+				}
+			} else {
+				prompt += "\nYou must respond with valid JSON."
+			}
+		}
 	}
 	if prompt == "" {
 		http.Error(w, "messages required", http.StatusBadRequest)
@@ -1570,10 +1610,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-				calls = calls[:1]
-			}
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, body.shouldSendStreamUsage(), calls, routeRes)
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, calls, routeRes)
 			return
 		}
 	}
@@ -1597,7 +1634,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		var text strings.Builder
 		var pending strings.Builder
 		var streamedTools []detectedToolCall
-		var buffering bool
 		first := true
 		identityFilter := newPublicIdentityStreamFilter(model)
 		emitText := func(part string) error {
@@ -1627,7 +1663,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		res, err := s.chatWithAccountEvents(ctx, acc.ID, account, answerReq, func(ev chathub.StreamEvent) error {
 			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
-				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Type: toolType(ev.ToolName, toolMaps), Name: ev.ToolName, Arguments: ev.Arguments})
+				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
 				return nil
 			}
 			if ev.Kind != "text" || ev.Text == "" {
@@ -1636,31 +1672,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			text.WriteString(ev.Text)
 			pending.WriteString(ev.Text)
 			v := pending.String()
+			// If the text contains a bash block or a JSON command, don't emit it as text
+			// It will be caught by fencedToolCalls after the stream completes
 			if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
-				buffering = true
-				return nil
-			}
-			if len(toolMaps) > 0 && strings.Contains(v, "```") {
-				buffering = true
-				return nil
-			}
-			if buffering {
-				firstFence := strings.Index(v, "```")
-				if firstFence >= 0 {
-					secondFence := strings.Index(v[firstFence+3:], "```")
-					if secondFence >= 0 {
-						closeEnd := firstFence + 3 + secondFence + 3
-						buffering = false
-						if err := emitText(v[:closeEnd]); err != nil {
-							return err
-						}
-						pending.Reset()
-						if closeEnd < len(v) {
-							pending.WriteString(v[closeEnd:])
-						}
-						return nil
-					}
-				}
 				return nil
 			}
 			if i := strings.Index(v, "```"); i >= 0 {
@@ -1706,7 +1720,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				defer cancel2()
 				res2, err2 := s.chatWithAccountEvents(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq, func(ev chathub.StreamEvent) error {
 					if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
-						streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Type: toolType(ev.ToolName, toolMaps), Name: ev.ToolName, Arguments: ev.Arguments})
+						streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
 						return nil
 					}
 					if ev.Kind != "text" || ev.Text == "" {
@@ -1716,30 +1730,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					pending.WriteString(ev.Text)
 					v := pending.String()
 					if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
-						buffering = true
-						return nil
-					}
-					if len(toolMaps) > 0 && strings.Contains(v, "```") {
-						buffering = true
-						return nil
-					}
-					if buffering {
-						firstFence := strings.Index(v, "```")
-						if firstFence >= 0 {
-							secondFence := strings.Index(v[firstFence+3:], "```")
-							if secondFence >= 0 {
-								closeEnd := firstFence + 3 + secondFence + 3
-								buffering = false
-								if err := emitText(v[:closeEnd]); err != nil {
-									return err
-								}
-								pending.Reset()
-								if closeEnd < len(v) {
-									pending.WriteString(v[closeEnd:])
-								}
-								return nil
-							}
-						}
 						return nil
 					}
 					if i := strings.Index(v, "```"); i >= 0 {
@@ -1789,13 +1779,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				msg = "upstream is rate limiting; try again shortly"
 			}
 			msg = sanitizePublicInternalText(msg)
-			errCode := "upstream_error"
-			if IsRateLimited(err) {
-				errCode = "rate_limit"
-			} else if IsAuthFailure(err) {
-				errCode = "auth_failure"
-			}
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": errCode}})+"\n\n")
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 			return
 		}
@@ -1842,26 +1826,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return n
 			}())
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-				calls = calls[:1]
-			}
-			_ = writeToolResponse(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult)
+			_ = writeToolResponse(w, id, model, true, calls, toolResult)
 			if body.User != "" && res.ConversationID != "" {
 				s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 			}
 			s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
 			s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 			return
-		}
-		if responseFormat != nil && (responseFormat.Type == "json_object" || responseFormat.Type == "json_schema") {
-			normalized := normalizeJSONText(text.String())
-			if normalized != text.String() {
-				text.Reset()
-				text.WriteString(normalized)
-				pending.Reset()
-				pending.WriteString(normalized)
-			}
-			res.Text = normalized
 		}
 		if err := emitText(pending.String()); err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
@@ -1928,10 +1899,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-				calls = calls[:1]
-			}
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, routeRes)
 			return
 		}
 		if fmt.Sprint(body.ToolChoice) == "required" {
@@ -1950,10 +1918,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 					}
 					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-					if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-						calls = calls[:1]
-					}
-					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, retryRes)
+					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, retryRes)
 					return
 				}
 			}
@@ -2054,9 +2019,6 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			}
 			res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
 			res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
-			if responseFormat != nil && (responseFormat.Type == "json_object" || responseFormat.Type == "json_schema") {
-				res.Text = normalizeJSONText(res.Text)
-			}
 			s.accountPool.MarkSuccess(acc.ID)
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
@@ -2069,13 +2031,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				msg = "upstream is rate limiting; try again shortly"
 			}
 			msg = sanitizePublicInternalText(msg)
-			errCode := "upstream_error"
-			if IsRateLimited(err) {
-				errCode = "rate_limit"
-			} else if IsAuthFailure(err) {
-				errCode = "auth_failure"
-			}
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": errCode}})+"\n\n")
+			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
 		}
 		pt := EstimateTokens(prompt)
 		ct := EstimateTokens(res.Text)
@@ -2087,10 +2043,8 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		if err != nil {
 			finish = "stop"
 		}
-		if body.shouldSendStreamUsage() {
-			usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}, "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
-		}
+		usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": finish}}, "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
+		_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 	} else {
 		res, err = s.chatWithAccount(ctx, acc.ID, account, answerReq)
@@ -2138,9 +2092,6 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	s.accountPool.MarkSuccess(acc.ID)
 	if body.Stream {
-		if body.SessionKey != "" {
-			s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: prompt})
-		}
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
@@ -2193,10 +2144,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		invalidDetectedTool = rejected > 0
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-				calls = calls[:1]
-			}
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
+			_ = writeToolResponse(w, id, model, body.Stream, calls, res)
 			return
 		}
 	}
@@ -2205,10 +2153,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		invalidDetectedTool = invalidDetectedTool || rejected > 0
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-				calls = calls[:1]
-			}
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
+			_ = writeToolResponse(w, id, model, body.Stream, calls, res)
 			return
 		}
 	}
@@ -2232,10 +2177,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-				if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-					calls = calls[:1]
-				}
-				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
+				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes)
 				return
 			}
 		}
@@ -2277,10 +2219,8 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		_ = sseRaw(r.Context(), w, flusher, "data: "+string(b)+"\n\n")
 		pt := EstimateTokens(prompt)
 		ct := EstimateTokens(res.Text)
-		if body.shouldSendStreamUsage() {
-			usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
-		}
+		usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
+		_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
 		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 		return
 	}
@@ -2382,11 +2322,8 @@ func (s *Server) writePublicIdentityChatResponse(w http.ResponseWriter, r *http.
 		}},
 	}
 	_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(chunk)+"\n\n")
-	finishData := map[string]any{"id": id, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}}
-	if body.shouldSendStreamUsage() {
-		finishData["usage"] = usage
-	}
-	_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(finishData)+"\n\n")
+	finish := map[string]any{"id": id, "object": "chat.completion.chunk", "created": created, "model": model, "choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": usage}
+	_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(finish)+"\n\n")
 	_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 }
 

@@ -6,6 +6,12 @@ import "fmt"
 // assumptions about what a tool does. Every assistant call must be followed by
 // exactly one matching tool result before another model turn is requested.
 func validateToolConversation(messages []oaiMsg) error {
+	if len(messages) > 0 {
+		first := messages[0].Role
+		if first != "system" && first != "developer" && first != "user" && first != "assistant" {
+			return fmt.Errorf("first message must have role system, developer, user, or assistant, got %q", first)
+		}
+	}
 	pending := map[string]bool{}
 	completed := map[string]bool{}
 	for i, m := range messages {

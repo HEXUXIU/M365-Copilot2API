@@ -252,7 +252,7 @@ func reasoningTone(model, effort string) (string, error) {
 	case "gpt-5.5":
 		return "Gpt_5_5_Reasoning", nil
 	case "gpt-5.6":
-		return "Gpt_5_5_Reasoning", nil
+		return "Gpt_5_6_Reasoning", nil
 	default:
 		return "Gpt_5_5_Reasoning", nil
 	}

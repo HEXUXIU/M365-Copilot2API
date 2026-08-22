@@ -53,6 +53,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b imageGenerationRequest
+	r.Body = http.MaxBytesReader(w, r.Body, maxImageEditRequestBytes)
 	if json.NewDecoder(r.Body).Decode(&b) != nil || strings.TrimSpace(b.Prompt) == "" {
 		http.Error(w, `{"error":{"message":"prompt is required","type":"invalid_request_error"}}`, 400)
 		return
@@ -528,9 +529,17 @@ func downloadImageAsDataURI(url string) (string, error) {
 func downloadImageAsDataURIWithToken(url, token string) (string, error) {
 	b64, ct, err := downloadImageAsBase64WithToken(url, token)
 	if err != nil {
-		log.Printf("[image-download] failed url=%s token_len=%d err=%v", url[:80], len(token), err)
+		urlPreview := url
+		if len(urlPreview) > 80 {
+			urlPreview = urlPreview[:80]
+		}
+		log.Printf("[image-download] failed url=%s token_len=%d err=%v", urlPreview, len(token), err)
 		return url, nil
 	}
-	log.Printf("[image-download] ok url=%s ct=%s size=%d", url[:80], ct, len(b64))
+	urlPreview := url
+	if len(urlPreview) > 80 {
+		urlPreview = urlPreview[:80]
+	}
+	log.Printf("[image-download] ok url=%s ct=%s size=%d", urlPreview, ct, len(b64))
 	return "data:" + ct + ";base64," + b64, nil
 }

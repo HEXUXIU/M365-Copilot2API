@@ -15,13 +15,15 @@ import (
 // Client is an MCP client that connects to an MCP server via HTTP SSE.
 // It implements the MCP client protocol: discover tools, invoke tools.
 type Client struct {
-	serverURL string
+	serverURL  string
 	httpClient *http.Client
 	sessionID  string
 	mu         sync.Mutex
 	connected  bool
-	msgCh      chan json.RawMessage
+	pending    map[int64]chan json.RawMessage
 	done       chan struct{}
+	sseCancel  context.CancelFunc
+	sseBody    io.Closer
 }
 
 // NewClient creates a new MCP client that connects to the given server URL.
@@ -29,7 +31,7 @@ func NewClient(serverURL string) *Client {
 	return &Client{
 		serverURL:  serverURL,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		msgCh:      make(chan json.RawMessage, 64),
+		pending:    map[int64]chan json.RawMessage{},
 		done:       make(chan struct{}),
 	}
 }
@@ -76,7 +78,6 @@ func (c *Client) Connect(ctx context.Context) error {
 
 	// Parse the SSE response to get the session ID and endpoint
 	scanner := bufio.NewScanner(resp.Body)
-	messageURL := ""
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
@@ -87,11 +88,10 @@ func (c *Client) Connect(ctx context.Context) error {
 			// Next line should contain the data with the message URL
 			continue
 		}
-		if strings.HasPrefix(line, "data: /message?") {
-			messageURL = strings.TrimPrefix(line, "data: ")
-			// Parse session ID from the URL
-			if idx := strings.Index(messageURL, "sessionId="); idx >= 0 {
-				c.sessionID = messageURL[idx+10:]
+		if strings.Contains(line, "sessionId=") {
+			data := strings.TrimPrefix(line, "data: ")
+			if idx := strings.Index(data, "sessionId="); idx >= 0 {
+				c.sessionID = data[idx+10:]
 			}
 			break
 		}
@@ -103,11 +103,13 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 
 	// Start background goroutine to read SSE events
-	c.setConnected(true)
+	sseCtx, cancel := context.WithCancel(ctx)
+	c.sseCancel = cancel
+	c.sseBody = resp.Body
+	c.connected = true
 	go c.readSSE(resp.Body)
 
-	// Initialize the session
-	err = c.sendRequest(ctx, "initialize", map[string]any{
+	_, err = c.sendRequest(sseCtx, "initialize", map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "m365-copilot2api-mcp-client", "version": "0.1.0"},
@@ -132,11 +134,18 @@ func (c *Client) readSSE(body io.ReadCloser) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
-			var msg json.RawMessage
-			if err := json.Unmarshal([]byte(data), &msg); err == nil {
-				select {
-				case c.msgCh <- msg:
-				default:
+			var meta struct {
+				ID *int64 `json:"id"`
+			}
+			if json.Unmarshal([]byte(data), &meta) == nil && meta.ID != nil {
+				c.mu.Lock()
+				ch := c.pending[*meta.ID]
+				c.mu.Unlock()
+				if ch != nil {
+					select {
+					case ch <- json.RawMessage(data):
+					default:
+					}
 				}
 			}
 		}
@@ -148,15 +157,14 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	var result struct {
 		Tools []Tool `json:"tools"`
 	}
-	err := c.sendRequest(ctx, "tools/list", nil)
+	id, err := c.sendRequest(ctx, "tools/list", nil)
 	if err != nil {
 		return nil, err
 	}
-	// Wait for the response
+	ch := c.getPending(id)
 	select {
-	case msg := <-c.msgCh:
+	case msg := <-ch:
 		var resp struct {
-			ID     int64           `json:"id"`
 			Result json.RawMessage `json:"result"`
 		}
 		if err := json.Unmarshal(msg, &resp); err != nil {
@@ -176,18 +184,17 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 // CallTool invokes a tool on the MCP server.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (CallResult, error) {
 	var result CallResult
-	err := c.sendRequest(ctx, "tools/call", map[string]any{
+	id, err := c.sendRequest(ctx, "tools/call", map[string]any{
 		"name":      name,
 		"arguments": arguments,
 	})
 	if err != nil {
 		return result, err
 	}
-	// Wait for the response
+	ch := c.getPending(id)
 	select {
-	case msg := <-c.msgCh:
+	case msg := <-ch:
 		var resp struct {
-			ID     int64           `json:"id"`
 			Result json.RawMessage `json:"result"`
 		}
 		if err := json.Unmarshal(msg, &resp); err != nil {
@@ -204,7 +211,13 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 	return result, nil
 }
 
-func (c *Client) sendRequest(ctx context.Context, method string, params any) error {
+func (c *Client) getPending(id int64) chan json.RawMessage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.pending[id]
+}
+
+func (c *Client) sendRequest(ctx context.Context, method string, params any) (int64, error) {
 	id := time.Now().UnixNano()
 	req := map[string]any{
 		"jsonrpc": "2.0",
@@ -216,20 +229,33 @@ func (c *Client) sendRequest(ctx context.Context, method string, params any) err
 	}
 	body, _ := json.Marshal(req)
 
+	ch := make(chan json.RawMessage, 1)
+	c.mu.Lock()
+	c.pending[id] = ch
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+	}()
+
 	messageURL := fmt.Sprintf("%s/message?sessionId=%s", strings.TrimRight(strings.Split(c.serverURL, "/sse")[0], "/"), c.sessionID)
 	
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messageURL, strings.NewReader(string(body)))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer resp.Body.Close()
-	return nil
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("http status: %s", resp.Status)
+	}
+	return id, nil
 }
 
 func (c *Client) sendNotification(method string, params any) error {
@@ -262,6 +288,16 @@ func (c *Client) sendNotification(method string, params any) error {
 func (c *Client) Close() error {
 	c.mu.Lock()
 	c.connected = false
+	cancel := c.sseCancel
+	body := c.sseBody
+	c.sseCancel = nil
+	c.sseBody = nil
 	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if body != nil {
+		body.Close()
+	}
 	return nil
 }

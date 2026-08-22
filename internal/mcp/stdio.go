@@ -81,15 +81,17 @@ func (c *StdioClient) call(ctx context.Context, method string, id int64, params 
 	c.mu.Lock()
 	ch := make(chan json.RawMessage, 1)
 	c.pending[id] = ch
+	if _, err := c.stdin.Write(b); err != nil {
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return nil, err
+	}
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
 	}()
-	if _, err := c.stdin.Write(b); err != nil {
-		return nil, err
-	}
 	select {
 	case raw := <-ch:
 		return raw, nil

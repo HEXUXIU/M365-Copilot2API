@@ -112,13 +112,18 @@ func (cm *conversationManager) Record(conversationID, accountID, title string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	now := time.Now().UTC()
-	cm.data[conversationID] = managedConversation{
+	existing, hasExisting := cm.data[conversationID]
+	rec := managedConversation{
 		ID:         conversationID,
 		AccountID:  accountID,
 		CreatedAt:  now,
 		LastUsedAt: now,
 		Title:      title,
 	}
+	if hasExisting {
+		rec.CreatedAt = existing.CreatedAt
+	}
+	cm.data[conversationID] = rec
 	cm.persist.markDirty()
 	log.Printf("[conversation-manager] recorded conversation %s", conversationID)
 }

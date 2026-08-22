@@ -203,14 +203,16 @@ func (s *Server) deploymentCheck(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	st := openDeployments()
 	st.mu.Lock()
-	var d *deployment
+	var d deployment
+	found := false
 	for i := range st.Items {
 		if st.Items[i].ID == id {
-			d = &st.Items[i]
+			d = st.Items[i]
+			found = true
 			break
 		}
 	}
-	if d == nil {
+	if !found {
 		st.mu.Unlock()
 		writeOpenAIError(w, 404, "not_found", "deployment not found")
 		return
@@ -225,23 +227,27 @@ func (s *Server) deploymentCheck(w http.ResponseWriter, r *http.Request) {
 	resp, e := deploymentHTTPClient.Do(req)
 	lat := time.Since(start).Milliseconds()
 	st.mu.Lock()
-	if e != nil {
-		d.Status = "unhealthy"
-		d.LastError = e.Error()
-	} else if resp.StatusCode != http.StatusOK {
-		d.Status = "unhealthy"
-		d.LastError = fmt.Sprintf("health returned %s", resp.Status)
-		resp.Body.Close()
-	} else {
-		d.Status = "healthy"
-		d.LastError = ""
-		d.LatencyMs = lat
-		d.LastCheckedAt = time.Now()
-		resp.Body.Close()
-		// Health alone does not prove HTTP proxy forwarding. Keep deployment records
-		// separate until an authenticated relay endpoint is implemented and verified.
+	var out deployment
+	for i := range st.Items {
+		if st.Items[i].ID == id {
+			if e != nil {
+				st.Items[i].Status = "unhealthy"
+				st.Items[i].LastError = e.Error()
+			} else if resp.StatusCode != http.StatusOK {
+				st.Items[i].Status = "unhealthy"
+				st.Items[i].LastError = fmt.Sprintf("health returned %s", resp.Status)
+				resp.Body.Close()
+			} else {
+				st.Items[i].Status = "healthy"
+				st.Items[i].LastError = ""
+				st.Items[i].LatencyMs = lat
+				st.Items[i].LastCheckedAt = time.Now()
+				resp.Body.Close()
+			}
+			out = st.Items[i]
+			break
+		}
 	}
-	out := *d
 	st.mu.Unlock()
 	_ = st.save()
 	jsonOut(w, map[string]any{"ok": e == nil, "deployment": out})

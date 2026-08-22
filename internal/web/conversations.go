@@ -29,10 +29,7 @@ func (s *Server) deleteConversation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.conversationManager.Delete(body.ID)
-	if !s.sessions.delete(body.ID) {
-		http.Error(w, "conversation not found", http.StatusNotFound)
-		return
-	}
+	s.sessions.delete(body.ID)
 	jsonOut(w, map[string]string{"status": "deleted"})
 }
 

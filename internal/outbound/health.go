@@ -46,7 +46,10 @@ func (p *Pool) Check(ctx context.Context, raw string) (time.Duration, error) {
 	}
 	target := os.Getenv("M365_PROXY_HEALTH_URL")
 	if target == "" {
-		target = "http://www.msftconnecttest.com/connecttest.txt"
+		// Probe the Microsoft login edge used for OAuth instead of a generic
+		// connectivity page. This makes manual pool checks useful for token
+		// latency, which is on the critical path of the first request.
+		target = "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {

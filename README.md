@@ -183,6 +183,10 @@ python manage.py stop     # 停止服务
 | `M365_CONTEXT_SIMILARITY` | `0.6` | 上下文相似度复用阈值（0~1，Jaccard 相似度） |
 | `M365_LOG_LEVEL` | `info` | 日志级别 |
 | `M365_ACCOUNT_DEFAULT_CONCURRENCY` | `8` | 每个账号同时进行的上游调用上限；其余账号仍可继续接收请求 |
+| `M365_TOKEN_PRE_REFRESH` | 开启 | 后台令牌预刷新；设为 `0` / `false` / `no` / `off` 关闭 |
+| `M365_TOKEN_PRE_REFRESH_MINUTES` | `5` | 访问令牌剩余多少分钟时提前刷新，避免请求同步等待 OAuth |
+| `M365_TOKEN_PRE_REFRESH_INTERVAL_SECONDS` | `60` | 后台检查令牌的周期（秒） |
+| `M365_TOKEN_PRE_REFRESH_CONCURRENCY` | `4` | 同时刷新账号的上限，避免 OAuth 突发请求 |
 | `M365_PUBLIC_IDENTITY_POLICY` | `false` | 公开身份策略总开关；仅在微软反代渠道显式设为 `true` 时启用身份预设及正文、推理、引用和流式清洗 |
 
 ### 自动清理
@@ -219,8 +223,8 @@ python manage.py stop     # 停止服务
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `M365_PROXY_POOL` | 空 | 代理列表（逗号或换行分隔，支持 http / https / socks5） |
+| `M365_PROXY_HEALTH_URL` | Microsoft 登录发现端点 | 代理健康检查目标；默认贴近 OAuth 真实链路 |
 | `M365_PROXY_INSECURE_TLS` | — | 信任自签代理证书（`1` / `true`） |
-| `M365_PROXY_HEALTH_URL` | 默认探测地址 | 代理健康检查目标 |
 | `M365_BROWSER_CLIENT_ID` / `M365_BROWSER_AUTHORITY` / `M365_BROWSER_REDIRECT_URI` / `M365_BROWSER_SCOPE` | 内置 | 浏览器 PKCE 的 OAuth 配置 |
 | `M365_DEVICE_CLIENT_ID` / `M365_DEVICE_AUTHORITY` / `M365_DEVICE_SCOPE` | 内置 | Device Code 的 OAuth 配置 |
 | `M365_CLIENT_ID` / `M365_AUTHORITY` / `M365_REDIRECT_URI` / `M365_SCOPE` | 内置 | 兼容旧配置；流程专用变量未设置时作为回退 |
@@ -346,22 +350,26 @@ curl http://127.0.0.1:4141/v1/messages \
 - 推理强度还可通过请求内的 `reasoning_effort` 参数调整。
 - M365 订阅会上线的新模型名（如 `gpt-5.2`、`gpt-5.4`、`codex` 系）以实际目录为准，可在控制台配置导入。
 
-## 内容键会话复用原理
+## 账号亲和与会话复用
 
-多账号场景下，网关会用「内容键（context key）」把请求复用到已有云端对话上，机制对标 DeepSeek 式上下文缓存：**同一个对话上下文只维护一条云端会话，命中时只把增量新消息发给上游**，不仅省去重建上下文的开销，也更贴近多轮工具的体验。核心实现在 `internal/web/session_resolver.go`。
+多账号模式使用进程内存储保存租户隔离的账号亲和与微软云端会话绑定。两者是独立状态：相同首轮请求可以稳定落到同一账号，但仍会创建独立云端对话；只有显式会话 ID、Responses 会话链，或包含 assistant 消息的严格历史前缀才能续接已有云端对话。
 
-客户端请求到达后，`.Resolve()` 按以下优先级决定重用哪个会话：
+新会话使用 Rendezvous Hash 稳定分配健康账号。热会话优先保留原账号；短暂的 429/503（默认 `Retry-After <= 5s`）会先在原账号重试一次，持续限流或认证失败才迁移。迁移采用成功后 CAS 切换，失败不会覆盖旧绑定。账号并发上限由独立的账号并发配置负责。
 
-1. **显式会话（`X-M365-Session-Id`）**：请求头显式指定的会话 ID 优先级最高，不参与任何身份判定，由调用方主动决定要连接到哪条云端对话。
-2. **内容键前缀命中**：当请求的消息序列与某条已记录会话的历史**完全一致**（按最近 3 条消息计算内容指纹）时，直接复用该会话及其云端对话。此时返回的 `HistoryLen` 表示「云端对话已包含的消息条数」，上层据此只发送 `messages[HistoryLen:]` 增量。
-3. **相似度兜底**：若消息不是严格前缀，但与某条最近活跃（`M365_CONTEXT_TTL_MINUTES` 窗口内）会话的最后消息相似度超过阈值（`M365_CONTEXT_SIMILARITY`，默认 0.6），仍复用该会话（此时增量边界未知，发送全量）。
-4. **兜底新建**：都未命中时，按 `user` 字段 / IP+UA 指纹或轮询绑到合适的账号与轮询逻辑新建会话。
+缓存统计只在微软云端对话成功续接后产生，迁移、冷请求和失败请求均为 0。标准字段如下：
 
-几个特性由此而来：
+- Chat Completions：`usage.prompt_tokens_details.cached_tokens`
+- Responses：`usage.input_tokens_details.cached_tokens`
+- Anthropic Messages：`usage.cache_read_input_tokens`
+- 流式响应：只在成功终止 usage 事件中输出
 
-- **跨 IP / 跨账号复用**：内容指纹作为键全局唯一主键，不关心发起方是谁——换一台机器、换一个 M365 账号，只要对话上下文一致就能接上同一条云端会话。
-- **只发增量**：严格前缀命中时上层只补发新消息，等价于把云端对话当作上下文缓存用。
-- **线程与清理联动**：会话绑定持久化在 `sessions.json`（0600），过期时间由 `M365_SESSION_TTL_MINUTES` 控制；长期无命中的会话会随自动清理按同一窗口（默认 2 小时）被回收。
+`M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。Responses API 在 `off` 模式保持原有的 `extractAPIKey` 租户命名空间，滚动升级不会破坏 `previous_response_id` 查找；启用亲和后才使用哈希租户键。核心实现使用进程内存储，缓存统计保持保守值，不会把普通历史消息误报成命中。
+
+从 `off` 切换到 `observe`/`enforce` 时，Responses API 的租户键会切换为哈希命名空间；进程内的旧 `previous_response_id` 状态不会迁移。滚动升级时应保持模式不变，或接受旧响应链需要重新建立。
+
+工具规划器默认使用一次性云端会话，成功后自动清理；需要让规划器复用调用方会话时显式设置 `M365_AFFINITY_REUSE_ROUTER_CONVERSATION=true`。请求中的 `prompt_cache_key` 只用于稳定账号亲和路由，不等同于会话续接，也不会单独声称缓存命中。
+
+未携带 API key 或 Bearer token 的请求默认通过 `M365_AFFINITY_ANONYMOUS_SCOPE=ip` 按远端 IP 隔离。仅在可信的单租户部署中可设为 `global`，共享匿名亲和范围。
 
 ## 内容自动清理
 
@@ -458,7 +466,7 @@ M365-Copilot2API/
 
 **Q2：如何切换 M365 账号？**
 
-不需要切换。多账号场景下网关自动轮询所有可用账号，单账号故障自动转移到下一个。要增加账号，直接在控制台发起新的 PKCE 授权即可。
+不需要手动切换。多账号场景下，新会话按稳定亲和键分配到健康账号，热会话固定原账号；只有持续限流、认证失败或并发容量已满时才转移。要增加账号，直接在控制台发起新的 PKCE 授权即可。
 
 **Q3：Claude Code 提示「认证可能不工作」怎么办？**
 
@@ -466,7 +474,7 @@ M365-Copilot2API/
 
 **Q4：X-M365-Session-Id 是什么？**
 
-网关默认按内容（上下文前缀 / 相似度）自动复用会话；当你希望在客户端侧显式控制会话与云端对话的对应关系时，携带 `X-M365-Session-Id` 请求头，网关直接绑定到该 ID（本地内容指纹不再参与优先级判定）。
+网关只通过显式 ID 或包含 assistant 消息的严格历史前缀复用云端会话；携带 `X-M365-Session-Id` 可让客户端稳定控制会话与账号归属，并避免依赖无状态历史查找。
 
 **Q5：对话出现串号 / 上下文错乱？**
 

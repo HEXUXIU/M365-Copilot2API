@@ -280,11 +280,21 @@ func (s *Store) Next() (AccountToken, bool) {
 }
 
 func (s *Store) EnsureValid(id string) (AccountToken, error) {
+	return s.EnsureValidFor(id, 30*time.Second)
+}
+
+// EnsureValidFor returns an account token with at least minValidity remaining.
+// Keeping this separate from EnsureValid lets the background prefetcher refresh
+// tokens before a request ever needs to wait for the OAuth endpoint.
+func (s *Store) EnsureValidFor(id string, minValidity time.Duration) (AccountToken, error) {
+	if minValidity < 30*time.Second {
+		minValidity = 30 * time.Second
+	}
 	acc, ok := s.Get(id)
 	if !ok {
 		return AccountToken{}, os.ErrNotExist
 	}
-	if time.Now().Before(acc.ExpiresAt.Add(-30 * time.Second)) {
+	if time.Now().Before(acc.ExpiresAt.Add(-minValidity)) {
 		return acc, nil
 	}
 	if acc.RefreshToken == "" {
@@ -360,27 +370,48 @@ func fmtExpired() error {
 }
 
 func (s *Store) RefreshAllExpired() []TokenRefreshResult {
+	return s.RefreshAllDue(30*time.Second, 4)
+}
+
+// RefreshAllDue refreshes accounts whose access token has less than
+// minValidity remaining. Refreshes run concurrently across accounts, while
+// refreshInflight still coalesces duplicate work for the same account.
+func (s *Store) RefreshAllDue(minValidity time.Duration, maxConcurrent int) []TokenRefreshResult {
+	if minValidity < 30*time.Second {
+		minValidity = 30 * time.Second
+	}
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
 	s.mu.Lock()
 	candidates := make([]AccountToken, 0, len(s.data.Accounts))
 	for _, a := range s.data.Accounts {
-		if time.Now().After(a.ExpiresAt.Add(-30*time.Second)) && a.RefreshToken != "" {
+		if time.Now().After(a.ExpiresAt.Add(-minValidity)) && a.RefreshToken != "" {
 			candidates = append(candidates, a)
 		}
 	}
 	s.mu.Unlock()
-	var results []TokenRefreshResult
-	for _, a := range candidates {
-		acc, err := s.EnsureValid(a.ID)
-		r := TokenRefreshResult{ID: a.ID, Email: a.Email}
-		if err != nil {
-			r.Success = false
-			r.Error = err.Error()
-		} else {
-			r.Success = true
-			r.ExpiresAt = acc.ExpiresAt
-		}
-		results = append(results, r)
+	results := make([]TokenRefreshResult, len(candidates))
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	for i, a := range candidates {
+		wg.Add(1)
+		go func(i int, a AccountToken) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			acc, err := s.EnsureValidFor(a.ID, minValidity)
+			r := TokenRefreshResult{ID: a.ID, Email: a.Email}
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.Success = true
+				r.ExpiresAt = acc.ExpiresAt
+			}
+			results[i] = r
+		}(i, a)
 	}
+	wg.Wait()
 	return results
 }
 

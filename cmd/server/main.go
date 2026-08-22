@@ -31,7 +31,9 @@ func main() {
 	s.InitM365CloudClient()
 	s.StartAutoCleanup()
 	s.StartConvCacheGC()
-	s.RefreshExpiredTokens()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	s.StartTokenPreRefresh(ctx)
 	listen := "127.0.0.1:4141"
 	if v := os.Getenv("M365_LISTEN"); v != "" {
 		listen = v
@@ -45,8 +47,6 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 		WriteTimeout:      0, // streaming endpoints need an open-ended write window.
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

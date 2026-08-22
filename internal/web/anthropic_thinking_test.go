@@ -1,4 +1,4 @@
-﻿package web
+package web
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ func TestWriteAnthropicResultThinkingPlain(t *testing.T) {
 		"reasoning_content": "deep think",
 	}}}}
 	w := httptest.NewRecorder()
-	writeAnthropicResult(w, "claude-sonnet", false, src)
+	writeAnthropicResult(w, "claude-sonnet", false, src, nil, "")
 	var out struct {
 		Content []map[string]any `json:"content"`
 	}
@@ -33,7 +33,7 @@ func TestAnthropicResultContentParts(t *testing.T) {
 		},
 	}}}}
 	w := httptest.NewRecorder()
-	writeAnthropicResult(w, "m", false, src)
+	writeAnthropicResult(w, "m", false, src, nil, "")
 	var out struct {
 		Content []map[string]any `json:"content"`
 	}
@@ -49,11 +49,11 @@ func TestAnthropicResultContentParts(t *testing.T) {
 
 func TestAnthropicStreamEmitsThinkingSSE(t *testing.T) {
 	src := map[string]any{"choices": []any{map[string]any{"message": map[string]any{
-		"content":        "final",
+		"content":           "final",
 		"reasoning_content": "think1",
 	}}}}
 	w := httptest.NewRecorder()
-	writeAnthropicResult(w, "m", true, src)
+	writeAnthropicResult(w, "m", true, src, nil, "")
 	body := w.Body.String()
 	if !strings.Contains(body, `"type":"thinking"`) && !strings.Contains(body, `thinking_delta`) {
 		t.Fatalf("missing thinking SSE frames: %s", body)

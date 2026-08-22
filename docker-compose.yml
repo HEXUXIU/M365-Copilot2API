@@ -17,6 +17,11 @@ services:
       M365_ADMIN_PASSWORD_BOOTSTRAP_FILE: /run/secrets/m365_admin_password
       M365_CHAT_TIMEOUT_SECONDS: "120"
       M365_IMAGE_TIMEOUT_SECONDS: "150"
+      M365_TOKEN_PRE_REFRESH: "true"
+      M365_TOKEN_PRE_REFRESH_MINUTES: "5"
+      M365_TOKEN_PRE_REFRESH_INTERVAL_SECONDS: "60"
+      M365_TOKEN_PRE_REFRESH_CONCURRENCY: "4"
+      M365_PROXY_HEALTH_URL: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"
       M365_PUBLIC_IDENTITY_POLICY: "${M365_PUBLIC_IDENTITY_POLICY:-false}"
     volumes:
       - ./data:/data

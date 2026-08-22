@@ -21,7 +21,7 @@ func openAIChoice(v map[string]any) (map[string]any, string) {
 	return m, finish
 }
 
-func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src map[string]any) {
+func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src map[string]any, usage map[string]any, usageSource string) {
 	id := "msg_" + uuid.NewString()
 	msg, finish := openAIChoice(src)
 	sanitizePublicAssistantMessage(msg, model)
@@ -78,27 +78,33 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 		}
 	}
 	_ = finish
-	inputTokens := int64(0)
-	outputTokens := int64(0)
-	if u, ok := src["usage"].(map[string]any); ok {
-		if v, ok := u["prompt_tokens"]; ok {
-			if n, ok := v.(int64); ok {
-				inputTokens = n
+	if usage == nil {
+		inputTokens := int64(0)
+		outputTokens := int64(0)
+		if u, ok := src["usage"].(map[string]any); ok {
+			if v, ok := u["prompt_tokens"]; ok {
+				if n, ok := v.(int64); ok {
+					inputTokens = n
+				}
+				if n, ok := v.(float64); ok {
+					inputTokens = int64(n)
+				}
 			}
-			if n, ok := v.(float64); ok {
-				inputTokens = int64(n)
+			if v, ok := u["completion_tokens"]; ok {
+				if n, ok := v.(int64); ok {
+					outputTokens = n
+				}
+				if n, ok := v.(float64); ok {
+					outputTokens = int64(n)
+				}
 			}
 		}
-		if v, ok := u["completion_tokens"]; ok {
-			if n, ok := v.(int64); ok {
-				outputTokens = n
-			}
-			if n, ok := v.(float64); ok {
-				outputTokens = int64(n)
-			}
-		}
+		usage = map[string]any{"input_tokens": inputTokens, "output_tokens": outputTokens}
 	}
-	out := map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": blocks, "stop_reason": stop, "stop_sequence": nil, "usage": map[string]any{"input_tokens": inputTokens, "output_tokens": outputTokens}}
+	if usageSource == "" {
+		usageSource = "none"
+	}
+	out := map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": blocks, "stop_reason": stop, "stop_sequence": nil, "usage": usage, "m365": localUsageMetadata(usageSource)}
 	if !stream {
 		jsonOut(w, out)
 		return
@@ -114,7 +120,11 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 			aborted = true
 		}
 	}
-	emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": []any{}, "stop_reason": nil, "usage": map[string]any{"input_tokens": inputTokens, "output_tokens": 0}}})
+	startUsage := map[string]any{"input_tokens": numberInt64(usage["input_tokens"]), "output_tokens": int64(0)}
+	if cached := numberInt64(usage["cache_read_input_tokens"]); cached > 0 {
+		startUsage["cache_read_input_tokens"] = cached
+	}
+	emit("message_start", map[string]any{"type": "message_start", "message": map[string]any{"id": id, "type": "message", "role": "assistant", "model": model, "content": []any{}, "stop_reason": nil, "usage": startUsage}})
 	for i, b := range blocks {
 		m, _ := b.(map[string]any)
 		startBlock := b
@@ -142,7 +152,7 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 		}
 		emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": i})
 	}
-	emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": map[string]any{"output_tokens": outputTokens}})
+	emit("message_delta", map[string]any{"type": "message_delta", "delta": map[string]any{"stop_reason": stop, "stop_sequence": nil}, "usage": usage})
 	emit("message_stop", map[string]any{"type": "message_stop"})
 }
 

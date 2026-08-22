@@ -365,6 +365,8 @@ curl http://127.0.0.1:4141/v1/messages \
 
 `M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。Responses API 在 `off` 模式保持原有的 `extractAPIKey` 租户命名空间，滚动升级不会破坏 `previous_response_id` 查找；启用亲和后才使用哈希租户键。核心实现使用进程内存储，缓存统计保持保守值，不会把普通历史消息误报成命中。
 
+从 `off` 切换到 `observe`/`enforce` 时，Responses API 的租户键会切换为哈希命名空间；进程内的旧 `previous_response_id` 状态不会迁移。滚动升级时应保持模式不变，或接受旧响应链需要重新建立。
+
 工具规划器默认使用一次性云端会话，成功后自动清理；需要让规划器复用调用方会话时显式设置 `M365_AFFINITY_REUSE_ROUTER_CONVERSATION=true`。请求中的 `prompt_cache_key` 只用于稳定账号亲和路由，不等同于会话续接，也不会单独声称缓存命中。
 
 未携带 API key 或 Bearer token 的请求默认通过 `M365_AFFINITY_ANONYMOUS_SCOPE=ip` 按远端 IP 隔离。仅在可信的单租户部署中可设为 `global`，共享匿名亲和范围。

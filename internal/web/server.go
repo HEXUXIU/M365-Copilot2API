@@ -43,6 +43,8 @@ const rateLimitProbePrompt = "Reply with exactly: OK"
 
 var streamToolPrefixes = []string{"```bash", "```sh", "```shell", "```json", "\"command\""}
 
+const streamToolJSONPrefixLimit = 64
+
 // consumeStreamText emits ordinary text immediately and retains only a short
 // suffix that could become a fenced tool block across upstream chunks.
 func consumeStreamText(pending *strings.Builder, fragment string, emit func(string) error) error {
@@ -83,7 +85,7 @@ func consumeStreamText(pending *strings.Builder, fragment string, emit func(stri
 
 func streamToolPrefixSuffix(value string) int {
 	trimmed := strings.TrimLeft(value, " \t\r\n")
-	if strings.HasPrefix(trimmed, "{") && !strings.Contains(trimmed, "\n") && len(trimmed) < 64 {
+	if strings.HasPrefix(trimmed, "{") && !strings.Contains(trimmed, "\n") && len(trimmed) < streamToolJSONPrefixLimit {
 		// JSON tool calls commonly reveal the command key several chunks after
 		// the opening brace. Keep the whole short prefix until that is known.
 		return len(value)
@@ -1634,7 +1636,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// drops from 3-5s to ~1s). Only kicks in when no explicit conversation ID
 	// was provided by client, session key, user session, or session resolver.
 	convReused := false
-	convCacheModel := firstNonEmpty(body.Model, "m365-copilot")
+	convCacheModel := firstNonEmpty(body.Model, defaultPublicModelName)
 	if legacyConversationCacheAllowed(affinityState) && body.ConversationID == "" && len(body.Messages) > 1 {
 		sysHash := systemPromptHash(body.Messages)
 		if cached := s.convCache.Lookup(acc.ID, convCacheModel); cached != nil && cached.SystemPrompt == sysHash {

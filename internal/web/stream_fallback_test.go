@@ -65,3 +65,18 @@ func TestConsumeStreamTextKeepsToolPrefixesTogether(t *testing.T) {
 		t.Fatalf("fenced tool prefix handling changed: emitted=%q pending=%q", emitted.String(), pending.String())
 	}
 }
+
+func TestConsumeStreamTextBoundsShortJSONBuffer(t *testing.T) {
+	var pending strings.Builder
+	var emitted strings.Builder
+	chunk := strings.Repeat("x", streamToolJSONPrefixLimit)
+	if err := consumeStreamText(&pending, "{"+chunk, func(value string) error {
+		emitted.WriteString(value)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if pending.Len() != 0 || emitted.Len() == 0 {
+		t.Fatalf("short JSON buffer was not bounded: emitted=%d pending=%d", emitted.Len(), pending.Len())
+	}
+}

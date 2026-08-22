@@ -1215,28 +1215,46 @@ type oaiMsg struct {
 }
 
 type oaiReq struct {
-	Model          string          `json:"model"`
-	ResponseFormat *responseFormat `json:"response_format,omitempty"`
-	Messages       []oaiMsg        `json:"messages"`
-	Stream         bool            `json:"stream"`
-	// optional account routing
-	User           string `json:"user"`
-	AccountID      string `json:"accountId"`
-	ConversationID string `json:"conversation_id"`
-	SessionID      string `json:"session_id"`
-	SessionKey     string `json:"session_key"`
-	// CamelCase aliases mirroring the response metadata fields; clients echo
-	// m365.conversationId / m365.sessionId back verbatim.
-	ConversationIDC string               `json:"conversationId,omitempty"`
-	SessionIDC      string               `json:"sessionId,omitempty"`
-	Attachments     []chathub.Attachment `json:"attachments,omitempty"`
-	Tools           []chathub.Tool       `json:"tools,omitempty"`
-	// Legacy OpenAI-compatible clients still send functions/function_call.
-	Functions       []json.RawMessage `json:"functions,omitempty"`
-	ToolChoice      any               `json:"tool_choice,omitempty"`
-	FunctionCall    any               `json:"function_call,omitempty"`
-	Reasoning       *reasoningConfig  `json:"reasoning,omitempty"`
-	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	Model               string          `json:"model"`
+	ResponseFormat      *responseFormat `json:"response_format,omitempty"`
+	Messages            []oaiMsg        `json:"messages"`
+	Stream              bool            `json:"stream"`
+	StreamOptions       *struct {
+		IncludeUsage bool `json:"include_usage"`
+	} `json:"stream_options,omitempty"`
+	MaxTokens           *int              `json:"max_tokens,omitempty"`
+	MaxCompletionTokens *int              `json:"max_completion_tokens,omitempty"`
+	Temperature         *float64          `json:"temperature,omitempty"`
+	TopP                *float64          `json:"top_p,omitempty"`
+	FrequencyPenalty    *float64          `json:"frequency_penalty,omitempty"`
+	PresencePenalty     *float64          `json:"presence_penalty,omitempty"`
+	Stop                any               `json:"stop,omitempty"`
+	N                   *int              `json:"n,omitempty"`
+	Seed                *int64            `json:"seed,omitempty"`
+	Logprobs            *bool             `json:"logprobs,omitempty"`
+	TopLogprobs         *int              `json:"top_logprobs,omitempty"`
+	User                string            `json:"user"`
+	AccountID           string            `json:"accountId"`
+	ConversationID      string            `json:"conversation_id"`
+	SessionID           string            `json:"session_id"`
+	SessionKey          string            `json:"session_key"`
+	ConversationIDC     string            `json:"conversationId,omitempty"`
+	SessionIDC          string            `json:"sessionId,omitempty"`
+	Attachments         []chathub.Attachment `json:"attachments,omitempty"`
+	Tools               []chathub.Tool       `json:"tools,omitempty"`
+	Functions           []json.RawMessage `json:"functions,omitempty"`
+	ToolChoice          any               `json:"tool_choice,omitempty"`
+	FunctionCall        any               `json:"function_call,omitempty"`
+	ParallelToolCalls   *bool             `json:"parallel_tool_calls,omitempty"`
+	Reasoning           *reasoningConfig  `json:"reasoning,omitempty"`
+	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
+}
+
+func (r *oaiReq) shouldSendStreamUsage() bool {
+	if r.StreamOptions == nil {
+		return true
+	}
+	return r.StreamOptions.IncludeUsage
 }
 
 func mustJSON(v any) string { b, _ := json.Marshal(v); return string(b) }
@@ -1607,7 +1625,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, calls, routeRes)
+			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
+				calls = calls[:1]
+			}
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, body.shouldSendStreamUsage(), calls, routeRes)
 			return
 		}
 	}
@@ -1823,7 +1844,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return n
 			}())
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, id, model, true, calls, toolResult)
+			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
+				calls = calls[:1]
+			}
+			_ = writeToolResponse(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult)
 			if body.User != "" && res.ConversationID != "" {
 				s.userSessions.Put(body.User, res.ConversationID, res.SessionID, acc.ID)
 			}
@@ -1896,7 +1920,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 			}
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, routeRes)
+			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
+				calls = calls[:1]
+			}
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
 			return
 		}
 		if fmt.Sprint(body.ToolChoice) == "required" {
@@ -1915,7 +1942,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 					}
 					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, calls, retryRes)
+					if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
+						calls = calls[:1]
+					}
+					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, retryRes)
 					return
 				}
 			}
@@ -2141,7 +2171,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		invalidDetectedTool = rejected > 0
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, id, model, body.Stream, calls, res)
+			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
+				calls = calls[:1]
+			}
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
 			return
 		}
 	}
@@ -2150,7 +2183,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		invalidDetectedTool = invalidDetectedTool || rejected > 0
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			_ = writeToolResponse(w, id, model, body.Stream, calls, res)
+			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
+				calls = calls[:1]
+			}
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
 			return
 		}
 	}
@@ -2174,7 +2210,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-				_ = writeToolResponse(w, id, model, body.Stream, calls, routeRes)
+				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
 				return
 			}
 		}

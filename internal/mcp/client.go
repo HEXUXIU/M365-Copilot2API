@@ -109,7 +109,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	c.connected = true
 	go c.readSSE(resp.Body)
 
-	_, err = c.sendRequest(sseCtx, "initialize", map[string]any{
+	_, initCh, err := c.sendRequest(sseCtx, "initialize", map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "m365-copilot2api-mcp-client", "version": "0.1.0"},
@@ -117,6 +117,12 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		c.Close()
 		return fmt.Errorf("initialize: %w", err)
+	}
+	select {
+	case <-initCh:
+	case <-time.After(10 * time.Second):
+		c.Close()
+		return fmt.Errorf("timeout waiting for initialize response")
 	}
 
 	// Send initialized notification
@@ -157,11 +163,15 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 	var result struct {
 		Tools []Tool `json:"tools"`
 	}
-	id, err := c.sendRequest(ctx, "tools/list", nil)
+	id, ch, err := c.sendRequest(ctx, "tools/list", nil)
 	if err != nil {
 		return nil, err
 	}
-	ch := c.getPending(id)
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+	}()
 	select {
 	case msg := <-ch:
 		var resp struct {
@@ -184,14 +194,18 @@ func (c *Client) ListTools(ctx context.Context) ([]Tool, error) {
 // CallTool invokes a tool on the MCP server.
 func (c *Client) CallTool(ctx context.Context, name string, arguments map[string]any) (CallResult, error) {
 	var result CallResult
-	id, err := c.sendRequest(ctx, "tools/call", map[string]any{
+	id, ch, err := c.sendRequest(ctx, "tools/call", map[string]any{
 		"name":      name,
 		"arguments": arguments,
 	})
 	if err != nil {
 		return result, err
 	}
-	ch := c.getPending(id)
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+	}()
 	select {
 	case msg := <-ch:
 		var resp struct {
@@ -211,13 +225,7 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments map[string
 	return result, nil
 }
 
-func (c *Client) getPending(id int64) chan json.RawMessage {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.pending[id]
-}
-
-func (c *Client) sendRequest(ctx context.Context, method string, params any) (int64, error) {
+func (c *Client) sendRequest(ctx context.Context, method string, params any) (int64, chan json.RawMessage, error) {
 	id := time.Now().UnixNano()
 	req := map[string]any{
 		"jsonrpc": "2.0",
@@ -233,29 +241,33 @@ func (c *Client) sendRequest(ctx context.Context, method string, params any) (in
 	c.mu.Lock()
 	c.pending[id] = ch
 	c.mu.Unlock()
-	defer func() {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-	}()
 
 	messageURL := fmt.Sprintf("%s/message?sessionId=%s", strings.TrimRight(strings.Split(c.serverURL, "/sse")[0], "/"), c.sessionID)
 	
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messageURL, strings.NewReader(string(body)))
 	if err != nil {
-		return 0, err
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return 0, nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return 0, err
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("http status: %s", resp.Status)
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
+		return 0, nil, fmt.Errorf("http status: %s", resp.Status)
 	}
-	return id, nil
+	return id, ch, nil
 }
 
 func (c *Client) sendNotification(method string, params any) error {

@@ -46,12 +46,7 @@ func IsRateLimited(err error) bool {
 	if errors.As(err, &dialErr) {
 		return dialErr.Status == 429 || dialErr.Status == 503
 	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "429") ||
-		strings.Contains(msg, "too many requests") ||
-		strings.Contains(msg, "rate limit") ||
-		strings.Contains(msg, "limited") ||
-		strings.Contains(msg, "throttl")
+	return false
 }
 
 // IsAuthFailure reports whether err represents an upstream 401/403, meaning

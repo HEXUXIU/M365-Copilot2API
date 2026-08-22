@@ -64,8 +64,16 @@ func (r *toolRegistry) ClearTools() {
 // GlobalRegistry is a global registry of MCP sessions, keyed by session ID.
 var GlobalRegistry = &sessionRegistry{sessions: map[string]*session{}}
 
+// APIKeyValidator is injected by the web package to validate API keys.
+// When nil, no authentication is enforced on MCP endpoints.
+var APIKeyValidator func(r *http.Request) bool
+
 // HandleToolsList returns the currently registered tools as JSON. Mount at /v1/mcp/tools.
 func HandleToolsList(w http.ResponseWriter, r *http.Request) {
+	if APIKeyValidator != nil && !APIKeyValidator(r) {
+		http.Error(w, `{"error":{"message":"valid API key required","type":"auth_error"}}`, http.StatusUnauthorized)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	tools := GlobalToolRegistry.ListTools()

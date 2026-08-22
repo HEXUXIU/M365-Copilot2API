@@ -29,9 +29,9 @@ func TestUpstreamErrorClassification(t *testing.T) {
 		{&UpstreamHTTPError{Status: 403}, false, true, 0, http.StatusUnauthorized},
 		{&UpstreamHTTPError{Status: 502}, false, false, 0, http.StatusBadGateway},
 		{&UpstreamHTTPError{Status: 502, Body: "account is limited"}, true, false, 0, http.StatusTooManyRequests},
-		{fmt.Errorf("upstream http 429"), true, false, 0, http.StatusTooManyRequests},
-		{fmt.Errorf("Too many requests, slow down"), true, false, 0, http.StatusTooManyRequests},
-		{fmt.Errorf("account is limited"), true, false, 0, http.StatusTooManyRequests},
+		{fmt.Errorf("upstream http 429"), false, false, 0, http.StatusBadGateway},
+		{fmt.Errorf("Too many requests, slow down"), false, false, 0, http.StatusBadGateway},
+		{fmt.Errorf("account is limited"), false, false, 0, http.StatusBadGateway},
 		{fmt.Errorf("random failure"), false, false, 0, http.StatusBadGateway},
 		{chathub.ErrRateLimitNotice, true, false, 0, http.StatusTooManyRequests},
 	}
@@ -94,7 +94,7 @@ func TestCooldownExpiryClearsCallCount(t *testing.T) {
 	const id = "acct-expiry"
 	h.MarkCall(id)
 	h.MarkCall(id)
-	h.MarkFailure(id, fmt.Errorf("account limited"), time.Minute)
+	h.MarkFailure(id, &UpstreamHTTPError{Status: 429}, time.Minute)
 	h.mu.Lock()
 	h.cooldown[id] = time.Now().Add(-time.Second)
 	h.mu.Unlock()
@@ -108,7 +108,7 @@ func TestCooldownExpiryClearsCallCount(t *testing.T) {
 		t.Fatal("expired cooldown still marked limited")
 	}
 	h.MarkCall(id)
-	h.MarkFailure(id, fmt.Errorf("account limited"), time.Minute)
+	h.MarkFailure(id, &UpstreamHTTPError{Status: 429}, time.Minute)
 	h.mu.Lock()
 	h.cooldown[id] = time.Now().Add(-time.Second)
 	h.mu.Unlock()
@@ -116,7 +116,7 @@ func TestCooldownExpiryClearsCallCount(t *testing.T) {
 		t.Fatal("CooldownUntil must clear expired call count")
 	}
 	h.MarkCall(id)
-	h.MarkFailure(id, fmt.Errorf("account limited"), time.Minute)
+	h.MarkFailure(id, &UpstreamHTTPError{Status: 429}, time.Minute)
 	h.mu.Lock()
 	h.cooldown[id] = time.Now().Add(-time.Second)
 	h.mu.Unlock()
@@ -277,7 +277,7 @@ func TestAccountsReportsCooldown(t *testing.T) {
 	s := &Server{tokens: store, accountPool: newAccountHealth()}
 	s.accountPool.MarkCall("u-1")
 	s.accountPool.MarkCall("u-1")
-	s.accountPool.MarkFailure("u-1", fmt.Errorf("account limited"), 20*time.Minute)
+	s.accountPool.MarkFailure("u-1", &UpstreamHTTPError{Status: 429}, 20*time.Minute)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/accounts", nil)

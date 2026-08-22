@@ -1,10 +1,11 @@
 package auth
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,6 +48,12 @@ type inflightRefresh struct {
 	done chan struct{}
 	acc  AccountToken
 	err  error
+}
+
+func cryptoRandUint16() uint16 {
+	var b [2]byte
+	_, _ = rand.Read(b[:])
+	return binary.BigEndian.Uint16(b[:])
 }
 
 func CachePath() string {
@@ -180,7 +187,7 @@ func (s *Store) Upsert(tok TokenSet) (AccountToken, error) {
 		id = tok.Email
 	}
 	if id == "" {
-		id = fmt.Sprintf("account-%s-%04x", time.Now().Format("150405"), rand.Intn(0x10000))
+		id = fmt.Sprintf("account-%s-%04x", time.Now().Format("150405"), cryptoRandUint16())
 	}
 	acc := AccountToken{
 		ID:           id,

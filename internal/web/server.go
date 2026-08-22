@@ -221,6 +221,7 @@ func (s *Server) RefreshExpiredTokens() {
 }
 
 func (s *Server) Routes() http.Handler {
+	mcp.APIKeyValidator = s.validAPIKey
 	m := http.NewServeMux()
 	m.HandleFunc("/api/admin/login", s.adminLogin)
 	m.HandleFunc("/api/admin/logout", s.adminLogout)
@@ -485,18 +486,14 @@ func (s *Server) validAPIKey(r *http.Request) bool {
 			raw = strings.TrimSpace(v[7:])
 		}
 	}
-	if raw != "" && s.apiKeys.valid(raw) {
-		return true
-	}
-	if strings.HasPrefix(raw, "eyJ") {
-		return true
-	}
-	return false
+	return raw != "" && s.apiKeys.valid(raw)
 }
 
 func jsonOut(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("[jsonOut] encode error: %v", err)
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {

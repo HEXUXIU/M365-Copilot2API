@@ -1303,11 +1303,8 @@ func extractMediaURL(m map[string]any, keys ...string) string {
 }
 
 func shortHash(s string) string {
-	if len(s) > 64 {
-		s = s[:64]
-	}
 	h := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(h[:8])
+	return hex.EncodeToString(h[:])
 }
 
 func normalizeLegacyTools(body *oaiReq) {

@@ -12,7 +12,8 @@ func flattenPromptMessages(messages []oaiMsg, attachments []chathub.Attachment) 
 	for _, m := range messages {
 		role := strings.ToLower(strings.TrimSpace(m.Role))
 		if role == "system" || role == "developer" {
-			txt, _ := parseContent(m.Content)
+			txt, sysFiles := parseContent(m.Content)
+			attachments = append(attachments, sysFiles...)
 			txt = strings.TrimSpace(txt)
 			if txt != "" {
 				systemParts = append(systemParts, txt)

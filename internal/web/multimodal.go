@@ -28,7 +28,7 @@ func parseContent(c any) (string, []chathub.Attachment) {
 		if v, ok := m["text"].(string); ok && (typ == "text" || typ == "input_text" || typ == "output_text" || typ == "") {
 			text.WriteString(v)
 		}
-		if direct, ok := m["image_url"].(string); ok && direct != "" {
+		if direct, ok := m["image_url"].(string); ok && direct != "" && typ == "" {
 			files = append(files, chathub.Attachment{Type: "image", URL: direct, MimeType: "image/*"})
 		}
 		switch typ {

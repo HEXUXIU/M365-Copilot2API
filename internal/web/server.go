@@ -2187,7 +2187,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				err = nil
 			}
 		}
-		if err != nil && affinityState.enforced && (IsRateLimited(err) || IsAuthFailure(err)) {
+		if err != nil && affinityState.enforced && (IsRateLimited(err) || IsAuthFailure(err) || IsTransientUpstreamFailure(err)) {
 			// A warm binding gets one same-account retry for a short upstream
 			// throttle. This is the only retry that may preserve cloud context.
 			stickyWindow := 5 * time.Second
@@ -2230,7 +2230,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					}
 				}
 			}
-		} else if err != nil && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
+		} else if err != nil && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsTransientUpstreamFailure(err)) {
 			// Legacy off/observe mode retains the existing cold-request failover.
 			next, nerr := s.nextHealthyAccount(acc.ID)
 			if nerr == nil {

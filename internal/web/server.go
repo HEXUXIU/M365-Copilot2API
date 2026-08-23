@@ -2017,8 +2017,17 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				routeRes = repairRes
 			}
 			if !parsed {
-				http.Error(w, "model returned an invalid tool routing decision", http.StatusBadGateway)
-				return
+				// Tool choice "auto" is advisory. If the router cannot produce
+				// structured JSON, continue with a normal assistant turn instead of
+				// converting an otherwise healthy upstream answer into HTTP 502.
+				if fmt.Sprint(body.ToolChoice) != "required" {
+					log.Printf("[tool-router] invalid decision; falling back to normal answer id=%s", requestID)
+					calls = nil
+					parsed = true
+				} else {
+					http.Error(w, "model returned an invalid tool routing decision", http.StatusBadGateway)
+					return
+				}
 			}
 		}
 		calls = filterCompletedCalls(calls, ledger)

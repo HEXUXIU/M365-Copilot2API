@@ -30,6 +30,15 @@ type sessionBinding struct {
 	// ContextHistory 鎸佷箙鍖栦繚瀛樻渶杩戜竴娆″崗璁殑瀹屾暣娑堟伅锛屼緵閲嶅惎鍚庣户缁仛
 	// 鍐呭鍓嶇紑鍖归厤锛岄伩鍏嶈繘绋嬮噸鍚鑷存墍鏈変細璇濋敭鍏ㄩ儴澶辨晥銆?
 	ContextHistory []oaiMsg `json:"contextHistory,omitempty"`
+	// Tenant isolates a binding to the API key that created it. Every read,
+	// match, resume, and delete is scoped to the caller's tenant so one key can
+	// never touch another key's conversations. An empty tenant marks a legacy
+	// binding (created before this field existed): it is treated as unowned and
+	// is never returned to a keyed caller.
+	Tenant string `json:"tenant,omitempty"`
+	// ExplicitID is the client-supplied X-M365-Session-Id. It is namespaced per
+	// tenant via byExplicit so two tenants may use the same id without colliding.
+	ExplicitID string `json:"explicitId,omitempty"`
 }
 
 type sessionResolver struct {
@@ -115,6 +124,9 @@ func (sr *sessionResolver) flush() error {
 
 func (sr *sessionResolver) reindexLocked(s sessionBinding) {
 	sr.sessions[s.SessionID] = s
+	if s.ExplicitID != "" {
+		sr.byExplicit[explicitKey(s.Tenant, s.ExplicitID)] = s.SessionID
+	}
 	if s.UserField != "" {
 		sr.byUserField[s.UserField] = s.SessionID
 	}
@@ -150,6 +162,9 @@ func (sr *sessionResolver) evictLocked() {
 
 func (sr *sessionResolver) dropLocked(id string, s sessionBinding) {
 	delete(sr.sessions, id)
+	if s.ExplicitID != "" {
+		delete(sr.byExplicit, explicitKey(s.Tenant, s.ExplicitID))
+	}
 	if sr.byUserField[s.UserField] == id {
 		delete(sr.byUserField, s.UserField)
 	}
@@ -203,37 +218,25 @@ func (sr *sessionResolver) Resolve(r *http.Request, body *oaiReq) ResolveResult 
 	defer sr.mu.Unlock()
 	sr.evictLocked()
 
+	tenant := tenantFromRequest(r)
 	explicitID := r.Header.Get("X-M365-Session-Id")
 
 	// 瀹㈡埛绔樉寮忔寚瀹氱殑浼氳瘽 ID 鏄渶楂樹紭鍏堢殑缁帴璇箟锛氫笉鍙備笌浠讳綍韬唤鍒ゅ畾锛?
 	// 鐢辫皟鐢ㄦ柟涓诲姩鍐冲畾瑕佺户缁摢涓簯绔璇濄€?
 	if explicitID != "" {
-		if sessID, ok := sr.byExplicit[explicitID]; ok {
-			if sess, ok := sr.sessions[sessID]; ok {
-			sess.LastUsedAt = time.Now().UTC()
-			sr.sessions[sessID] = sess
-			sr.persist.markDirty()
-			return ResolveResult{
-				SessionID:      sess.SessionID,
-				ConversationID: sess.ConversationID,
-				AccountID:      sess.AccountID,
-				MatchedBy:      "explicit",
-				IsNew:          false,
-				HistoryLen:     len(sess.ContextHistory),
-			}
-			}
-		}
-		if sess, ok := sr.sessions[explicitID]; ok {
-			sess.LastUsedAt = time.Now().UTC()
-			sr.sessions[explicitID] = sess
-			sr.persist.markDirty()
-			return ResolveResult{
-				SessionID:      sess.SessionID,
-				ConversationID: sess.ConversationID,
-				AccountID:      sess.AccountID,
-				MatchedBy:      "explicit",
-				IsNew:          false,
-				HistoryLen:     len(sess.ContextHistory),
+		if sessID, ok := sr.byExplicit[explicitKey(tenant, explicitID)]; ok {
+			if sess, ok := sr.sessions[sessID]; ok && sess.Tenant == tenant {
+				sess.LastUsedAt = time.Now().UTC()
+				sr.sessions[sessID] = sess
+				sr.persist.markDirty()
+				return ResolveResult{
+					SessionID:      sess.SessionID,
+					ConversationID: sess.ConversationID,
+					AccountID:      sess.AccountID,
+					MatchedBy:      "explicit",
+					IsNew:          false,
+					HistoryLen:     len(sess.ContextHistory),
+				}
 			}
 		}
 	}
@@ -242,7 +245,7 @@ func (sr *sessionResolver) Resolve(r *http.Request, body *oaiReq) ResolveResult 
 	// 浜戠瀵硅瘽锛屼絾鍙湪鍚屼竴 IP/UA 鎸囩汗涓嬶紝閬垮厤鐭秷鎭湪涓嶅悓鐢ㄦ埛闂翠簰绔?
 	// HistoryLen 杩斿洖璇ュ墠缂€闀垮害锛屼笂灞傛嵁姝ゅ彧鍙戦€?messages[HistoryLen:] 澧為噺銆?
 	ipFinger := clientIPFingerprint(r)
-	if bestID, n := sr.matchContextLocked(ipFinger, body.Messages); bestID != "" {
+	if bestID, n := sr.matchContextLocked(tenant, ipFinger, body.Messages); bestID != "" {
 		sess := sr.sessions[bestID]
 		sess.LastUsedAt = time.Now().UTC()
 		sr.sessions[bestID] = sess
@@ -259,7 +262,7 @@ func (sr *sessionResolver) Resolve(r *http.Request, body *oaiReq) ResolveResult 
 
 	// 寮辩害鏉熷厹搴曪細鍐呭涓嶆瀯鎴愪弗鏍煎墠缂€锛屼絾涓庢煇涓巻鍙查珮搴︾浉浼硷紙濡傚鎴风
 	// 鏈湴鎴柇浜嗗巻鍙诧級锛屼粛澶嶇敤璇ヤ細璇濄€傛鏃跺閲忚竟鐣屾湭鐭ワ紝涓婂眰鍙戦€佸叏閲忋€?
-	suffixID, suffixN := sr.matchSuffixLocked(ipFinger, body.Messages)
+	suffixID, suffixN := sr.matchSuffixLocked(tenant, ipFinger, body.Messages)
 	if suffixID != "" {
 		sess := sr.sessions[suffixID]
 		sess.LastUsedAt = time.Now().UTC()
@@ -278,7 +281,7 @@ func (sr *sessionResolver) Resolve(r *http.Request, body *oaiReq) ResolveResult 
 	return ResolveResult{IsNew: true}
 }
 
-func (sr *sessionResolver) matchSuffixLocked(ipFinger string, messages []oaiMsg) (string, int) {
+func (sr *sessionResolver) matchSuffixLocked(tenant, ipFinger string, messages []oaiMsg) (string, int) {
 	if len(messages) < 2 {
 		return "", 0
 	}
@@ -291,6 +294,9 @@ func (sr *sessionResolver) matchSuffixLocked(ipFinger string, messages []oaiMsg)
 	minSuffix := 2
 	for id, sess := range sr.sessions {
 		if time.Since(sess.LastUsedAt) > sr.contextTTL {
+			continue
+		}
+		if sess.Tenant != tenant {
 			continue
 		}
 		if sess.IPFingerprint != ipFinger {
@@ -327,7 +333,7 @@ func suffixMatchLen(hist, msgs []oaiMsg) int {
 // matchContextLocked 浠庡叏閮ㄤ細璇濅腑鎵惧埌鍏?contextHistory 涓ユ牸浣滀负娑堟伅鍓嶇紑鐨?
 // 閭ｄ釜浼氳瘽锛涘彧閫夊墠缂€鏈€闀跨殑涓€涓紝閬垮厤鐭墠缂€鍦ㄤ笉鍚屼細璇濋棿浜掓挒銆傝繑鍥?
 // (sessionID, 鍖归厤鍒扮殑娑堟伅鏉℃暟)銆?
-func (sr *sessionResolver) matchContextLocked(ipFinger string, messages []oaiMsg) (string, int) {
+func (sr *sessionResolver) matchContextLocked(tenant, ipFinger string, messages []oaiMsg) (string, int) {
 	if len(messages) == 0 {
 		return "", 0
 	}
@@ -339,6 +345,9 @@ func (sr *sessionResolver) matchContextLocked(ipFinger string, messages []oaiMsg
 	best := match{}
 	for id, sess := range sr.sessions {
 		if time.Since(sess.LastUsedAt) > sr.contextTTL {
+			continue
+		}
+		if sess.Tenant != tenant {
 			continue
 		}
 		if sess.IPFingerprint != ipFinger {
@@ -412,50 +421,56 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 	defer sr.mu.Unlock()
 	sr.evictLocked()
 
+	tenant := tenantFromRequest(r)
 	now := time.Now().UTC()
 	history := cloneMessages(body.Messages)
 	if strings.TrimSpace(assistantText) != "" {
 		history = append(history, oaiMsg{Role: "assistant", Content: assistantText})
 	}
 	explicitID := r.Header.Get("X-M365-Session-Id")
-	if explicitID != "" && sessionID == "" {
-		sessionID = explicitID
-	}
-	// 同一云端对话只保留一条记录：内容键命中后增量轮次更新已存在会话，
-	// 而不是每次 Bind 都新建一条，避免 sessions.json 膨胀。
-	if sessionID != "" {
-		if sess, ok := sr.sessions[sessionID]; ok {
-			sess.ConversationID = conversationID
-			sess.AccountID = accountID
-			sess.LastUsedAt = now
-			sess.UserField = body.User
-			sess.IPFingerprint = clientIPFingerprint(r)
-			sess.ContextFinger = contextFingerprint(history)
-			sess.ContextHistory = history
-			sr.sessions[sessionID] = sess
-			sr.reindexLocked(sess)
-			sr.persist.markDirty()
-			return
-		}
-	}
-	if sessionID == "" {
-		for sid, sess := range sr.sessions {
-			if sess.ConversationID == conversationID {
-				sess.LastUsedAt = now
-				sess.AccountID = accountID
-				sess.UserField = body.User
-				sess.IPFingerprint = clientIPFingerprint(r)
-				sess.ContextFinger = contextFingerprint(history)
-				sess.ContextHistory = history
-				sr.sessions[sid] = sess
-				sr.reindexLocked(sess)
-				sr.persist.markDirty()
-				return
+
+	// Locate an existing binding to update in place, scoped to this tenant:
+	// prefer the tenant-namespaced explicit id, then any binding this tenant
+	// already holds for the same cloud conversation. This keeps one record per
+	// conversation instead of growing sessions.json on every incremental turn,
+	// and never merges into another tenant's binding.
+	targetKey := ""
+	if explicitID != "" {
+		if k, ok := sr.byExplicit[explicitKey(tenant, explicitID)]; ok {
+			if sess, ok := sr.sessions[k]; ok && sess.Tenant == tenant {
+				targetKey = k
 			}
 		}
+	}
+	if targetKey == "" && conversationID != "" {
+		for k, sess := range sr.sessions {
+			if sess.Tenant == tenant && sess.ConversationID == conversationID {
+				targetKey = k
+				break
+			}
+		}
+	}
+	if targetKey != "" {
+		sess := sr.sessions[targetKey]
+		sess.ConversationID = conversationID
+		sess.AccountID = accountID
+		sess.LastUsedAt = now
+		sess.UserField = body.User
+		sess.IPFingerprint = clientIPFingerprint(r)
+		sess.ContextFinger = contextFingerprint(history)
+		sess.ContextHistory = history
+		sess.Tenant = tenant
+		if explicitID != "" {
+			sess.ExplicitID = explicitID
+		}
+		sr.sessions[targetKey] = sess
+		sr.reindexLocked(sess)
+		sr.persist.markDirty()
+		return
+	}
+	if sessionID == "" {
 		sessionID = uuid.NewString()
 	}
-
 	sess := sessionBinding{
 		SessionID:      sessionID,
 		ConversationID: conversationID,
@@ -466,17 +481,34 @@ func (sr *sessionResolver) Bind(sessionID, conversationID, accountID string, bod
 		UserField:      body.User,
 		ContextFinger:  contextFingerprint(history),
 		ContextHistory: history,
+		Tenant:         tenant,
+		ExplicitID:     explicitID,
 	}
-
 	sr.reindexLocked(sess)
 	sr.persist.markDirty()
 }
 
-func (sr *sessionResolver) GetSession(sessionID string) (sessionBinding, bool) {
+func (sr *sessionResolver) GetSession(tenant, sessionID string) (sessionBinding, bool) {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
-	s, ok := sr.sessions[sessionID]
-	return s, ok
+	return sr.lookupForTenantLocked(tenant, sessionID)
+}
+
+// lookupForTenantLocked resolves a client-facing id (either the raw SessionID
+// or the tenant's explicit X-M365-Session-Id) to a binding this tenant owns.
+func (sr *sessionResolver) lookupForTenantLocked(tenant, id string) (sessionBinding, bool) {
+	if tenant == "" || id == "" {
+		return sessionBinding{}, false
+	}
+	if s, ok := sr.sessions[id]; ok && s.Tenant == tenant {
+		return s, true
+	}
+	if k, ok := sr.byExplicit[explicitKey(tenant, id)]; ok {
+		if s, ok := sr.sessions[k]; ok && s.Tenant == tenant {
+			return s, true
+		}
+	}
+	return sessionBinding{}, false
 }
 
 func (sr *sessionResolver) GetConversation(conversationID string) (sessionBinding, bool) {
@@ -504,24 +536,14 @@ func (sr *sessionResolver) ListSessions() []sessionBinding {
 	return out
 }
 
-func (sr *sessionResolver) DeleteSession(sessionID string) bool {
+func (sr *sessionResolver) DeleteSession(tenant, sessionID string) bool {
 	sr.mu.Lock()
 	defer sr.mu.Unlock()
-	s, ok := sr.sessions[sessionID]
+	sess, ok := sr.lookupForTenantLocked(tenant, sessionID)
 	if !ok {
 		return false
 	}
-	delete(sr.sessions, sessionID)
-	delete(sr.byExplicit, sessionID)
-	if s.UserField != "" {
-		delete(sr.byUserField, s.UserField)
-	}
-	if s.IPFingerprint != "" {
-		delete(sr.byIPFinger, s.IPFingerprint)
-	}
-	if s.ContextFinger != "" {
-		delete(sr.byContext, s.ContextFinger)
-	}
+	sr.dropLocked(sess.SessionID, sess)
 	sr.persist.markDirty()
 	return true
 }
@@ -537,17 +559,11 @@ func (sr *sessionResolver) UnbindByConversation(conversationID string) int {
 		if s.ConversationID != conversationID {
 			continue
 		}
-		delete(sr.sessions, sid)
-		delete(sr.byExplicit, sid)
-		if s.UserField != "" {
-			delete(sr.byUserField, s.UserField)
-		}
-		if s.IPFingerprint != "" {
-			delete(sr.byIPFinger, s.IPFingerprint)
-		}
-		if s.ContextFinger != "" {
-			delete(sr.byContext, s.ContextFinger)
-		}
+		// dropLocked removes the binding and every derived index entry
+		// (including the tenant-namespaced byExplicit key). This is a global
+		// maintenance path: a deleted cloud conversation is unbound for every
+		// tenant, so no tenant filter is applied here.
+		sr.dropLocked(sid, s)
 		removed++
 	}
 	if removed > 0 {
@@ -562,5 +578,37 @@ func cloneMessages(msgs []oaiMsg) []oaiMsg {
 	}
 	out := make([]oaiMsg, len(msgs))
 	copy(out, msgs)
+	return out
+}
+
+func explicitKey(tenant, id string) string { return tenant + "\x00" + id }
+
+// tenantFromRequest derives a stable, non-reversible tenant identifier from the
+// caller's API key so per-caller session state is isolated. Returns "" when no
+// key is present; an empty tenant never matches a stored (keyed) binding.
+func tenantFromRequest(r *http.Request) string {
+	raw := rawAPIKey(r)
+	if raw == "" {
+		return ""
+	}
+	return keyHash(raw)
+}
+
+// ListSessionsForTenant returns only the bindings owned by the given tenant,
+// most-recently-used first. Used by the API-key-authenticated /v1/sessions
+// endpoint; the global ListSessions is reserved for admin/maintenance paths.
+func (sr *sessionResolver) ListSessionsForTenant(tenant string) []sessionBinding {
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
+	out := make([]sessionBinding, 0)
+	if tenant == "" {
+		return out
+	}
+	for _, s := range sr.sessions {
+		if s.Tenant == tenant {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].LastUsedAt.After(out[j].LastUsedAt) })
 	return out
 }

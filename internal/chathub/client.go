@@ -570,6 +570,29 @@ func buildWSURL(acc Account, sessionID, conversationID, requestID string) (strin
 	return u, nil
 }
 
+// downloadClient returns an HTTP client used only for fetching remote image
+// attachments. It reuses the shared transport (so proxy settings apply) but
+// installs a redirect guard: validateRemoteDownloadURL only inspects the
+// initial URL, so without re-validation a server could 302 an approved public
+// URL to http://169.254.169.254/ or an internal host and defeat the SSRF
+// check. Here every redirect target is re-validated and hops are capped.
+func (c *Client) downloadClient() *http.Client {
+	base := c.HTTPClient
+	if base == nil {
+		base = http.DefaultClient
+	}
+	return &http.Client{
+		Transport: base.Transport,
+		Timeout:   base.Timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("attachment download: too many redirects")
+			}
+			return validateRemoteDownloadURL(req.URL.String())
+		},
+	}
+}
+
 func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversationID string, attachments []Attachment) error {
 	imageCount := 0
 	for i := range attachments {
@@ -591,7 +614,7 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 			if err != nil {
 				return fmt.Errorf("attachment %d: create request: %w", i, err)
 			}
-			resp, err := c.HTTPClient.Do(req)
+			resp, err := c.downloadClient().Do(req)
 			if err != nil {
 				return fmt.Errorf("attachment %d: download: %w", i, err)
 			}

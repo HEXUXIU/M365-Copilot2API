@@ -158,23 +158,29 @@ func (s *userSessionStore) evictLocked() {
 	}
 }
 
-func (s *userSessionStore) Get(user string) (userSession, bool) {
+// userKey namespaces the client-supplied `user` field by tenant so two API
+// keys that pass the same `user` value can never resume each other's
+// conversation. The stored key is opaque and never returned to a caller.
+func userKey(tenant, user string) string { return tenant + "\x00" + user }
+
+func (s *userSessionStore) Get(tenant, user string) (userSession, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.evictLocked()
-	v, ok := s.data[user]
+	key := userKey(tenant, user)
+	v, ok := s.data[key]
 	if ok {
 		v.LastUsedAt = time.Now().UTC()
-		s.data[user] = v
+		s.data[key] = v
 		s.persist.markDirty()
 	}
 	return v, ok
 }
 
-func (s *userSessionStore) Put(user, conversationID, sessionID, accountID string) {
+func (s *userSessionStore) Put(tenant, user, conversationID, sessionID, accountID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[user] = userSession{
+	s.data[userKey(tenant, user)] = userSession{
 		ConversationID: conversationID,
 		SessionID:      sessionID,
 		AccountID:      accountID,
@@ -183,10 +189,10 @@ func (s *userSessionStore) Put(user, conversationID, sessionID, accountID string
 	s.persist.markDirty()
 }
 
-func (s *userSessionStore) Delete(user string) {
+func (s *userSessionStore) Delete(tenant, user string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	delete(s.data, user)
+	delete(s.data, userKey(tenant, user))
 	s.persist.markDirty()
 }
 

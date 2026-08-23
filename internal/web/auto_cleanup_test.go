@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func TestAutoCleanupActiveSetProtectsInUse(t *testing.T) {
 
 	s.conversationManager.Record("conv-active", "acc1", "active convo")
 	s.conversationManager.Record("conv-idle", "acc1", "idle convo")
-	s.userSessions.Put("alice", "conv-user", "sess-user", "acc1")
+	s.userSessions.Put("", "alice", "conv-user", "sess-user", "acc1")
 
 	// Simulate activity: active convo touched recently, idle long ago.
 	cm := s.conversationManager
@@ -67,20 +68,30 @@ func TestAutoCleanupWhitelistProtects(t *testing.T) {
 func TestUnbindByConversationRemovesBindings(t *testing.T) {
 	s := newTestServerForAutoCleanup(t)
 
-	s.sessionResolver.Bind("sess-1", "conv-x", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hi"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
-	s.sessionResolver.Bind("sess-2", "conv-x", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
-	s.sessionResolver.Bind("sess-3", "conv-y", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "other"}}}, "", httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	// Two different tenants each hold a binding to the same cloud conversation
+	// conv-x. UnbindByConversation is global maintenance (a deleted cloud
+	// conversation must be unbound for everyone), so it removes both.
+	reqFor := func(key string) *http.Request {
+		r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		r.Header.Set("Authorization", "Bearer "+key)
+		return r
+	}
+	tenantA := tenantFromRequest(reqFor("key-a"))
+	tenantB := tenantFromRequest(reqFor("key-b"))
+	s.sessionResolver.Bind("sess-1", "conv-x", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hi"}}}, "", reqFor("key-a"))
+	s.sessionResolver.Bind("sess-2", "conv-x", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}, "", reqFor("key-b"))
+	s.sessionResolver.Bind("sess-3", "conv-y", "acc1", &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "other"}}}, "", reqFor("key-a"))
 
 	if removed := s.sessionResolver.UnbindByConversation("conv-x"); removed != 2 {
 		t.Fatalf("expected 2 unbinds, got %d", removed)
 	}
-	if _, ok := s.sessionResolver.GetSession("sess-1"); ok {
+	if _, ok := s.sessionResolver.GetSession(tenantA, "sess-1"); ok {
 		t.Error("sess-1 should be gone")
 	}
-	if _, ok := s.sessionResolver.GetSession("sess-2"); ok {
+	if _, ok := s.sessionResolver.GetSession(tenantB, "sess-2"); ok {
 		t.Error("sess-2 should be gone")
 	}
-	if _, ok := s.sessionResolver.GetSession("sess-3"); !ok {
+	if _, ok := s.sessionResolver.GetSession(tenantA, "sess-3"); !ok {
 		t.Error("sess-3 bound to conv-y must survive")
 	}
 }

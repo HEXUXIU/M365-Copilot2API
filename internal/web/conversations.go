@@ -56,20 +56,42 @@ func (s *Server) conversationCleanup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// publicSessionID returns the identifier a client uses to refer to a binding:
+// its own explicit X-M365-Session-Id when it set one, otherwise the internal
+// session id. The tenant hash and stored conversation history are never
+// exposed through the API.
+func publicSessionID(sess sessionBinding) string {
+	if sess.ExplicitID != "" {
+		return sess.ExplicitID
+	}
+	return sess.SessionID
+}
+
 func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	tenant := tenantFromRequest(r)
 	switch r.Method {
 	case http.MethodGet:
-		sessions := s.sessionResolver.ListSessions()
+		sessions := s.sessionResolver.ListSessionsForTenant(tenant)
+		data := make([]map[string]any, 0, len(sessions))
+		for _, sess := range sessions {
+			data = append(data, map[string]any{
+				"id":              publicSessionID(sess),
+				"conversation_id": sess.ConversationID,
+				"created":         sess.CreatedAt.Unix(),
+				"last_used":       sess.LastUsedAt.Unix(),
+				"messages":        len(sess.ContextHistory),
+			})
+		}
 		jsonOut(w, map[string]any{
 			"object": "list",
-			"data":   sessions,
+			"data":   data,
 		})
 	case http.MethodPost:
 		var body struct {
 			SessionID string `json:"session_id"`
 		}
 		json.NewDecoder(r.Body).Decode(&body)
-		sess, ok := s.sessionResolver.GetSession(body.SessionID)
+		sess, ok := s.sessionResolver.GetSession(tenant, body.SessionID)
 		if !ok {
 			jsonOut(w, map[string]any{
 				"object":     "session",
@@ -82,7 +104,7 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOut(w, map[string]any{
 			"object":          "session",
-			"id":              sess.SessionID,
+			"id":              publicSessionID(sess),
 			"conversation_id": sess.ConversationID,
 			"created":         sess.CreatedAt.Unix(),
 			"status":          "active",
@@ -308,7 +330,7 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "session_id required")
 		return
 	}
-	if s.sessionResolver.DeleteSession(sessionID) {
+	if s.sessionResolver.DeleteSession(tenantFromRequest(r), sessionID) {
 		jsonOut(w, map[string]any{"status": "deleted", "session_id": sessionID})
 	} else {
 		writeOpenAIError(w, http.StatusNotFound, "not_found", "session not found")

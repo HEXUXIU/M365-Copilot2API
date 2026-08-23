@@ -256,7 +256,13 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		writeResponsesError(w, 400, "invalid_request_error", err.Error())
 		return
 	}
-	tenant := extractAPIKey(r)
+	// Namespace the Responses conversation pool by a full-key hash rather than
+	// the 8-char display prefix, so distinct keys that share a prefix can never
+	// read each other's previous_response_id history.
+	tenant := tenantFromRequest(r)
+	if tenant == "" {
+		tenant = extractAPIKey(r)
+	}
 	if body.PreviousResponseID != "" {
 		s.responseMu.Lock()
 		prior, ok := s.responseMessages[tenant][body.PreviousResponseID]

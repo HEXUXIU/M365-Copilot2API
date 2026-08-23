@@ -120,11 +120,11 @@ type Result struct {
 }
 
 type Client struct {
-	HTTPHeader  http.Header
-	HTTPClient  *http.Client
-	Dialer      *websocket.Dialer
-	Pool        *ConnPool
-	Trace       func(map[string]any)
+	HTTPHeader http.Header
+	HTTPClient *http.Client
+	Dialer     *websocket.Dialer
+	Pool       *ConnPool
+	Trace      func(map[string]any)
 }
 
 func NewClient() *Client {
@@ -311,9 +311,12 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		return nil
 	}
 	// ChatHub signals text either as a full snapshot or as cursor rewrites.
-	// Only the portion not already streamed may be emitted; naive prefix
-	// checks misfire when upstream rewrites the whole buffer, which duplicated
-	// answers (AAA…). Match any overlap and emit the tail.
+	// Only the portion not already streamed may be emitted: an exact-prefix
+	// match emits the unseen tail, anything else is dropped. Byte-level
+	// overlap matching was removed (3242eca) because it split multi-byte
+	// UTF-8 sequences and garbled Chinese output; dropped rewrites are
+	// instead reconciled against the authoritative final message on the
+	// completion frame (finalizeText), so no content is lost (issue #51).
 	// Upstream rate limiting surfaces as a human-readable notice on the text
 	// channel instead of an HTTP 429. Detect it before any real content has
 	// streamed so the web layer can fail over rather than answer with it.
@@ -330,6 +333,12 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			strings.Contains(t, "too many requests") ||
 			strings.Contains(t, "please retry") && strings.Contains(t, "later")
 	}
+	// skippedSnapshots counts non-prefix rewrites dropped by emitSnapshot.
+	// Upstream interleaves per-token writeAtCursor fragments with cumulative
+	// snapshots, so bursts of skips are normal; the dropped text is
+	// reconciled against the authoritative final message on completion
+	// (see finalizeText). Logged once as a summary instead of per frame.
+	skippedSnapshots := 0
 	emitSnapshot := func(snapshot string) error {
 		if snapshot == "" {
 			return nil
@@ -350,7 +359,10 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		if len(snapshot) <= len(cur) {
 			return nil
 		}
-		log.Printf("[emitSnapshot] skip: cur=%d snapshot=%d (non-prefix rewrite)", len(cur), len(snapshot))
+		skippedSnapshots++
+		if chTrace {
+			log.Printf("[trace:emitSnapshot] skip: cur=%d snapshot=%d (non-prefix rewrite)", len(cur), len(snapshot))
+		}
 		return nil
 	}
 	var final string
@@ -491,13 +503,13 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					}
 					if res, ok := item["result"].(map[string]any); ok {
 						rawResult, _ = res["value"].(string)
-				if msg, ok := res["message"].(string); ok {
-						final = msg
-						if rateLimited(final) {
-							returnConn = false
-							return Result{}, ErrRateLimitNotice
+						if msg, ok := res["message"].(string); ok {
+							final = msg
+							if rateLimited(final) {
+								returnConn = false
+								return Result{}, ErrRateLimitNotice
+							}
 						}
-					}
 					}
 				}
 				// completion frame often follows; keep reading a bit but we already have content
@@ -509,10 +521,19 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					returnConn = false
 					return Result{}, fmt.Errorf("chathub completion error: %v", errObj)
 				}
-				log.Printf("chathub timing completion_frame_ms=%d streamed_text=%d events=%d", time.Since(payloadSentAt).Milliseconds(), streamed.Len(), len(events))
-				text := streamed.String()
-				if text == "" {
-					text = final
+				log.Printf("chathub timing completion_frame_ms=%d streamed_text=%d events=%d skipped_snapshots=%d", time.Since(payloadSentAt).Milliseconds(), streamed.Len(), len(events), skippedSnapshots)
+				// Guard against streaming a rate-limit notice out as content
+				// before finalizeText delivers a missing tail. The type-2
+				// handler already rejects notice finals, so this only fires
+				// on frame-order anomalies.
+				if rateLimited(final) {
+					returnConn = false
+					return Result{}, ErrRateLimitNotice
+				}
+				text, ferr := finalizeText(streamed.String(), final, skippedSnapshots, emitDelta)
+				if ferr != nil {
+					returnConn = false
+					return Result{}, ferr
 				}
 				if text == "" {
 					text = strings.Join(deltas, "")
@@ -546,6 +567,42 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	// they were a successful, finished answer.
 	returnConn = false
 	return Result{}, fmt.Errorf("chathub response deadline exceeded before completion")
+}
+
+// finalizeText reconciles the incrementally streamed text with the
+// authoritative final message carried by the SignalR type-2 result frame.
+//
+// emitSnapshot drops non-prefix rewrites to stay UTF-8 safe (see 3242eca),
+// which can leave the streamed buffer incomplete — or, when an early
+// fragment poisoned the prefix check, diverged from the real answer
+// (issue #51). The final message is upstream's source of truth, so:
+//
+//   - final no longer than streamed → keep the streamed text (it can only
+//     be equal or a superset assembled from the same snapshots);
+//   - streamed is a proper prefix of final → the stream missed the tail;
+//     emit the missing part so streaming clients also receive the complete
+//     answer, then return final;
+//   - otherwise → the streamed prefix diverged; already-sent deltas cannot
+//     be retracted, but final is returned as the Result text so non-stream
+//     callers and conversation history stay correct.
+//
+// emit is chatWithHandlers' emitDelta; its error (an onDelta failure)
+// aborts the turn like any other delta error.
+func finalizeText(streamedText, final string, skipped int, emit func(string) error) (string, error) {
+	if final == "" || len(final) <= len(streamedText) {
+		if streamedText == "" {
+			return final, nil
+		}
+		return streamedText, nil
+	}
+	if strings.HasPrefix(final, streamedText) {
+		if err := emit(final[len(streamedText):]); err != nil {
+			return "", err
+		}
+		return final, nil
+	}
+	log.Printf("[emitSnapshot] streamed text diverged from final result (streamed=%d final=%d skipped_snapshots=%d); using final", len(streamedText), len(final), skipped)
+	return final, nil
 }
 
 func buildWSURL(acc Account, sessionID, conversationID, requestID string) (string, error) {

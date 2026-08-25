@@ -480,8 +480,27 @@ func (s *Store) EnsureValid(id string) (AccountToken, error) {
 
 // EnsureValidFor preserves the pre-v0.5 refresh API used by the background
 // prefetcher while the latest cache implementation keeps one standard window.
-func (s *Store) EnsureValidFor(id string, _ time.Duration) (AccountToken, error) {
-	return s.EnsureValid(id)
+func (s *Store) EnsureValidFor(id string, minValidity time.Duration) (AccountToken, error) {
+	window := minValidity
+	if window < 30*time.Second {
+		window = 30 * time.Second
+	}
+	s.mu.Lock()
+	var acc AccountToken
+	for _, a := range s.data.Accounts {
+		if a.ID == id || a.OID == id || a.Email == id {
+			acc = a
+			break
+		}
+	}
+	s.mu.Unlock()
+	if acc.ID == "" {
+		return AccountToken{}, os.ErrNotExist
+	}
+	if time.Now().Before(acc.ExpiresAt.Add(-window)) {
+		return acc, nil
+	}
+	return s.refreshInflight(acc)
 }
 
 func (s *Store) refreshInflight(acc AccountToken) (AccountToken, error) {
@@ -530,7 +549,7 @@ func (s *Store) refreshInflight(acc AccountToken) (AccountToken, error) {
 		if upErr == nil {
 			s.mu.Lock()
 			for i := range s.data.Accounts {
-				if s.data.Accounts[i].ID == acc.ID {
+				if s.data.Accounts[i].ID == acc.ID || s.data.Accounts[i].OID == acc.OID || (acc.Email != "" && s.data.Accounts[i].Email == acc.Email) {
 					s.data.Accounts[i].AccessToken = tok.AccessToken
 					s.data.Accounts[i].ExpiresAt = tok.ExpiresAt
 					updated = s.data.Accounts[i]

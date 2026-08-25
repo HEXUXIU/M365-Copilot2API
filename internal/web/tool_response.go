@@ -34,9 +34,6 @@ func writeToolResponse(w http.ResponseWriter, id, model string, args ...any) err
 		stream = true
 		sendUsage = true
 	}
-	if len(args) >= 3 {
-		stream = true
-	}
 	toolCalls := toolCallMaps(calls)
 	msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": toolCalls}
 	if res.Reasoning != "" {

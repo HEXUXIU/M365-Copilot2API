@@ -96,6 +96,7 @@ func deriveAffinityKey(tenant string, body *oaiReq, r *http.Request) affinityKey
 		{reason: "explicit_session", value: body.SessionID},
 		{reason: "explicit_session", value: body.SessionKey},
 		{reason: "explicit_conversation", value: body.ConversationID},
+		{reason: "prompt_cache_key", value: body.PromptCacheKey},
 	}
 	for _, c := range candidates {
 		if value := strings.TrimSpace(c.value); value != "" {

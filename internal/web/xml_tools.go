@@ -24,5 +24,16 @@ func toolCallMaps(calls []detectedToolCall) []any {
 	return out
 }
 
+func toolCallMessageMaps(calls []detectedToolCall) []map[string]any {
+	values := toolCallMaps(calls)
+	out := make([]map[string]any, 0, len(values))
+	for _, value := range values {
+		if mapped, ok := value.(map[string]any); ok {
+			out = append(out, mapped)
+		}
+	}
+	return out
+}
+
 var _ = json.RawMessage{}
 var _ chathub.Tool

@@ -29,15 +29,15 @@ type CacheStats struct {
 }
 
 type statsSnapshot struct {
-	TotalRequests  int64         `json:"total_requests"`
-	CacheHits      int64         `json:"cache_hits"`
-	CacheMisses    int64         `json:"cache_misses"`
-	TokensSent     int64         `json:"tokens_sent"`
-	TokensSaved    int64         `json:"tokens_saved"`
-	ActiveSessions int           `json:"active_sessions"`
-	MaxSessionAge  time.Duration `json:"max_session_age"`
-	HitRate        float64       `json:"hit_rate"`
-	SavingsPercent float64       `json:"savings_percent"`
+	TotalRequests  int64               `json:"total_requests"`
+	CacheHits      int64               `json:"cache_hits"`
+	CacheMisses    int64               `json:"cache_misses"`
+	TokensSent     int64               `json:"tokens_sent"`
+	TokensSaved    int64               `json:"tokens_saved"`
+	ActiveSessions int                 `json:"active_sessions"`
+	MaxSessionAge  time.Duration       `json:"max_session_age"`
+	HitRate        float64             `json:"hit_rate"`
+	SavingsPercent float64             `json:"savings_percent"`
 	KeyStats       map[string]*KeyStat `json:"key_stats"`
 }
 

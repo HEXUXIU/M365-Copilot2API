@@ -83,16 +83,16 @@ func (s *apiKeyStore) create(name string) (apiKeyRecord, string, error) {
 	s.mu.Lock()
 	s.Keys = append(s.Keys, r)
 	s.mu.Unlock()
-		if err := s.persist.flushNowBlocking(); err != nil {
-			s.mu.Lock()
-			s.Keys = s.Keys[:len(s.Keys)-1]
-			s.mu.Unlock()
-			return apiKeyRecord{}, "", err
-		}
-		r.Hash = ""
-		r.Raw = ""
-		return r, raw, nil
+	if err := s.persist.flushNowBlocking(); err != nil {
+		s.mu.Lock()
+		s.Keys = s.Keys[:len(s.Keys)-1]
+		s.mu.Unlock()
+		return apiKeyRecord{}, "", err
 	}
+	r.Hash = ""
+	r.Raw = ""
+	return r, raw, nil
+}
 func (s *apiKeyStore) list() []apiKeyRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()

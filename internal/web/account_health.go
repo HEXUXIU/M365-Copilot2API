@@ -15,20 +15,20 @@ import (
 type ErrorCategory string
 
 const (
-	CategoryQuota429          ErrorCategory = "QUOTA_429"
-	CategoryOverload503       ErrorCategory = "OVERLOAD_503"
-	CategoryAuthExpired401    ErrorCategory = "AUTH_EXPIRED_401"
-	CategoryForbidden403      ErrorCategory = "FORBIDDEN_403"
-	CategorySOCKS5            ErrorCategory = "SOCKS5"
-	CategoryDNS               ErrorCategory = "DNS"
-	CategoryTCP               ErrorCategory = "TCP"
-	CategoryTLS               ErrorCategory = "TLS"
-	CategoryWSHandshake       ErrorCategory = "WS_HANDSHAKE"
-	CategoryWSReadTimeout     ErrorCategory = "WS_READ_TIMEOUT"
+	CategoryQuota429           ErrorCategory = "QUOTA_429"
+	CategoryOverload503        ErrorCategory = "OVERLOAD_503"
+	CategoryAuthExpired401     ErrorCategory = "AUTH_EXPIRED_401"
+	CategoryForbidden403       ErrorCategory = "FORBIDDEN_403"
+	CategorySOCKS5             ErrorCategory = "SOCKS5"
+	CategoryDNS                ErrorCategory = "DNS"
+	CategoryTCP                ErrorCategory = "TCP"
+	CategoryTLS                ErrorCategory = "TLS"
+	CategoryWSHandshake        ErrorCategory = "WS_HANDSHAKE"
+	CategoryWSReadTimeout      ErrorCategory = "WS_READ_TIMEOUT"
 	CategoryUpstreamStructured ErrorCategory = "UPSTREAM_STRUCTURED"
-	CategoryClientCanceled    ErrorCategory = "CLIENT_CANCELED"
-	CategoryGlobalUnavailable ErrorCategory = "GLOBAL_UNAVAILABLE"
-	CategoryUnknown           ErrorCategory = "UNKNOWN"
+	CategoryClientCanceled     ErrorCategory = "CLIENT_CANCELED"
+	CategoryGlobalUnavailable  ErrorCategory = "GLOBAL_UNAVAILABLE"
+	CategoryUnknown            ErrorCategory = "UNKNOWN"
 )
 
 type UpstreamHTTPError struct {
@@ -199,6 +199,26 @@ func IsAuthFailure(err error) bool {
 	return false
 }
 
+// IsTransientUpstreamFailure identifies connection failures that are safe to
+// retry before any assistant text has reached the client.
+func IsTransientUpstreamFailure(err error) bool {
+	if err == nil || IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"ws dial:", "handshake send:", "handshake recv:", "chat send:",
+		"ws read before completion:", "connection reset", "connection refused",
+		"broken pipe", "unexpected eof", "use of closed network connection",
+		"i/o timeout", "timeout",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsEmptyCompletion(err error) bool {
 	return errors.Is(err, chathub.ErrEmptyCompletion)
 }
@@ -266,11 +286,11 @@ func CooldownForCategory(cat ErrorCategory, retryAfter int, attempt int) time.Du
 }
 
 type globalCircuitState struct {
-	mu        sync.Mutex
+	mu          sync.Mutex
 	windowStart time.Time
-	total     int
-	failures  int
-	openUntil time.Time
+	total       int
+	failures    int
+	openUntil   time.Time
 }
 
 var globalCircuit = &globalCircuitState{}
@@ -350,10 +370,10 @@ func (g *globalCircuitState) Record(err error) {
 	g.mu.Unlock()
 }
 
-func GlobalCircuitIsOpen() bool { return globalCircuit.IsOpen() }
-func GlobalCircuitState() string { return globalCircuit.State() }
+func GlobalCircuitIsOpen() bool         { return globalCircuit.IsOpen() }
+func GlobalCircuitState() string        { return globalCircuit.State() }
 func GlobalCircuitOpenUntil() time.Time { return globalCircuit.OpenUntil() }
-func GlobalCircuitRecord(err error) { globalCircuit.Record(err) }
+func GlobalCircuitRecord(err error)     { globalCircuit.Record(err) }
 func ResetGlobalCircuit() {
 	globalCircuit.mu.Lock()
 	globalCircuit.windowStart = time.Time{}

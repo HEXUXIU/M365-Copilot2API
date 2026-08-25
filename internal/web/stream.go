@@ -139,7 +139,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		"offense": res.Offense, "scores": res.Scores, "conversationTransferToken": res.ConversationTransferToken,
 		"meteringInformation": res.MeteringInformation, "spokenText": res.SpokenText,
 		"storageMessageId": res.StorageMessageID,
-		"timestamps": res.Timestamps,
+		"timestamps":       res.Timestamps,
 	}); err != nil {
 		return
 	}

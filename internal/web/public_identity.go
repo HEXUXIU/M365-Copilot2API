@@ -426,8 +426,10 @@ func (f *publicIdentityStreamFilter) Flush() string {
 }
 
 const (
-	publicIdentityNeutralBufferLimit = 1024
-	publicIdentityNeutralTailBytes   = 256
+	// Keep only a short cross-chunk tail while looking for a split identity
+	// marker. Ordinary text should not wait for a sentence terminator.
+	publicIdentityNeutralBufferLimit = 256
+	publicIdentityNeutralTailBytes   = 48
 )
 
 func (f *publicIdentityStreamFilter) consume(final bool) string {
@@ -441,16 +443,98 @@ func (f *publicIdentityStreamFilter) consume(final bool) string {
 		f.pending = f.pending[end:]
 		return out
 	}
-	if len(f.pending) <= publicIdentityNeutralBufferLimit || publicSelfIdentityPattern.MatchString(f.pending) {
-		return ""
+	if publicIdentityStreamMayNeedBuffer(f.pending) {
+		if len(f.pending) <= publicIdentityNeutralBufferLimit || publicSelfIdentityPattern.MatchString(f.pending) {
+			return ""
+		}
+		cut := len(f.pending) - publicIdentityNeutralTailBytes
+		for cut > 0 && !utf8.RuneStart(f.pending[cut]) {
+			cut--
+		}
+		out := f.pending[:cut]
+		f.pending = f.pending[cut:]
+		return sanitizePublicAssistantTextWithStateForModel(out, &f.identityWritten, f.model)
 	}
-	cut := len(f.pending) - publicIdentityNeutralTailBytes
-	for cut > 0 && !utf8.RuneStart(f.pending[cut]) {
-		cut--
+	// No identity or citation prefix is in flight. Emit immediately so a
+	// normal answer does not wait for punctuation or a 1KB buffer.
+	out := f.pending
+	f.pending = ""
+	return sanitizePublicAssistantTextWithStateForModel(out, &f.identityWritten, f.model)
+}
+
+var publicIdentityStreamMarkers = []string{
+	"i am", "i'm", "im ", "my name is", "my identity is", "this assistant is", "this model is",
+	"我是", "我叫", "我的身份是", "本助手是", "本模型是", "私は", "わたしは", "저는", "나는",
+	"soy ", "je suis ", "ich bin ", "sou ", "sono ", "я ", "أنا ", "ben ", "ik ben ", "jestem ",
+	"मैं", "ฉัน", "tôi là",
+}
+
+var publicIdentityProviderPrefixes = []string{
+	"microsoft365copilot", "m365copilot", "microsoftcopilot", "microsoft", "copilot", "microsoft365", "m365", "m3",
+}
+
+func publicIdentityStreamMayNeedBuffer(value string) bool {
+	if value == "" {
+		return false
 	}
-	out := f.pending[:cut]
-	f.pending = f.pending[cut:]
-	return out
+	lower := strings.ToLower(value)
+	if (strings.Contains(lower, "<cite") && !strings.Contains(lower, "</cite>")) ||
+		(strings.Contains(value, "cite") && !strings.Contains(value, "")) {
+		return true
+	}
+	for _, marker := range publicIdentityStreamMarkers {
+		if index := strings.LastIndex(lower, marker); index >= 0 {
+			rest := strings.TrimSpace(value[index+len(marker):])
+			if rest == "" || publicProviderPrefix(rest) {
+				return true
+			}
+		}
+	}
+	trimmed := strings.TrimSpace(value)
+	if publicProviderPrefix(trimmed) {
+		return true
+	}
+	// Retain a partial marker/provider suffix when the upstream split occurs
+	// exactly inside a word (for example "I a" + "m Micro" or "Cop" + "ilot").
+	for _, marker := range publicIdentityStreamMarkers {
+		for n := 2; n <= len(marker) && n <= len(lower); n++ {
+			if strings.HasSuffix(lower, marker[:n]) {
+				return true
+			}
+		}
+	}
+	for n := 2; n <= len(lower) && n <= 32; n++ {
+		if publicProviderPrefix(strings.TrimSpace(value[len(value)-n:])) {
+			return true
+		}
+	}
+	return false
+}
+
+func publicProviderPrefix(value string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, value)
+	strippedProvider := false
+	for _, prefix := range []string{"微软推出的", "微软的", "微软"} {
+		if strings.HasPrefix(normalized, prefix) {
+			normalized = strings.TrimPrefix(normalized, prefix)
+			strippedProvider = true
+			break
+		}
+	}
+	if normalized == "" {
+		return strippedProvider
+	}
+	for _, provider := range publicIdentityProviderPrefixes {
+		if strings.HasPrefix(provider, normalized) || strings.HasPrefix(normalized, provider) {
+			return true
+		}
+	}
+	return false
 }
 
 type publicReasoningStreamFilter struct {

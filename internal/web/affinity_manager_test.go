@@ -1,0 +1,411 @@
+package web
+
+import (
+	"context"
+	"errors"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"m365-copilot2api/internal/auth"
+)
+
+type responseReadErrorStore struct {
+	affinityStore
+}
+
+func (s responseReadErrorStore) GetResponse(context.Context, string, string) (string, bool, error) {
+	return "", false, errors.New("temporary response mapping read failure")
+}
+
+func TestAffinityManagerConfirmsOnlySuccessfulExactContinuation(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+	ctx := context.Background()
+
+	firstBody := &oaiReq{Model: "gpt-5.6", Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	if first.accountID == "" || first.incremental {
+		t.Fatalf("invalid cold state: %s", first)
+	}
+	usage := first.complete(ctx, firstBody, first.accountID, "conv-1", "sess-1", oaiMsg{Role: "assistant", Content: "hi"}, 10, 2)
+	first.close()
+	if usage.Confirmed || usage.CachedTokens != 0 {
+		t.Fatalf("cold request claimed cache: %+v", usage)
+	}
+
+	secondBody := &oaiReq{Model: "gpt-5.6", Messages: []oaiMsg{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "continue"}}}
+	second, err := manager.begin(ctx, "tenant", secondBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.close()
+	second.apply(secondBody)
+	if !second.incremental || secondBody.ConversationID != "conv-1" || second.accountID != first.accountID {
+		t.Fatalf("warm continuation was not pinned: state=%s conversation=%q", second, secondBody.ConversationID)
+	}
+	usage = second.complete(ctx, secondBody, second.accountID, "conv-1", "sess-1", oaiMsg{Role: "assistant", Content: "more"}, 18, 3)
+	if !usage.Confirmed || usage.CachedTokens <= 0 {
+		t.Fatalf("successful exact continuation did not report cache: %+v", usage)
+	}
+}
+
+func TestAffinityManagerMigrationNeverClaimsCache(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	first, _ := manager.begin(ctx, "tenant", body, httptest.NewRequest("POST", "/", nil), accounts, available)
+	first.apply(body)
+	first.complete(ctx, body, first.accountID, "conv-a", "sess-a", oaiMsg{Role: "assistant", Content: "hi"}, 10, 2)
+	first.close()
+
+	nextBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "more"}}}
+	next, _ := manager.begin(ctx, "tenant", nextBody, httptest.NewRequest("POST", "/", nil), accounts, available)
+	next.apply(nextBody)
+	next.markMigration("rate_limit")
+	usage := next.complete(ctx, nextBody, "b", "conv-b", "sess-b", oaiMsg{Role: "assistant", Content: "migrated"}, 20, 3)
+	next.close()
+	if usage.Confirmed || usage.CachedTokens != 0 {
+		t.Fatalf("migration claimed cache: %+v", usage)
+	}
+}
+
+func TestAffinityManagerCASLossClearsCacheClaim(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}}
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, httptest.NewRequest("POST", "/", nil), accounts, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv", "sess", oaiMsg{Role: "assistant", Content: "hi"}, 10, 2)
+	first.close()
+
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "continue"}}}
+	state, err := manager.begin(ctx, "tenant", body, httptest.NewRequest("POST", "/", nil), accounts, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.close()
+	state.apply(body)
+	if !state.incremental || !state.hasBinding {
+		t.Fatalf("warm state was not established: state=%s", state)
+	}
+
+	current := state.binding
+	current.Generation++
+	current.HistoryDigest = "concurrent-update"
+	if ok, err := manager.fallback.CompareAndSwapBinding(ctx, state.binding.ID, state.binding.Generation, current, time.Hour); err != nil || !ok {
+		t.Fatalf("failed to create concurrent binding update: ok=%t err=%v", ok, err)
+	}
+	usage := state.complete(ctx, body, state.accountID, "conv", "sess", oaiMsg{Role: "assistant", Content: "more"}, 20, 3)
+	if usage.Confirmed || usage.CachedTokens != 0 {
+		t.Fatalf("CAS loss still claimed cache: %+v", usage)
+	}
+}
+
+func TestAffinityRouterConversationReuseToggle(t *testing.T) {
+	t.Setenv("M365_AFFINITY_REUSE_ROUTER_CONVERSATION", "")
+	if cfg := loadAffinityConfig(); cfg.ReuseRouterConversation {
+		t.Fatal("router conversation reuse must default to false")
+	}
+	t.Setenv("M365_AFFINITY_REUSE_ROUTER_CONVERSATION", "true")
+	if cfg := loadAffinityConfig(); !cfg.ReuseRouterConversation {
+		t.Fatal("router conversation reuse toggle was not enabled")
+	}
+}
+
+func TestExplicitSessionContinuesWithoutResendingHistory(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+
+	firstRequest := httptest.NewRequest("POST", "/", nil)
+	firstRequest.Header.Set(sessionHeaderName, "client-session")
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "first"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, firstRequest, accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv-a", "sess-a", oaiMsg{Role: "assistant", Content: "answer"}, 5, 2)
+	first.close()
+
+	nextRequest := httptest.NewRequest("POST", "/", nil)
+	nextRequest.Header.Set(sessionHeaderName, "client-session")
+	nextBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "next only"}}}
+	next, err := manager.begin(ctx, "tenant", nextBody, nextRequest, accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.close()
+	next.apply(nextBody)
+	if !next.incremental || nextBody.ConversationID != "conv-a" || nextBody.SessionID != "sess-a" {
+		t.Fatalf("explicit continuation lost cloud binding: state=%s body=%+v", next, nextBody)
+	}
+	usage := next.complete(ctx, nextBody, next.accountID, "conv-a", "sess-a", oaiMsg{Role: "assistant", Content: "next answer"}, 3, 2)
+	if usage.Confirmed || usage.CachedTokens != 0 {
+		t.Fatalf("explicit continuation without a proven prefix claimed cache: %+v", usage)
+	}
+}
+
+func TestToolCallHistoryReusesCloudConversation(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+	storedToolCall := map[string]any{
+		"id":   "call_weather",
+		"type": "function",
+		"function": map[string]any{
+			"name":      "get_weather",
+			"arguments": `{"city":"Beijing"}`,
+		},
+	}
+	clientToolCall := map[string]any{
+		"id":    "call_weather_rewritten",
+		"index": float64(0),
+		"type":  "function",
+		"function": map[string]any{
+			"name":      "get_weather",
+			"arguments": `{"city":"Beijing"}`,
+		},
+	}
+
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "weather in Beijing"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv-tool", "sess-tool", oaiMsg{Role: "assistant", Content: nil, ToolCalls: []map[string]any{storedToolCall}}, 20, 5)
+	firstAccount := first.accountID
+	first.close()
+
+	nextBody := &oaiReq{Messages: []oaiMsg{
+		{Role: "user", Content: "weather in Beijing"},
+		{Role: "assistant", Content: "", ToolCalls: []map[string]any{clientToolCall}},
+		{Role: "tool", ToolCallID: "call_weather_rewritten", Content: `{"temperature":26}`},
+	}}
+	next, err := manager.begin(ctx, "tenant", nextBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.close()
+	next.apply(nextBody)
+	if !next.hasBinding || !next.incremental || next.prefixCount != 2 {
+		t.Fatalf("tool history binding not resolved: state=%s", next)
+	}
+	if next.accountID != firstAccount || nextBody.ConversationID != "conv-tool" || nextBody.SessionID != "sess-tool" {
+		t.Fatalf("tool continuation changed route: account=%q body=%+v", next.accountID, nextBody)
+	}
+	usage := next.complete(ctx, nextBody, next.accountID, "conv-tool", "sess-tool", oaiMsg{Role: "assistant", Content: "26 C"}, 30, 3)
+	if !usage.Confirmed || usage.CachedTokens <= 0 {
+		t.Fatalf("tool continuation did not report confirmed cache: %+v", usage)
+	}
+}
+
+func TestSharedAccountHealthExcludesCoolingAccount(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	if err := manager.fallback.SetAccountHealth(ctx, "a", affinityAccountHealth{CooldownUntil: time.Now().Add(time.Hour)}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	state, err := manager.begin(ctx, "tenant", body, httptest.NewRequest("POST", "/", nil), []auth.AccountToken{{ID: "a"}, {ID: "b"}}, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.close()
+	if state.accountID != "b" {
+		t.Fatalf("cooling account selected: %q", state.accountID)
+	}
+}
+
+func TestPreviousResponseAliasResolvesCloudBinding(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}}
+	rootID := "resp-root"
+	firstRequest := httptest.NewRequest("POST", "/v1/responses", nil)
+	firstRequest.Header.Set(previousResponseHeader, rootID)
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "first"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, firstRequest, accounts, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv-a", "sess-a", oaiMsg{Role: "assistant", Content: "answer"}, 5, 2)
+	first.close()
+	manager.bindResponse(ctx, "tenant", "resp-next", rootID)
+
+	nextRequest := httptest.NewRequest("POST", "/v1/responses", nil)
+	nextRequest.Header.Set(previousResponseHeader, "resp-next")
+	nextBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "continue after restart"}}}
+	next, err := manager.begin(ctx, "tenant", nextBody, nextRequest, accounts, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer next.close()
+	next.apply(nextBody)
+	if !next.incremental || nextBody.ConversationID != "conv-a" || nextBody.SessionID != "sess-a" {
+		t.Fatalf("response alias did not restore binding: state=%s body=%+v", next, nextBody)
+	}
+}
+
+func TestBindResponseSkipsAliasWhenBindingCannotBeVerified(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	tenant := "tenant"
+	tenantHash := hashString(tenant)
+	rootHash := affinityExplicitHash(tenantHash, "previous_response", "resp-root")
+	aliasHash := affinityExplicitHash(tenantHash, "previous_response", "resp-alias")
+	nextHash := affinityExplicitHash(tenantHash, "previous_response", "resp-next")
+	primary := newMemoryAffinityStore(time.Hour, 100)
+	if err := primary.PutBinding(ctx, affinityBinding{ID: rootHash, TenantHash: tenantHash, AccountID: "a", ConversationID: "conv-a", SessionID: "sess-a"}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := primary.SetResponse(ctx, tenantHash, aliasHash, rootHash, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	manager.primary = responseReadErrorStore{affinityStore: primary}
+
+	manager.bindResponse(ctx, tenant, "resp-next", "resp-alias")
+
+	if bindingID, ok, err := primary.GetResponse(ctx, tenantHash, nextHash); err != nil || ok {
+		t.Fatalf("unverified response alias was stored: binding=%q ok=%t err=%v", bindingID, ok, err)
+	}
+}
+
+func TestFiftyContinuationsSerializeOnOneLock(t *testing.T) {
+	store := newMemoryAffinityStore(time.Hour, 100)
+	var active int64
+	var maximum int64
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release, err := store.Acquire(context.Background(), "tenant:one-binding", time.Second, 5*time.Second)
+			if err != nil {
+				t.Errorf("acquire: %v", err)
+				return
+			}
+			current := atomic.AddInt64(&active, 1)
+			for {
+				old := atomic.LoadInt64(&maximum)
+				if current <= old || atomic.CompareAndSwapInt64(&maximum, old, current) {
+					break
+				}
+			}
+			time.Sleep(time.Millisecond)
+			atomic.AddInt64(&active, -1)
+			release()
+		}()
+	}
+	wg.Wait()
+	if maximum != 1 {
+		t.Fatalf("same binding ran concurrently: max=%d", maximum)
+	}
+}
+
+func TestObserveModeDoesNotChangeRouting(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityObserve, TTL: time.Hour, MaxSessions: 100})
+	defer manager.close()
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "observe"}}}
+	state, err := manager.begin(context.Background(), "tenant", body, httptest.NewRequest("POST", "/", nil), []auth.AccountToken{{ID: "a"}}, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.close()
+	state.apply(body)
+	if state.proposedAccount != "a" || body.AccountID != "" || body.ConversationID != "" {
+		t.Fatalf("observe mode changed routing: state=%s body=%+v", state, body)
+	}
+}
+
+func TestRequestCancellationDoesNotDegradePrimaryAffinityStore(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100})
+	defer manager.close()
+	manager.primary = newMemoryAffinityStore(time.Hour, 100)
+	manager.primaryName = "external"
+
+	for _, err := range []error{context.Canceled, context.DeadlineExceeded} {
+		if store := manager.markStoreError(err); store != manager.primary {
+			t.Fatalf("request cancellation selected fallback store: %v", err)
+		}
+		status := manager.status()
+		if status["degraded"] != false || status["store"] != "external" {
+			t.Fatalf("request cancellation degraded primary store: err=%v status=%v", err, status)
+		}
+	}
+
+	manager.markStoreError(errors.New("primary store connection failed"))
+	status := manager.status()
+	if status["degraded"] != true || status["store"] != "memory_fallback" {
+		t.Fatalf("real store error did not select memory fallback: %v", status)
+	}
+}
+
+func TestAffinityManagerRejectsWhenNoHealthyAccountExists(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	manager.fallback.SetAccountHealth(context.Background(), "only", affinityAccountHealth{CooldownUntil: time.Now().Add(time.Hour)}, time.Hour)
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	_, err := manager.begin(context.Background(), "tenant", body, httptest.NewRequest("POST", "/", nil), []auth.AccountToken{{ID: "only"}}, func(string) bool { return true })
+	if err == nil || !strings.Contains(err.Error(), "no healthy account") {
+		t.Fatalf("expected no healthy account error, got %v", err)
+	}
+}
+
+func TestMemoryAffinityLockTimesOutAndRemovesWaiter(t *testing.T) {
+	store := newMemoryAffinityStore(time.Hour, 100)
+	release, err := store.Acquire(context.Background(), "tenant:timeout", time.Second, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := store.Acquire(ctx, "tenant:timeout", time.Second, time.Second); err == nil {
+		t.Fatal("expected lock wait cancellation")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.waiters["tenant:timeout"]) != 0 {
+		t.Fatalf("cancelled waiter remained registered: %d", len(store.waiters["tenant:timeout"]))
+	}
+}
+
+func TestMemoryAffinityBindingTTLExpiresWithoutGlobalCleanup(t *testing.T) {
+	store := newMemoryAffinityStore(time.Hour, 100)
+	store.cleanupEvery = time.Hour
+	if err := store.PutBinding(context.Background(), affinityBinding{ID: "ttl", TenantHash: "tenant", AccountID: "a", ConversationID: "c"}, 10*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if _, ok, err := store.GetBinding(context.Background(), "ttl"); err != nil || ok {
+		t.Fatalf("expired binding remained visible: ok=%t err=%v", ok, err)
+	}
+}

@@ -7,7 +7,36 @@ import (
 	"unicode/utf8"
 )
 
-func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, sendUsage bool, calls []detectedToolCall, res chathub.Result) error {
+func writeToolResponse(w http.ResponseWriter, id, model string, args ...any) error {
+	var stream, sendUsage bool
+	// Usage is always emitted for tool streams; clients rely on a terminal usage frame.
+	sendUsage = true
+	var calls []detectedToolCall
+	var res chathub.Result
+	var usageOverride map[string]any
+	if len(args) >= 4 && func() bool { _, ok := args[1].(bool); return ok }() {
+		stream, _ = args[0].(bool)
+		sendUsage, _ = args[1].(bool)
+		calls, _ = args[2].([]detectedToolCall)
+		res, _ = args[3].(chathub.Result)
+	} else if len(args) >= 3 {
+		// Legacy call shape: stream, calls, result, usage.
+		stream, _ = args[0].(bool)
+		calls, _ = args[1].([]detectedToolCall)
+		res, _ = args[2].(chathub.Result)
+		sendUsage = true
+		if len(args) > 3 {
+			usageOverride, _ = args[3].(map[string]any)
+		}
+	} else if len(args) >= 2 {
+		calls, _ = args[0].([]detectedToolCall)
+		res, _ = args[1].(chathub.Result)
+		stream = true
+		sendUsage = true
+	}
+	if len(args) >= 3 {
+		stream = true
+	}
 	toolCalls := toolCallMaps(calls)
 	msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": toolCalls}
 	if res.Reasoning != "" {
@@ -67,8 +96,12 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream bool, sen
 				emit(base(map[string]any{}, "tool_calls"))
 			}
 		}
-		if sendUsage {
-			usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": nil}}, "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}}
+		if sendUsage || stream {
+			usage := usageOverride
+			if usage == nil {
+				usage = map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
+			}
+			usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": nil}}, "usage": usage}
 			_ = sseSafeRaw(w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
 		}
 		_ = sseSafeRaw(w, flusher, "data: [DONE]\n\n")

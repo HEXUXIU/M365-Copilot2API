@@ -314,7 +314,9 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		stored = append(stored, oaiMsg{Role: "assistant", Content: text.String()})
 	}
 	s.storeResponsesHistory(tenant, id, affinitySessionID, stored)
-	s.affinity.bindResponse(r.Context(), s.affinityTenantIdentity(r), id, affinitySessionID)
+	if s.affinity != nil {
+		s.affinity.bindResponse(r.Context(), s.affinityTenantIdentity(r), id, affinitySessionID)
+	}
 }
 
 func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []byte, int, error) {

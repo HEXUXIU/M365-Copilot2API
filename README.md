@@ -363,7 +363,7 @@ curl http://127.0.0.1:4141/v1/messages \
 - Anthropic Messages：`usage.cache_read_input_tokens`
 - 流式响应：只在成功终止 usage 事件中输出
 
-`M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。Responses API 在 `off` 模式保持原有的 `extractAPIKey` 租户命名空间，滚动升级不会破坏 `previous_response_id` 查找；启用亲和后才使用哈希租户键。核心实现使用进程内存储，缓存统计保持保守值，不会把普通历史消息误报成命中。
+`M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。设置 `M365_REDIS_URL=redis://...` 后会使用 Redis 作为共享亲和存储，Redis 不可用时自动回退到进程内存储。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。Responses API 在 `off` 模式保持原有的 `extractAPIKey` 租户命名空间，滚动升级不会破坏 `previous_response_id` 查找；启用亲和后才使用哈希租户键。核心实现使用进程内存储或 Redis，缓存统计保持保守值，不会把普通历史消息误报成命中。
 
 从 `off` 切换到 `observe`/`enforce` 时，Responses API 的租户键会切换为哈希命名空间；进程内的旧 `previous_response_id` 状态不会迁移。滚动升级时应保持模式不变，或接受旧响应链需要重新建立。
 

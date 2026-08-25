@@ -2540,39 +2540,42 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				err = nil
 			}
 		}
-		if err != nil && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
-			originalErr := err
-			// Failover only when nothing pins the request to a conversation or
-			// account; a fresh chat can safely retry on the next healthy account.
-			next, nerr := s.nextHealthyAccount(acc.ID)
-			if nerr == nil {
+		if err != nil && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
+			// A host fallback is an HTTP 200 with unusable text. Retry a bounded
+			// number of healthy accounts so transient tenant/account failures do
+			// not surface as an immediate 502, while avoiding retry storms.
+			for attempt := 0; attempt < 3 && err != nil; attempt++ {
+				originalErr := err
+				next, nerr := s.nextHealthyAccount(acc.ID)
+				if nerr != nil {
+					break
+				}
 				failoverReq := answerReq
 				if body.ConversationID == resolvedConversationID {
 					failoverReq.ConversationID = ""
 					failoverReq.SessionID = ""
 				}
 				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
-				defer cancel2()
 				res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq)
+				cancel2()
+				s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
+				if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
+					s.accountPool.MarkImageLimited(acc.ID)
+				}
 				if err2 == nil {
-					s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
-					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(acc.ID)
-					}
 					s.accountPool.MarkSuccess(next.ID)
 					res = res2
 					acc = next
 					err = nil
-				} else {
-					s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
-					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(acc.ID)
-					}
-					s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
-					if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(next.ID)
-					}
-					err = err2
+					break
+				}
+				s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
+				if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
+					s.accountPool.MarkImageLimited(next.ID)
+				}
+				err = err2
+				if !(IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
+					break
 				}
 			}
 		}

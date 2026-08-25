@@ -260,6 +260,15 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 			release, err = state.store.Acquire(ctx, state.key.TenantHash+":"+lockID, m.config.LockTTL, m.config.LockWait)
 		}
 		if err != nil {
+			if errors.Is(err, errAffinityOwnerGeneration) {
+				// A local owner-generation failure must not take down the process
+				// or turn an otherwise valid request into a gateway error.
+				log.Printf("[affinity] lock owner unavailable; falling back to ordinary routing: %v", err)
+				state.enforced = false
+				state.incremental = false
+				state.releaseLock = nil
+				return state, nil
+			}
 			return nil, err
 		}
 		state.releaseLock = release

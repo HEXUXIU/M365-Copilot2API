@@ -19,6 +19,8 @@ import (
 
 const previousResponseHeader = "X-M365-Previous-Response-Id"
 
+var errAffinityOwnerGeneration = errors.New("affinity lock owner generation failed")
+
 type affinityKey struct {
 	TenantHash string
 	Hash       string
@@ -603,12 +605,12 @@ func (s *memoryAffinityStore) CompareAndSwapBinding(_ context.Context, id string
 	return true, nil
 }
 
-func randomOwner() string {
+func randomOwner() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand failed: " + err.Error())
+		return "", fmt.Errorf("%w: %v", errAffinityOwnerGeneration, err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func (s *memoryAffinityStore) Acquire(ctx context.Context, key string, ttl, wait time.Duration) (func(), error) {
@@ -618,7 +620,10 @@ func (s *memoryAffinityStore) Acquire(ctx context.Context, key string, ttl, wait
 	if wait <= 0 {
 		wait = 120 * time.Second
 	}
-	owner := randomOwner()
+	owner, err := randomOwner()
+	if err != nil {
+		return nil, err
+	}
 	deadline := time.Now().Add(wait)
 	for {
 		s.mu.Lock()

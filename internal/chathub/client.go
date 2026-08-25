@@ -43,6 +43,30 @@ var contentPolicyPatterns = []string{
 	"i apologize, i cannot",
 }
 
+// upstreamFallbackPatterns are generic host fallback messages. They arrive as
+// HTTP 200 completions with no useful answer, so callers must treat them like
+// an empty completion and retry or fail over instead of exposing the text.
+var upstreamFallbackPatterns = []string{
+	"sorry, i wasn't able to respond to that",
+	"sorry, i was not able to respond to that",
+	"sorry, it looks like i can’t respond to this",
+	"sorry, it looks like i can't respond to this",
+	"sorry, it looks like i cannot respond to this",
+}
+
+func isUpstreamFallback(text string) bool {
+	low := strings.ToLower(strings.TrimSpace(text))
+	if low == "" || len(low) > 240 {
+		return false
+	}
+	for _, pattern := range upstreamFallbackPatterns {
+		if strings.Contains(low, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsContentPolicyBlock(text string) bool {
 	if len(text) > 300 {
 		return false
@@ -179,38 +203,38 @@ type Account struct {
 }
 
 type Request struct {
-	Text           string
-	Tone           string
-	ConversationID string
-	SessionID      string
-	Attachments    []Attachment
-	Tools          []Tool
-	ToolChoice     any
-	MCPServerURL   string
-	Started        bool
-	ConversationSignature   string
-	PreviousMessages        []ContextMessage
-	LicenseType             string
-	Scenario                string
-	ConnectedFederatedIDs   []string
-	FeatureFlags            FeatureFlags
-	DisableMemory           bool
-	Locale                  string
-	Market                  string
-	TimeZone                string
-	TimeZoneOffset          int
-	DeviceOS                string
+	Text                  string
+	Tone                  string
+	ConversationID        string
+	SessionID             string
+	Attachments           []Attachment
+	Tools                 []Tool
+	ToolChoice            any
+	MCPServerURL          string
+	Started               bool
+	ConversationSignature string
+	PreviousMessages      []ContextMessage
+	LicenseType           string
+	Scenario              string
+	ConnectedFederatedIDs []string
+	FeatureFlags          FeatureFlags
+	DisableMemory         bool
+	Locale                string
+	Market                string
+	TimeZone              string
+	TimeZoneOffset        int
+	DeviceOS              string
 }
 
 type FeatureFlags struct {
-	MemoryV2            bool
-	DeepWork            bool
-	ComputerUse         bool
-	RealtimeVoice       bool
+	MemoryV2             bool
+	DeepWork             bool
+	ComputerUse          bool
+	RealtimeVoice        bool
 	SystemPromptOverride bool
-	DesignerImageGen4o  bool
-	CodeCanvas          bool
-	SydneyReconnect     bool
+	DesignerImageGen4o   bool
+	CodeCanvas           bool
+	SydneyReconnect      bool
 }
 
 type ContextMessage struct {
@@ -236,10 +260,10 @@ type StreamEvent struct {
 type StreamHandler func(StreamEvent) error
 
 type Timestamps struct {
-	RequestSent                string `json:"requestSent"`
+	RequestSent                  string `json:"requestSent"`
 	FirstServiceResponseReceived string `json:"firstServiceResponseReceived,omitempty"`
-	FirstTokenReceived         string `json:"firstTokenReceived,omitempty"`
-	LastTokenReceived          string `json:"lastTokenReceived,omitempty"`
+	FirstTokenReceived           string `json:"firstTokenReceived,omitempty"`
+	LastTokenReceived            string `json:"lastTokenReceived,omitempty"`
 }
 
 type Result struct {
@@ -897,21 +921,21 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					}
 					if res, ok := item["result"].(map[string]any); ok {
 						rawResult, _ = res["value"].(string)
-				if msg, ok := res["message"].(string); ok {
-						final = msg
-						if imageLimitDetected(final) {
-							returnConn = false
-							return Result{}, ErrImageLimit
+						if msg, ok := res["message"].(string); ok {
+							final = msg
+							if imageLimitDetected(final) {
+								returnConn = false
+								return Result{}, ErrImageLimit
+							}
+							if rateLimited(final) {
+								returnConn = false
+								return Result{}, ErrRateLimitNotice
+							}
+							if IsContentPolicyBlock(final) {
+								returnConn = false
+								return Result{}, ErrOffensiveContent
+							}
 						}
-						if rateLimited(final) {
-							returnConn = false
-							return Result{}, ErrRateLimitNotice
-						}
-						if IsContentPolicyBlock(final) {
-							returnConn = false
-							return Result{}, ErrOffensiveContent
-						}
-					}
 					}
 				}
 				// completion frame often follows; keep reading a bit but we already have content
@@ -961,6 +985,10 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 				if IsContentPolicyBlock(text) {
 					returnConn = false
 					return Result{}, ErrOffensiveContent
+				}
+				if isUpstreamFallback(text) {
+					returnConn = false
+					return Result{}, ErrEmptyCompletion
 				}
 				result := Result{
 					Text:                      text,
@@ -1271,12 +1299,12 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 			"timeZoneOffset": tzOffset,
 			"timeZone":       tz,
 		},
-		"locale":            locale,
-		"market":            market,
-		"messageType":       "Chat",
-		"experienceType":    "Default",
-		"adaptiveCards":     []any{},
-		"clientPreferences": map[string]any{},
+		"locale":                        locale,
+		"market":                        market,
+		"messageType":                   "Chat",
+		"experienceType":                "Default",
+		"adaptiveCards":                 []any{},
+		"clientPreferences":             map[string]any{},
 		"connectedFederatedConnections": fcAny,
 	}
 	// The browser does not send an OpenAI attachments array to ChatHub. It

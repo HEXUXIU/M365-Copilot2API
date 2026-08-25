@@ -240,12 +240,32 @@ if not raw then return 0 end
 local current = cjson.decode(raw)
 if tonumber(current.generation) ~= tonumber(ARGV[1]) then return 0 end
 if current.history_digest and current.history_digest ~= '' then
-  redis.call('DEL', ARGV[4] .. current.tenant_hash .. ':' .. current.history_digest)
+  local history_key = ARGV[4] .. current.tenant_hash .. ':' .. current.history_digest
+  local history_raw = redis.call('GET', history_key)
+  if history_raw then
+    local ids = cjson.decode(history_raw)
+    local kept = {}
+    for _, id in ipairs(ids) do
+      if id ~= current.id then table.insert(kept, id) end
+    end
+    if #kept > 0 then
+      redis.call('SET', history_key, cjson.encode(kept), 'PX', ARGV[3])
+    else
+      redis.call('DEL', history_key)
+    end
+  end
 end
 redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
 local replacement = cjson.decode(ARGV[2])
 if replacement.history_digest and replacement.history_digest ~= '' then
-  redis.call('SET', ARGV[4] .. replacement.tenant_hash .. ':' .. replacement.history_digest, replacement.id, 'PX', ARGV[3])
+  local replacement_key = ARGV[4] .. replacement.tenant_hash .. ':' .. replacement.history_digest
+  local replacement_raw = redis.call('GET', replacement_key)
+  local ids = {}
+  if replacement_raw then ids = cjson.decode(replacement_raw) end
+  local found = false
+  for _, id in ipairs(ids) do if id == replacement.id then found = true end end
+  if not found then table.insert(ids, replacement.id) end
+  redis.call('SET', replacement_key, cjson.encode(ids), 'PX', ARGV[3])
 end
 redis.call('ZADD', KEYS[2], ARGV[5], replacement.id)
 return 1

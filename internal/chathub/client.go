@@ -1218,6 +1218,9 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		if !strings.Contains(strings.ToLower(imageData[:comma]), ";base64") {
 			return fmt.Errorf("image URL is not base64")
 		}
+		if base64.StdEncoding.DecodedLen(len(encoded)) > maxAttachmentMiB<<20 {
+			return fmt.Errorf("image exceeds %d MiB limit", maxAttachmentMiB)
+		}
 		if _, err := base64.StdEncoding.DecodeString(encoded); err != nil {
 			return fmt.Errorf("decode image: %w", err)
 		}
@@ -1259,18 +1262,15 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		}
 		resp, err := c.HTTPClient.Do(req)
 		if err != nil {
-			log.Printf("[upload] http error: %v", err)
-			continue
+			return fmt.Errorf("attachment %d: upload request: %w", i, err)
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		resp.Body.Close()
 		if readErr != nil {
-			log.Printf("[upload] read error: %v", readErr)
-			continue
+			return fmt.Errorf("attachment %d: read upload response: %w", i, readErr)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			log.Printf("[upload] status %s: %s", resp.Status, strings.TrimSpace(string(data[:minInt(len(data), 500)])))
-			continue
+			return fmt.Errorf("attachment %d: upload HTTP %d: %s", i, resp.StatusCode, strings.TrimSpace(string(data[:minInt(len(data), 500)])))
 		}
 		var out struct {
 			DocID    string `json:"docId"`
@@ -1281,12 +1281,10 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 			} `json:"result"`
 		}
 		if err := json.Unmarshal(data, &out); err != nil {
-			log.Printf("[upload] json error: %v", err)
-			continue
+			return fmt.Errorf("attachment %d: decode upload response: %w", i, err)
 		}
 		if out.Result.Value != "Success" || out.DocID == "" {
-			log.Printf("[upload] failed: %s", strings.TrimSpace(string(data)))
-			continue
+			return fmt.Errorf("attachment %d: upload rejected: %s", i, strings.TrimSpace(string(data[:minInt(len(data), 500)])))
 		}
 		a.DocID = out.DocID
 		a.FileType = strings.TrimPrefix(strings.ToLower(out.FileType), ".")
@@ -1340,9 +1338,15 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 		"deviceType":            "Desktop",
 		"clientPlatformVersion": "10",
 	}
+	payloadAttachments := make([]Attachment, 0, len(req.Attachments))
+	for _, attachment := range req.Attachments {
+		if attachment.Type != "image" {
+			payloadAttachments = append(payloadAttachments, attachment)
+		}
+	}
 	message := map[string]any{
 		"author":                "user",
-		"attachments":           req.Attachments,
+		"attachments":           payloadAttachments,
 		"inputMethod":           "Keyboard",
 		"text":                  text,
 		"entityAnnotationTypes": []string{"People", "File", "Event", "Email", "TeamsMessage"},
@@ -1393,7 +1397,7 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 	// implementation merged imageUrl/imageBase64 directly into message rather
 	// than relying solely on the newer attachments array.
 	for _, a := range req.Attachments {
-		if a.Type != "image" || a.URL == "" {
+		if a.Type != "image" || a.URL == "" || a.DocID != "" {
 			continue
 		}
 		if strings.HasPrefix(a.URL, "data:") {

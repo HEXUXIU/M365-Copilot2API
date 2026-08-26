@@ -15,3 +15,17 @@ func TestToolPlanningModeAcceptsNative(t *testing.T) {
 		t.Fatalf("toolPlanningMode(native)=%q, want native", got)
 	}
 }
+
+func TestToolProtocolModeDefaultsToLegacy(t *testing.T) {
+	for _, raw := range []string{"", "unknown", " legacy "} {
+		if got := toolProtocolMode(raw); got != "legacy" {
+			t.Fatalf("toolProtocolMode(%q)=%q, want legacy", raw, got)
+		}
+	}
+}
+
+func TestToolProtocolModeAcceptsPiCompat(t *testing.T) {
+	if got := toolProtocolMode(" PI_COMPAT "); got != "pi_compat" {
+		t.Fatalf("toolProtocolMode(pi_compat)=%q", got)
+	}
+}

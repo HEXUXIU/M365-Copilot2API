@@ -45,6 +45,64 @@ func TestResponsesOpenAIMapsCacheKeyAndIgnoresReasoningHistory(t *testing.T) {
 	}
 }
 
+func TestNormalizeResponsesToolHistoryMergesParallelCallsAndKeepsText(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "assistant", Content: "checking"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_1", "type": "function"}}},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_2", "type": "function"}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "one"},
+		{Role: "tool", ToolCallID: "call_2", Content: "two"},
+	}
+	got, err := normalizeResponsesToolHistory(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0].Role != "assistant" || contentToString(got[0].Content) != "checking" || len(got[0].ToolCalls) != 2 {
+		t.Fatalf("normalized=%#v", got)
+	}
+	if err := validateToolConversation(got); err != nil {
+		t.Fatalf("normalized history is invalid: %v", err)
+	}
+}
+
+func TestNormalizeResponsesToolHistoryRepairsEmptyAndMissingOutputs(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_empty"}, {"id": "call_missing"}}},
+		{Role: "tool", ToolCallID: "call_empty", Content: ""},
+	}
+	got, err := normalizeResponsesToolHistory(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || contentToString(got[1].Content) != emptyToolOutputPlaceholder || contentToString(got[2].Content) != missingToolOutputPlaceholder {
+		t.Fatalf("normalized=%#v", got)
+	}
+	if err := validateToolConversation(got); err != nil {
+		t.Fatalf("normalized history is invalid: %v", err)
+	}
+}
+
+func TestNormalizeResponsesToolHistoryRejectsBrokenIDs(t *testing.T) {
+	tests := [][]oaiMsg{
+		{{Role: "assistant", ToolCalls: []map[string]any{{"id": ""}}}},
+		{{Role: "tool", ToolCallID: "orphan", Content: "result"}},
+		{{Role: "assistant", ToolCalls: []map[string]any{{"id": "same"}, {"id": "same"}}}},
+	}
+	for _, messages := range tests {
+		if _, err := normalizeResponsesToolHistory(messages); err == nil {
+			t.Fatalf("expected protocol error for %#v", messages)
+		}
+	}
+}
+
+func TestAppendResponsesAssistantHistoryPreservesMixedOutput(t *testing.T) {
+	calls := []map[string]any{{"id": "call_1", "type": "function"}}
+	got := appendResponsesAssistantHistory([]oaiMsg{{Role: "user", Content: "go"}}, "working", calls)
+	if len(got) != 2 || got[1].Content != "working" || len(got[1].ToolCalls) != 1 {
+		t.Fatalf("history=%#v", got)
+	}
+}
+
 func TestResponsesUsageEstimateIsNonZeroForText(t *testing.T) {
 	usage := estimateResponsesUsage("gpt-5.5", []oaiMsg{{Role: "user", Content: "hello"}}, nil, nil, "world").Values
 	if usage["input_tokens"].(int) <= 0 || usage["output_tokens"].(int) <= 0 || usage["total_tokens"].(int) <= 0 {
@@ -107,6 +165,21 @@ func TestResponsesResultIncludesUsage(t *testing.T) {
 	m365, ok := response["m365"].(map[string]any)
 	if !ok || m365["usage_source"] != usageSourceTiktoken || m365["usage_estimate_scope"] != "visible_request_and_completion" {
 		t.Fatalf("missing usage source: %#v", response)
+	}
+}
+
+func TestResponsesResultPreservesMixedTextAndTools(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeResponsesResult(rr, "gpt-5.6-sol", false, map[string]any{"choices": []any{map[string]any{"message": map[string]any{
+		"content": "checking", "tool_calls": []any{map[string]any{"id": "call_1", "type": "function", "function": map[string]any{"name": "weather", "arguments": `{}`}}},
+	}}}})
+	var response map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	output, _ := response["output"].([]any)
+	if len(output) != 2 || output[0].(map[string]any)["type"] != "message" || output[1].(map[string]any)["type"] != "function_call" {
+		t.Fatalf("mixed output=%#v", output)
 	}
 }
 

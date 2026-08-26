@@ -645,6 +645,14 @@ if (response.output_text) {
               </label>
             </div>
           </div>
+          <div class="form-group">
+            <label class="form-label" for="setToolProtocolMode">Tool protocol</label>
+            <select class="form-input" id="setToolProtocolMode">
+              <option value="legacy">Legacy</option>
+              <option value="pi_compat">Pi compatible</option>
+            </select>
+            <p class="form-hint">Pi compatible uses a single router decision and repairs incomplete Responses tool history.</p>
+          </div>
           <div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select><p class="form-hint">Choose the language used by the administration console.</p></div>
           <div style="margin-top:16px"><button class="btn primary" onclick="saveSettings()">Save settings</button></div>
         </div></div>
@@ -1636,6 +1644,7 @@ async function loadSettings(){
     $('setListen').value=v.listenAddress||'';
     $('setTimeout').value=v.chatTimeoutSeconds||120;
     $('setStickyFullContext').checked=v.stickyFullContext!==false;
+    $('setToolProtocolMode').value=v.toolProtocolMode==='pi_compat'?'pi_compat':'legacy';
     setCacheStrategy(v.cacheStrategy);
   }catch(e){showNotice(e.message,'error');}
 }
@@ -1648,6 +1657,7 @@ async function saveSettings(){
     if(timeout)body.chatTimeoutSeconds=parseInt(timeout);
     body.cacheStrategy=currentCacheStrategy;
     body.stickyFullContext=$('setStickyFullContext').checked;
+    body.toolProtocolMode=$('setToolProtocolMode').value;
     await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
     showNotice('设置已保存','success');
   }catch(e){showNotice(e.message,'error');}

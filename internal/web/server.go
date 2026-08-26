@@ -1586,6 +1586,8 @@ func writeStreamTerminal(sw *sseWriter, finishChunk map[string]any, metrics stri
 
 func contentToString(c any) string {
 	switch v := c.(type) {
+	case nil:
+		return ""
 	case string:
 		return v
 	case []any:
@@ -1662,7 +1664,7 @@ func normalizeLegacyTools(body *oaiReq) {
 	}
 }
 
-func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedger, planningMode string, mcpServerURL string, cfg runtimeSettings, flags chathub.FeatureFlags, locale chathubLocale, disableMemory bool) chathub.Request {
+func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedger, planningMode, protocolMode, mcpServerURL string, cfg runtimeSettings, flags chathub.FeatureFlags, locale chathubLocale, disableMemory bool) chathub.Request {
 	if len(ledger.Completed) > 0 || len(ledger.Pending) > 0 {
 		answerPrompt += "\n" + ledger.RouterContext()
 	}
@@ -1674,7 +1676,7 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 		req.Tools = body.Tools
 		req.ToolChoice = body.ToolChoice
 	}
-	if mcpServerURL != "" {
+	if mcpServerURL != "" && !(protocolMode == "pi_compat" && planningMode == "router") {
 		req.Tools = body.Tools
 		if req.ToolChoice == nil {
 			req.ToolChoice = body.ToolChoice
@@ -1700,7 +1702,9 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 			mcp.GlobalToolRegistry.MergeTools(mcpTools)
 		}
 	}
-	req.MCPServerURL = mcpServerURL
+	if !(protocolMode == "pi_compat" && planningMode == "router") {
+		req.MCPServerURL = mcpServerURL
+	}
 	if cfg.CacheStrategy == "sticky" || len(req.Tools) > 0 || req.MCPServerURL != "" {
 		req.DisablePool = true
 	}
@@ -1745,6 +1749,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	normalizeLegacyTools(&body)
 	body.ConversationID = firstNonEmpty(body.ConversationID, body.ConversationIDC)
 	body.SessionID = firstNonEmpty(body.SessionID, body.SessionIDC)
+	if s.settings.get().ToolProtocolMode == "pi_compat" {
+		normalizeEmptyToolResults(body.Messages)
+	}
 	log.Printf("[req-trace] id=%s stage=body_parsed stream=%t messages=%d tools=%d choice=%s raw_bytes=%d", requestID, body.Stream, len(body.Messages), len(body.Tools), normalizedToolChoiceMode(body.ToolChoice), len(raw))
 	if err := validateToolConversation(body.Messages); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", err.Error())
@@ -1959,6 +1966,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		return valid, len(rejected)
 	}
 	planningMode := s.settings.get().ToolPlanningMode
+	protocolMode := s.settings.get().ToolProtocolMode
 	toolCfg := s.settings.get()
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
@@ -2031,7 +2039,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Stream {
-		answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
+		answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, protocolMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
 		answerPrompt = answerReq.Text
 		log.Printf("[req-trace] id=%s stage=answer_start prompt_len=%d native_tools=%d mcp=%s", requestID, len(answerPrompt), len(answerReq.Tools), mcpServerURL)
 		id := "chatcmpl-" + uuid.NewString()
@@ -2428,7 +2436,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			return
 		}
 	}
-	answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
+	answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, protocolMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
 	answerPrompt = answerReq.Text
 	var res chathub.Result
 	if body.Stream {

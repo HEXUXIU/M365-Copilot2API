@@ -73,3 +73,20 @@ func TestAnthropicToolSSEEvents(t *testing.T) {
 		}
 	}
 }
+
+func TestAnthropicResultPreservesMixedTextAndTools(t *testing.T) {
+	src := toolSource()
+	choices := src["choices"].([]any)
+	message := choices[0].(map[string]any)["message"].(map[string]any)
+	message["content"] = "checking"
+	rr := httptest.NewRecorder()
+	writeAnthropicResult(rr, "m", false, src, nil, "")
+	var response map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	blocks, _ := response["content"].([]any)
+	if len(blocks) != 2 || blocks[0].(map[string]any)["type"] != "text" || blocks[1].(map[string]any)["type"] != "tool_use" {
+		t.Fatalf("mixed anthropic output=%#v", response)
+	}
+}

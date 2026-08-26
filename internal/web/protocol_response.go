@@ -31,7 +31,43 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 	if reasoning, _ := msg["reasoning_content"].(string); reasoning != "" {
 		blocks = append(blocks, map[string]any{"type": "thinking", "thinking": reasoning, "signature": ""})
 	}
-	if calls, ok := msg["tool_calls"].([]any); ok {
+	switch content := msg["content"].(type) {
+	case []any:
+		for _, raw := range content {
+			part, _ := raw.(map[string]any)
+			switch part["type"] {
+			case "text":
+				if t, _ := part["text"].(string); t != "" {
+					blocks = append(blocks, map[string]any{"type": "text", "text": t})
+				}
+			case "image_url":
+				img, _ := part["image_url"].(map[string]any)
+				if u, _ := img["url"].(string); u != "" {
+					if strings.HasPrefix(u, "data:") {
+						parts := strings.SplitN(u, ",", 2)
+						meta := parts[0]
+						b64 := ""
+						if len(parts) == 2 {
+							b64 = parts[1]
+						}
+						media := strings.TrimPrefix(meta, "data:")
+						media = strings.SplitN(media, ";", 2)[0]
+						blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": media, "data": b64}})
+					} else {
+						blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": u}})
+					}
+				}
+			}
+		}
+	case string:
+		if content != "" {
+			blocks = append(blocks, map[string]any{"type": "text", "text": content})
+		}
+	case nil:
+	default:
+		blocks = append(blocks, map[string]any{"type": "text", "text": fmt.Sprint(content)})
+	}
+	if calls, ok := msg["tool_calls"].([]any); ok && len(calls) > 0 {
 		stop = "tool_use"
 		for _, raw := range calls {
 			tc, _ := raw.(map[string]any)
@@ -42,41 +78,9 @@ func writeAnthropicResult(w http.ResponseWriter, model string, stream bool, src 
 			}
 			blocks = append(blocks, map[string]any{"type": "tool_use", "id": tc["id"], "name": fn["name"], "input": input})
 		}
-	} else {
-		switch content := msg["content"].(type) {
-		case []any:
-			for _, raw := range content {
-				part, _ := raw.(map[string]any)
-				switch part["type"] {
-				case "text":
-					if t, _ := part["text"].(string); t != "" {
-						blocks = append(blocks, map[string]any{"type": "text", "text": t})
-					}
-				case "image_url":
-					img, _ := part["image_url"].(map[string]any)
-					if u, _ := img["url"].(string); u != "" {
-						if strings.HasPrefix(u, "data:") {
-							parts := strings.SplitN(u, ",", 2)
-							meta := parts[0]
-							b64 := ""
-							if len(parts) == 2 {
-								b64 = parts[1]
-							}
-							media := strings.TrimPrefix(meta, "data:")
-							media = strings.SplitN(media, ";", 2)[0]
-							blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": media, "data": b64}})
-						} else {
-							blocks = append(blocks, map[string]any{"type": "image", "source": map[string]any{"type": "url", "url": u}})
-						}
-					}
-				}
-			}
-		default:
-			blocks = append(blocks, map[string]any{"type": "text", "text": fmt.Sprint(content)})
-		}
-		if len(blocks) == 0 {
-			blocks = append(blocks, map[string]any{"type": "text", "text": ""})
-		}
+	}
+	if len(blocks) == 0 {
+		blocks = append(blocks, map[string]any{"type": "text", "text": ""})
 	}
 	_ = finish
 	if usage == nil {

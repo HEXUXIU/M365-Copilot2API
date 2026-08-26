@@ -22,7 +22,12 @@ func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src 
 			"summary": []any{map[string]any{"type": "summary_text", "text": reasoning}},
 		})
 	}
-	if calls, ok := msg["tool_calls"].([]any); ok {
+	calls, hasCalls := msg["tool_calls"].([]any)
+	if text, _ := msg["content"].(string); text != "" || !hasCalls || len(calls) == 0 {
+		messageID := "msg_" + uuid.NewString()
+		output = append(output, map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}})
+	}
+	if hasCalls {
 		for _, raw := range calls {
 			tc, _ := raw.(map[string]any)
 			fn, _ := tc["function"].(map[string]any)
@@ -32,10 +37,6 @@ func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src 
 			}
 			output = append(output, map[string]any{"type": "function_call", "id": "fc_" + uuid.NewString(), "call_id": tc["id"], "name": fn["name"], "arguments": fn["arguments"], "status": "completed"})
 		}
-	} else {
-		text, _ := msg["content"].(string)
-		messageID := "msg_" + uuid.NewString()
-		output = append(output, map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}})
 	}
 	usage, _ := src["usage"].(map[string]any)
 	usageSource, _ := src["m365_usage_source"].(string)

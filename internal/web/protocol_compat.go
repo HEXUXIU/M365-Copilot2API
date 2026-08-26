@@ -30,6 +30,116 @@ type responsesRequest struct {
 
 const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`
 
+const (
+	emptyToolOutputPlaceholder   = "(no tool output)"
+	missingToolOutputPlaceholder = "Tool execution did not return a result."
+)
+
+// normalizeResponsesToolHistory makes reconstructed Responses items a valid
+// OpenAI tool conversation. The caller's original input remains untouched so
+// affinity/cache digests continue to describe the public request exactly.
+func normalizeResponsesToolHistory(messages []oaiMsg) ([]oaiMsg, error) {
+	out := make([]oaiMsg, 0, len(messages)+2)
+	pending := make(map[string]struct{})
+	pendingOrder := make([]string, 0)
+	completed := make(map[string]struct{})
+
+	flushMissing := func() {
+		for _, id := range pendingOrder {
+			if _, ok := pending[id]; !ok {
+				continue
+			}
+			out = append(out, oaiMsg{Role: "tool", ToolCallID: id, Content: missingToolOutputPlaceholder})
+			delete(pending, id)
+			completed[id] = struct{}{}
+		}
+		pendingOrder = pendingOrder[:0]
+	}
+
+	for i, message := range messages {
+		if message.Role == "assistant" {
+			// Responses represents message and function-call output items
+			// separately. They still belong to one assistant turn.
+			if len(out) > 0 && out[len(out)-1].Role == "assistant" && (len(out[len(out)-1].ToolCalls) > 0 || len(message.ToolCalls) > 0) {
+				last := &out[len(out)-1]
+				if strings.TrimSpace(contentToString(message.Content)) != "" {
+					if strings.TrimSpace(contentToString(last.Content)) == "" {
+						last.Content = message.Content
+					} else {
+						last.Content = contentToString(last.Content) + contentToString(message.Content)
+					}
+				}
+				for _, call := range message.ToolCalls {
+					id, _ := call["id"].(string)
+					id = strings.TrimSpace(id)
+					if id == "" {
+						return nil, fmt.Errorf("assistant tool call missing call_id at index %d", i)
+					}
+					if _, ok := pending[id]; ok {
+						return nil, fmt.Errorf("duplicate tool call_id: %s", id)
+					}
+					if _, ok := completed[id]; ok {
+						return nil, fmt.Errorf("duplicate tool call_id: %s", id)
+					}
+					call["id"] = id
+					last.ToolCalls = append(last.ToolCalls, call)
+					pending[id] = struct{}{}
+					pendingOrder = append(pendingOrder, id)
+				}
+				continue
+			}
+			if len(pending) > 0 {
+				flushMissing()
+			}
+			for _, call := range message.ToolCalls {
+				id, _ := call["id"].(string)
+				id = strings.TrimSpace(id)
+				if id == "" {
+					return nil, fmt.Errorf("assistant tool call missing call_id at index %d", i)
+				}
+				if _, ok := completed[id]; ok {
+					return nil, fmt.Errorf("duplicate tool call_id: %s", id)
+				}
+				if _, ok := pending[id]; ok {
+					return nil, fmt.Errorf("duplicate tool call_id: %s", id)
+				}
+				call["id"] = id
+				pending[id] = struct{}{}
+				pendingOrder = append(pendingOrder, id)
+			}
+			out = append(out, message)
+			continue
+		}
+
+		if message.Role == "tool" {
+			id := strings.TrimSpace(message.ToolCallID)
+			if id == "" {
+				return nil, fmt.Errorf("tool result missing call_id at index %d", i)
+			}
+			if _, ok := pending[id]; !ok {
+				return nil, fmt.Errorf("tool result has no matching call_id: %s", id)
+			}
+			if strings.TrimSpace(contentToString(message.Content)) == "" {
+				message.Content = emptyToolOutputPlaceholder
+			}
+			message.ToolCallID = id
+			delete(pending, id)
+			completed[id] = struct{}{}
+			out = append(out, message)
+			continue
+		}
+
+		if len(pending) > 0 {
+			flushMissing()
+		}
+		out = append(out, message)
+	}
+	if len(pending) > 0 {
+		flushMissing()
+	}
+	return out, nil
+}
+
 func (r responsesRequest) openAI() (oaiReq, error) {
 	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User, PromptCacheKey: r.PromptCacheKey}
 	if r.Temperature != nil {

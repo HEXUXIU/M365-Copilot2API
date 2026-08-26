@@ -2,6 +2,14 @@ package web
 
 import "fmt"
 
+func normalizeEmptyToolResults(messages []oaiMsg) {
+	for i := range messages {
+		if messages[i].Role == "tool" && contentToString(messages[i].Content) == "" {
+			messages[i].Content = emptyToolOutputPlaceholder
+		}
+	}
+}
+
 // validateToolConversation enforces the OpenAI tool protocol without making
 // assumptions about what a tool does. Every assistant call must be followed by
 // exactly one matching tool result before another model turn is requested.

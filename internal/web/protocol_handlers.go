@@ -110,6 +110,10 @@ func (p *pipeResponseWriter) Flush() {}
 // streamResponsesAdapter converts the internal OpenAI SSE incrementally instead
 // of buffering the entire completion in httptest.ResponseRecorder.
 func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string) {
+	s.streamResponsesAdapterWithRunner(w, r, o, model, responseID, affinitySessionID, tenant, s.openaiChat)
+}
+
+func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, run func(http.ResponseWriter, *http.Request)) {
 	o.Stream = true
 	b, _ := json.Marshal(o)
 	r2 := r.Clone(r.Context())
@@ -117,6 +121,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	r2.Body = io.NopCloser(bytes.NewReader(b))
 	r2.ContentLength = int64(len(b))
 	pr, pw := io.Pipe()
+	defer pr.Close()
 	irw := &pipeResponseWriter{h: make(http.Header), w: pw}
 	innerDone := make(chan struct{})
 	go func() {
@@ -127,7 +132,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			_ = pw.Close()
 			close(innerDone)
 		}()
-		s.openaiChat(irw, r2)
+		run(irw, r2)
 	}()
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -167,6 +172,9 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	}
 	calls := map[int]*tcState{}
 	var innerUsage map[string]any
+	innerFinishReason := ""
+	innerError := ""
+	sawInnerDone := false
 	scanner := bufio.NewScanner(pr)
 	scanner.Buffer(make([]byte, 4096), 2<<20)
 	for scanner.Scan() {
@@ -174,7 +182,11 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			return
 		}
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		if line == "data: [DONE]" {
+			sawInnerDone = true
 			continue
 		}
 		var chunk map[string]any
@@ -184,11 +196,20 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		if usage, ok := chunk["usage"].(map[string]any); ok {
 			innerUsage = usage
 		}
+		if inner, ok := chunk["error"].(map[string]any); ok {
+			innerError = strings.TrimSpace(fmt.Sprint(inner["message"]))
+			if innerError == "" {
+				innerError = "inner chat stream returned an error"
+			}
+		}
 		choices, _ := chunk["choices"].([]any)
 		if len(choices) == 0 {
 			continue
 		}
 		choice, _ := choices[0].(map[string]any)
+		if finish, ok := choice["finish_reason"].(string); ok && finish != "" {
+			innerFinishReason = finish
+		}
 		delta, _ := choice["delta"].(map[string]any)
 		if part, ok := delta["reasoning_content"].(string); ok && part != "" {
 			if !reasoningStarted {
@@ -255,16 +276,29 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	<-innerDone
-	if scanner.Err() != nil || irw.status >= http.StatusBadRequest {
+	if scanner.Err() != nil || irw.status >= http.StatusBadRequest || innerError != "" || !sawInnerDone || innerFinishReason == "" || innerFinishReason == "error" {
 		status := irw.status
-		if status == 0 {
+		if status < http.StatusBadRequest {
 			status = http.StatusBadGateway
+		}
+		message := innerError
+		if message == "" {
+			switch {
+			case scanner.Err() != nil:
+				message = "inner chat stream read failed: " + scanner.Err().Error()
+			case !sawInnerDone || innerFinishReason == "":
+				message = "inner chat stream ended before its terminal event"
+			case innerFinishReason == "error":
+				message = "inner chat stream finished with an error"
+			default:
+				message = "inner chat request failed"
+			}
 		}
 		emit("response.failed", map[string]any{
 			"type": "response.failed",
 			"response": map[string]any{
 				"id": id, "object": "response", "status": "failed", "model": model,
-				"error": map[string]any{"code": status, "message": "inner chat request failed"},
+				"error": map[string]any{"code": status, "message": message},
 			},
 		})
 		return
@@ -281,6 +315,18 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			},
 		})
 		return
+	}
+	for _, call := range calls {
+		if call == nil || strings.TrimSpace(call.ID) == "" || strings.TrimSpace(call.Name) == "" {
+			emit("response.failed", map[string]any{
+				"type": "response.failed",
+				"response": map[string]any{
+					"id": id, "object": "response", "status": "failed", "model": model,
+					"error": map[string]any{"code": "invalid_tool_call", "message": "upstream tool call is missing call_id or name"},
+				},
+			})
+			return
+		}
 	}
 	outputByIndex := map[int]any{}
 	if reasoningStarted {
@@ -317,7 +363,8 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			emit("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "output_index": st.OutputIndex, "item_id": st.ItemID, "arguments": st.Args})
 			emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": st.OutputIndex, "item": item})
 		}
-	} else if text.Len() > 0 {
+	}
+	if text.Len() > 0 {
 		if !textStarted {
 			textStarted = true
 			textOutputIndex = allocateOutputIndex()
@@ -353,19 +400,31 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": usage, "m365": localUsageMetadata(source)}
 	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
 	stored := append([]oaiMsg(nil), o.Messages...)
+	var converted []map[string]any
 	if len(calls) > 0 {
-		converted := make([]map[string]any, 0, len(calls))
-		for _, call := range calls {
+		keys := make([]int, 0, len(calls))
+		for key := range calls {
+			keys = append(keys, key)
+		}
+		sort.Ints(keys)
+		converted = make([]map[string]any, 0, len(calls))
+		for _, key := range keys {
+			call := calls[key]
 			converted = append(converted, map[string]any{"id": call.ID, "type": call.Type, "function": map[string]any{"name": call.Name, "arguments": call.Args}})
 		}
-		stored = append(stored, oaiMsg{Role: "assistant", ToolCalls: converted})
-	} else {
-		stored = append(stored, oaiMsg{Role: "assistant", Content: text.String()})
 	}
+	stored = appendResponsesAssistantHistory(stored, text.String(), converted)
 	s.storeResponsesHistory(tenant, id, affinitySessionID, stored)
 	if s.affinity != nil {
 		s.affinity.bindResponse(r.Context(), s.affinityTenantIdentity(r), id, affinitySessionID)
 	}
+}
+
+func appendResponsesAssistantHistory(messages []oaiMsg, text string, calls []map[string]any) []oaiMsg {
+	if text == "" && len(calls) == 0 {
+		return messages
+	}
+	return append(messages, oaiMsg{Role: "assistant", Content: text, ToolCalls: calls})
 }
 
 func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []byte, int, error) {
@@ -483,10 +542,18 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		o.Messages = append(messages, o.Messages...)
 	}
+	if s.settings != nil && s.settings.get().ToolProtocolMode == "pi_compat" {
+		normalized, normalizeErr := normalizeResponsesToolHistory(o.Messages)
+		if normalizeErr != nil {
+			writeResponsesError(w, 400, "tool_protocol_error", normalizeErr.Error())
+			return
+		}
+		o.Messages = normalized
+	}
 	r.Header.Set(sessionHeaderName, affinitySessionID)
 	r.Header.Set(previousResponseHeader, affinitySessionID)
 	if body.Stream {
-		s.streamResponsesAdapter(w, r, o, firstNonEmpty(body.Model, defaultPublicModelName), publicID, affinitySessionID, tenant)
+		s.streamResponsesAdapter(w, r, o, firstNonEmpty(body.Model, defaultPublicModelName), publicID, affinitySessionID, nsKey)
 		return
 	}
 	out, raw, status, err := s.runOpenAIAdapter(r, o)
@@ -537,6 +604,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		stored := append([]oaiMsg(nil), o.Messages...)
 		var storedToolCalls []map[string]any
 		if msg, _ := openAIChoice(out); msg != nil {
+			assistantText, _ := msg["content"].(string)
 			if calls, ok := msg["tool_calls"].([]any); ok && len(calls) > 0 {
 				converted := make([]map[string]any, 0, len(calls))
 				for _, call := range calls {
@@ -544,13 +612,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 						converted = append(converted, m)
 					}
 				}
-				stored = append(stored, oaiMsg{Role: "assistant", ToolCalls: converted})
 				storedToolCalls = converted
-			} else {
-				if text, _ := msg["content"].(string); text != "" {
-					stored = append(stored, oaiMsg{Role: "assistant", Content: text})
-				}
 			}
+			stored = appendResponsesAssistantHistory(stored, assistantText, storedToolCalls)
 		}
 		toolCallsMap := buildRespToolCallsMap(storedToolCalls)
 		s.responseMu.Lock()
@@ -613,7 +677,15 @@ func (s *Server) storeResponsesHistory(tenant, responseID, affinitySessionID str
 		}
 		delete(bucket, oldestKey)
 	}
-	bucket[responseID] = &RespNode{At: time.Now(), Messages: append([]oaiMsg(nil), messages...), SessionID: affinitySessionID, Version: 1, Tenant: tenant}
+	nodeTenant := tenant
+	if separator := strings.IndexByte(nodeTenant, 0); separator >= 0 {
+		nodeTenant = nodeTenant[:separator]
+	}
+	var toolCalls []map[string]any
+	if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
+		toolCalls = messages[len(messages)-1].ToolCalls
+	}
+	bucket[responseID] = &RespNode{At: time.Now(), Messages: append([]oaiMsg(nil), messages...), ToolCalls: buildRespToolCallsMap(toolCalls), SessionID: affinitySessionID, Version: 1, Tenant: nodeTenant}
 }
 
 func responsesOutputHasContent(src map[string]any) bool {

@@ -62,6 +62,7 @@ type runtimeSettings struct {
 	Scope                      string         `json:"scope"`
 	ModelMappings              []modelMapping `json:"modelMappings"`
 	ToolPlanningMode           string         `json:"toolPlanningMode"`
+	ToolProtocolMode           string         `json:"toolProtocolMode"`
 	CacheStrategy              string         `json:"cacheStrategy"`
 	StickyFullContext          bool           `json:"stickyFullContext"`
 	StickyAccountConcurrency   int            `json:"stickyAccountConcurrency"`
@@ -103,6 +104,7 @@ func defaultRuntimeSettings() runtimeSettings {
 		Authority: os.Getenv("M365_AUTHORITY"), RedirectURI: os.Getenv("M365_REDIRECT_URI"), Scope: os.Getenv("M365_SCOPE"),
 		ModelMappings:              append([]modelMapping(nil), defaultModelMappings...),
 		ToolPlanningMode:           toolPlanningMode(os.Getenv("M365_TOOL_PLANNING_MODE")),
+		ToolProtocolMode:           toolProtocolMode(os.Getenv("M365_TOOL_PROTOCOL_MODE")),
 		CacheStrategy:              firstNonEmptySetting(os.Getenv("M365_CACHE_STRATEGY"), "balanced"),
 		StickyFullContext:          os.Getenv("M365_STICKY_FULL_CONTEXT") != "false",
 		StickyAccountConcurrency:   envInt("M365_STICKY_ACCOUNT_CONCURRENCY", 32),
@@ -153,6 +155,9 @@ func firstNonEmptySetting(values ...string) string {
 }
 
 func validateSettings(v runtimeSettings) error {
+	if v.ToolProtocolMode != "legacy" && v.ToolProtocolMode != "pi_compat" {
+		return fmt.Errorf("工具协议模式必须为 legacy 或 pi_compat")
+	}
 	if v.CacheStrategy != "balanced" && v.CacheStrategy != "sticky" {
 		return fmt.Errorf("缓存策略必须为 balanced 或 sticky")
 	}

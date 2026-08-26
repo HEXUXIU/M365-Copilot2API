@@ -211,6 +211,7 @@ python manage.py stop     # 停止服务
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `M365_TOOL_PLANNING_MODE` | `router` | 工具规划模式：`router`（网关路由规划）/ `native`（云端原生规划） |
+| `M365_TOOL_PROTOCOL_MODE` | `legacy` | 工具协议兼容模式：`legacy` 保持原行为；`pi_compat` 启用单次路由规划及 Responses 工具历史修复 |
 | `M365_CACHE_STRATEGY` | `balanced` | 缓存策略：`balanced` 使用连接池；`sticky` 强化账号/会话粘性并为每轮新建连接 |
 | `M365_STICKY_FULL_CONTEXT` | `true` | sticky 模式完整发送会话前缀，启用上游缓存读取 |
 | `M365_STICKY_ACCOUNT_CONCURRENCY` | `32` | sticky 模式单账号并发上限，避免高并发时绑定迁移 |

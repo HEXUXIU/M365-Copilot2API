@@ -19,6 +19,8 @@ func TestSettingsPageExposesCacheControls(t *testing.T) {
 		`body.cacheStrategy=currentCacheStrategy`,
 		`body.stickyFullContext=$('setStickyFullContext').checked`,
 		`$('stickyFullContextGroup').hidden=!sticky`,
+		`id="setToolProtocolMode"`,
+		`body.toolProtocolMode=$('setToolProtocolMode').value`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("settings page missing %q", want)

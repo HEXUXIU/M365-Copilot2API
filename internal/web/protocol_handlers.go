@@ -725,7 +725,13 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, http.StatusBadGateway, "api_error", "upstream protocol error: "+err.Error())
 		return
 	}
-	estimate := estimateResponsesUsage(firstNonEmpty(body.Model, defaultPublicModelName), o.Messages, o.Tools, o.ToolChoice, "")
+	estimate := estimateResponsesUsage(
+		firstNonEmpty(body.Model, defaultPublicModelName),
+		o.Messages,
+		o.Tools,
+		o.ToolChoice,
+		adapterOutputForUsage(out),
+	)
 	cached := cachedTokensFromChatResult(out)
 	u := reuseUsage{PromptTokens: numberInt64(estimate.Values["input_tokens"]), CompletionTokens: numberInt64(estimate.Values["output_tokens"]), CachedTokens: cached, Confirmed: cached > 0}
 	source := usageSourceFromCachedTokens(cached)
@@ -743,4 +749,20 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		Status:       200,
 	})
 	writeAnthropicResult(w, firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, out, anthropicUsage(u), source)
+}
+
+func adapterOutputForUsage(out map[string]any) string {
+	msg, _ := openAIChoice(out)
+	if msg == nil {
+		return ""
+	}
+	var output strings.Builder
+	output.WriteString(contentToString(msg["content"]))
+	output.WriteString(contentToString(msg["reasoning_content"]))
+	if calls, ok := msg["tool_calls"].([]any); ok {
+		for _, call := range calls {
+			output.WriteString(fmt.Sprint(call))
+		}
+	}
+	return output.String()
 }

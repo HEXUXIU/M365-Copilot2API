@@ -133,3 +133,22 @@ func TestResponsesUsageUsesConfirmedInnerPromptTotal(t *testing.T) {
 		t.Fatalf("Responses cache tokens were cleared by fallback estimate: %d", got)
 	}
 }
+
+func TestAnthropicUsageCountsAdapterOutput(t *testing.T) {
+	out := map[string]any{
+		"choices": []any{map[string]any{
+			"message": map[string]any{
+				"content":           "ANTHROPIC_OK",
+				"reasoning_content": "brief reasoning",
+				"tool_calls": []any{map[string]any{
+					"id":       "call-1",
+					"function": map[string]any{"name": "lookup", "arguments": `{"id":"BUILD-731"}`},
+				}},
+			},
+		}},
+	}
+	estimate := estimateResponsesUsage("gpt-5.6-sol", []oaiMsg{{Role: "user", Content: "test"}}, nil, nil, adapterOutputForUsage(out))
+	if got := numberInt64(estimate.Values["output_tokens"]); got <= 0 {
+		t.Fatalf("Anthropic adapter output was not included in usage: %v", estimate.Values)
+	}
+}

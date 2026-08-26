@@ -63,6 +63,8 @@ type runtimeSettings struct {
 	ModelMappings              []modelMapping `json:"modelMappings"`
 	ToolPlanningMode           string         `json:"toolPlanningMode"`
 	CacheStrategy              string         `json:"cacheStrategy"`
+	StickyFullContext          bool           `json:"stickyFullContext"`
+	StickyAccountConcurrency   int            `json:"stickyAccountConcurrency"`
 	RateLimitCooldownSeconds   int            `json:"rateLimitCooldownSeconds"`
 	Scenario                   string         `json:"scenario"`
 	MaxConversationMessages    int            `json:"maxConversationMessages"`
@@ -102,6 +104,8 @@ func defaultRuntimeSettings() runtimeSettings {
 		ModelMappings:              append([]modelMapping(nil), defaultModelMappings...),
 		ToolPlanningMode:           toolPlanningMode(os.Getenv("M365_TOOL_PLANNING_MODE")),
 		CacheStrategy:              firstNonEmptySetting(os.Getenv("M365_CACHE_STRATEGY"), "balanced"),
+		StickyFullContext:          os.Getenv("M365_STICKY_FULL_CONTEXT") != "false",
+		StickyAccountConcurrency:   envInt("M365_STICKY_ACCOUNT_CONCURRENCY", 32),
 		RateLimitCooldownSeconds:   envInt("M365_RATE_LIMIT_COOLDOWN_SECONDS", 30),
 		Scenario:                   firstNonEmptySetting(os.Getenv("M365_SCENARIO"), "OfficeWebIncludedCopilot"),
 		MaxConversationMessages:    envInt("M365_MAX_CONVERSATION_MESSAGES", 600),

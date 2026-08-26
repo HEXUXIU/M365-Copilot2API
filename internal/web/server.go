@@ -1807,8 +1807,15 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if s.settings.get().CacheStrategy == "sticky" {
 			// Sticky cache keeps the bound account across transient cooldowns;
 			// token validity is still checked by EnsureValid before use.
+			stickyLimit := s.settings.get().StickyAccountConcurrency
 			available = func(id string) bool {
-				return s.tokens.ScheduleEnabled(id) && s.accountConcurrency.Available(id)
+				if !s.tokens.ScheduleEnabled(id) {
+					return false
+				}
+				if stickyLimit <= 0 {
+					return s.accountConcurrency.Available(id)
+				}
+				return s.accountConcurrency.Inflight(id) < stickyLimit
 			}
 		}
 		affinityState, err = s.affinity.begin(r.Context(), s.affinityTenantIdentity(r), &body, r, s.tokens.List(), available)
@@ -1825,7 +1832,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// 消息拼成增量 prompt 发送（对齐 DeepSeek 上下文缓存语义）。
 	answerPrompt := prompt
 	resolvedConversationID := ""
-	if affinityState.enforced && affinityState.incremental && affinityState.prefixCount > 0 && affinityState.prefixCount < len(body.Messages) {
+	fullStickyContext := s.settings.get().CacheStrategy == "sticky" && s.settings.get().StickyFullContext
+	if !fullStickyContext && affinityState.enforced && affinityState.incremental && affinityState.prefixCount > 0 && affinityState.prefixCount < len(body.Messages) {
 		incPrompt, incAtt := flattenPromptMessages(body.Messages[affinityState.prefixCount:], nil)
 		incPrompt = strings.TrimSpace(incPrompt)
 		if incPrompt != "" {

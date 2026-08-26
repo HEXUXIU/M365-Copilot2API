@@ -1679,6 +1679,9 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 		}
 	}
 	req.MCPServerURL = mcpServerURL
+	if len(req.Tools) > 0 || req.MCPServerURL != "" {
+		req.DisablePool = true
+	}
 	return req
 }
 

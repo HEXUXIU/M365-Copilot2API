@@ -219,6 +219,7 @@ type Request struct {
 	ConnectedFederatedIDs []string
 	FeatureFlags          FeatureFlags
 	DisableMemory         bool
+	DisablePool           bool
 	Locale                string
 	Market                string
 	TimeZone              string
@@ -411,7 +412,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	var reused bool
 	phase = PhaseDial
 
-	if c.Pool != nil {
+	if c.Pool != nil && !req.DisablePool {
 		var poolErr error
 		conn, reused, poolErr = c.Pool.Take(ctx, acc.OID, acc.TID, wsURL)
 		if poolErr != nil {

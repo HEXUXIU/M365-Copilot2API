@@ -536,6 +536,10 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 	// down or quarantine the account; doing so can drain the whole pool when
 	// several accounts share the same upstream condition.
 	if errors.Is(err, chathub.ErrEmptyCompletion) {
+		h.mu.Lock()
+		delete(h.cooldown, accountID)
+		delete(h.limited, accountID)
+		h.mu.Unlock()
 		return
 	}
 	if cat == CategoryClientCanceled {

@@ -42,6 +42,22 @@ func TestCacheUsageProtocolMappings(t *testing.T) {
 		}
 	})
 
+	t.Run("chat_stream_done_once", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		sw := newSSEWriter(rr, rr)
+		finish := map[string]any{"choices": []any{map[string]any{"finish_reason": "stop"}}, "usage": chatUsage(u)}
+		if err := writeStreamTerminal(sw, finish, `{"requestSent":"now"}`); err != nil {
+			t.Fatal(err)
+		}
+		body := rr.Body.String()
+		if strings.Count(body, "data: [DONE]") != 1 {
+			t.Fatalf("terminal marker count is not one: %s", body)
+		}
+		if strings.Count(body, `"finish_reason":"stop"`) != 1 || !strings.Contains(body, ": m365-metrics ") {
+			t.Fatalf("terminal frame is incomplete: %s", body)
+		}
+	})
+
 	t.Run("responses", func(t *testing.T) {
 		rr := httptest.NewRecorder()
 		writeResponsesResult(rr, "gpt-test", false, map[string]any{

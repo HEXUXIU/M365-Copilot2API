@@ -303,6 +303,10 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 	if body.AccountID != "" {
 		state.accountID = body.AccountID
 		state.proposedAccount = body.AccountID
+		if state.enforced && state.hasBinding && state.binding.AccountID == body.AccountID &&
+			(state.prefixCount > 0 || state.key.BindingID != "") {
+			state.incremental = true
+		}
 		return state, nil
 	}
 	healthCache := map[string]bool{}

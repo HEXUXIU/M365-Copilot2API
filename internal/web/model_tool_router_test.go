@@ -31,3 +31,24 @@ func TestParseModelToolDecisionRejectsBadSchema(t *testing.T) {
 		t.Fatalf("calls=%v ok=%v", calls, ok)
 	}
 }
+
+func TestToolChoiceRequiresCall(t *testing.T) {
+	tests := []struct {
+		name   string
+		choice any
+		want   bool
+	}{
+		{name: "implicit auto", choice: nil, want: false},
+		{name: "auto", choice: "auto", want: false},
+		{name: "none", choice: "none", want: false},
+		{name: "required", choice: "required", want: true},
+		{name: "named", choice: map[string]any{"function": map[string]any{"name": "get_weather"}}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := toolChoiceRequiresCall(tt.choice); got != tt.want {
+				t.Fatalf("toolChoiceRequiresCall(%#v)=%v want %v", tt.choice, got, tt.want)
+			}
+		})
+	}
+}

@@ -34,6 +34,11 @@ User request and evidence:
 %s`, defs, mode, rules, prompt)
 }
 
+func toolChoiceRequiresCall(choice any) bool {
+	mode := normalizedToolChoiceMode(choice)
+	return mode == "required" || strings.HasPrefix(mode, "named:")
+}
+
 func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]detectedToolCall, bool) {
 	text = strings.TrimSpace(text)
 	// Try the new natural language format first: CALL_TOOL: name({...})

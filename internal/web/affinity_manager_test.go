@@ -59,6 +59,81 @@ func TestAffinityManagerConfirmsOnlySuccessfulExactContinuation(t *testing.T) {
 	}
 }
 
+func TestAffinityPreselectedMatchingAccountContinuesBinding(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+
+	firstBody := &oaiReq{Model: "gpt-5.6", Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv-1", "sess-1", oaiMsg{Role: "assistant", Content: "hi"}, 10, 2)
+	accountID := first.accountID
+	first.close()
+
+	secondBody := &oaiReq{
+		Model:          "gpt-5.6",
+		AccountID:      accountID,
+		ConversationID: "conv-1",
+		SessionID:      "sess-1",
+		Messages: []oaiMsg{
+			{Role: "user", Content: "hello"},
+			{Role: "assistant", Content: "hi"},
+			{Role: "user", Content: "continue"},
+		},
+	}
+	second, err := manager.begin(ctx, "tenant", secondBody, httptest.NewRequest("POST", "/v1/chat/completions", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.close()
+	second.apply(secondBody)
+	if !second.hasBinding || !second.incremental || second.accountID != accountID {
+		t.Fatalf("matching preselected account did not continue binding: state=%s", second)
+	}
+	usage := second.complete(ctx, secondBody, accountID, "conv-1", "sess-1", oaiMsg{Role: "assistant", Content: "more"}, 18, 3)
+	if !usage.Confirmed || usage.CachedTokens <= 0 {
+		t.Fatalf("matching preselected continuation did not report cache: %+v", usage)
+	}
+}
+
+func TestAffinityPreselectedDifferentAccountDoesNotContinueBinding(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "hello"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, httptest.NewRequest("POST", "/", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv-1", "sess-1", oaiMsg{Role: "assistant", Content: "hi"}, 10, 2)
+	boundAccount := first.accountID
+	first.close()
+
+	otherAccount := "a"
+	if boundAccount == otherAccount {
+		otherAccount = "b"
+	}
+	secondBody := &oaiReq{AccountID: otherAccount, Messages: []oaiMsg{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "continue"}}}
+	second, err := manager.begin(ctx, "tenant", secondBody, httptest.NewRequest("POST", "/", nil), accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.close()
+	if second.incremental {
+		t.Fatalf("different preselected account reused binding: state=%s", second)
+	}
+}
+
 func TestAffinityManagerMigrationNeverClaimsCache(t *testing.T) {
 	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
 	defer manager.close()

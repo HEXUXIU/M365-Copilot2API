@@ -110,6 +110,37 @@ func TestCallWithTransientRetryDoesNotReplayObservedStream(t *testing.T) {
 	}
 }
 
+func TestCallWithTransientRetryRetriesUpstreamCancellationWhileRequestIsAlive(t *testing.T) {
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "2")
+	t.Setenv("M365_TRANSIENT_RETRY_DELAY_MS", "1")
+	calls := 0
+	result, err := callWithTransientRetry(context.Background(), "account-a", nil, func() (chathub.Result, error) {
+		calls++
+		if calls == 1 {
+			return chathub.Result{}, context.Canceled
+		}
+		return chathub.Result{Text: "ok"}, nil
+	})
+	if err != nil || result.Text != "ok" || calls != 2 {
+		t.Fatalf("result=%#v err=%v calls=%d", result, err, calls)
+	}
+}
+
+func TestCallWithTransientRetryStopsWhenRequestContextIsCanceled(t *testing.T) {
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "2")
+	t.Setenv("M365_TRANSIENT_RETRY_DELAY_MS", "1")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	_, err := callWithTransientRetry(ctx, "account-a", nil, func() (chathub.Result, error) {
+		calls++
+		return chathub.Result{}, context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+}
+
 func TestTransientRetryAttemptsCanBeDisabledAndIsCapped(t *testing.T) {
 	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "0")
 	if got := transientRetryAttempts(); got != 0 {

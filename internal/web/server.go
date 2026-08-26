@@ -1571,6 +1571,19 @@ func writeStreamFinish(ctx context.Context, w http.ResponseWriter, flusher http.
 	}
 	_ = sseRaw(ctx, w, flusher, "data: "+mustJSON(finishChunk)+"\n\n")
 }
+
+func writeStreamTerminal(sw *sseWriter, finishChunk map[string]any, metrics string) error {
+	if err := sw.data(mustJSON(finishChunk)); err != nil {
+		return err
+	}
+	if metrics != "" {
+		if err := sw.raw(": m365-metrics " + metrics + "\n\n"); err != nil {
+			return err
+		}
+	}
+	return sw.data("[DONE]")
+}
+
 func contentToString(c any) string {
 	switch v := c.(type) {
 	case string:
@@ -2282,25 +2295,23 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
-		finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}}
+		if body.User != "" && res.ConversationID != "" {
+			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
+		}
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String()}, answerPrompt, startedAt, affinityState)
+		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
+		finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": chatUsage(usage)}
 		if res.Throttling != nil {
 			finishChunk["x_m365_throttling"] = res.Throttling
 		}
 		if len(res.Scores) > 0 {
 			finishChunk["x_m365_scores"] = res.Scores
 		}
-		_ = sw.data(mustJSON(finishChunk))
-		_ = sw.data("[DONE]")
+		metrics := ""
 		if res.Timestamps.RequestSent != "" {
-			_ = sw.raw(": m365-metrics " + mustJSON(res.Timestamps) + "\n\n")
+			metrics = mustJSON(res.Timestamps)
 		}
-		if body.User != "" && res.ConversationID != "" {
-			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
-		}
-		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String()}, answerPrompt, startedAt, affinityState)
-		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
-		writeStreamFinish(r.Context(), w, flusher, id, model, chatUsage(usage))
-		_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
+		_ = writeStreamTerminal(sw, finishChunk, metrics)
 		return
 	}
 	// Ask the upstream model to select and validate the next tool. The gateway
@@ -2347,8 +2358,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				routeRes = repairRes
 			}
 			if !parsed {
-				writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "model returned an invalid tool routing decision")
-				return
+				log.Printf("[tool-router] id=%s invalid decision after repair choice=%s; applying choice fallback", requestID, normalizedToolChoiceMode(body.ToolChoice))
 			}
 		}
 		calls = filterCompletedCalls(calls, ledger)
@@ -2365,7 +2375,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
 			return
 		}
-		if fmt.Sprint(body.ToolChoice) == "required" {
+		if toolChoiceRequiresCall(body.ToolChoice) {
 			defs, _ := json.Marshal(toolMaps)
 			retryText := `Select at least one required next tool call from FUNCTION_DEFINITIONS. Validate every argument against its schema. Return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.
 APPLICATION_REQUEST_AND_EVIDENCE:

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"strconv"
@@ -159,7 +160,8 @@ func callWithTransientRetry(ctx context.Context, accountID string, observed func
 	maxRetries := transientRetryAttempts()
 	for attempt := 0; ; attempt++ {
 		result, err := call()
-		if err == nil || attempt >= maxRetries || !IsTransientUpstreamFailure(err) || (observed != nil && observed()) {
+		upstreamCanceled := errors.Is(err, context.Canceled) && ctx.Err() == nil
+		if err == nil || attempt >= maxRetries || (!IsTransientUpstreamFailure(err) && !upstreamCanceled) || (observed != nil && observed()) {
 			return result, err
 		}
 		if ctx.Err() != nil {

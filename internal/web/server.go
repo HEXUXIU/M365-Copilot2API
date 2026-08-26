@@ -1803,7 +1803,15 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	}
 	var affinityState *affinityRequest
 	if s.affinity != nil {
-		affinityState, err = s.affinity.begin(r.Context(), s.affinityTenantIdentity(r), &body, r, s.tokens.List(), s.accountAvailable)
+		available := s.accountAvailable
+		if s.settings.get().CacheStrategy == "sticky" {
+			// Sticky cache keeps the bound account across transient cooldowns;
+			// token validity is still checked by EnsureValid before use.
+			available = func(id string) bool {
+				return s.tokens.ScheduleEnabled(id) && s.accountConcurrency.Available(id)
+			}
+		}
+		affinityState, err = s.affinity.begin(r.Context(), s.affinityTenantIdentity(r), &body, r, s.tokens.List(), available)
 		if err != nil {
 			writeUpstreamError(w, err)
 			return

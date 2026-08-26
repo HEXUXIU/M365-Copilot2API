@@ -82,6 +82,19 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .form-input::placeholder{color:var(--muted)}
 .form-hint{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.5}
 .form-hint code{color:var(--text);background:var(--line);padding:1px 5px;border-radius:4px;font-size:12px}
+.cache-segment{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:min(100%,360px);padding:3px;border:1px solid var(--line);border-radius:var(--radius-sm);background:rgba(0,0,0,.035)}
+@media(prefers-color-scheme:dark){.cache-segment{background:rgba(255,255,255,.04)}}
+.cache-option{min-height:34px;border:0;border-radius:7px;background:transparent;color:var(--muted);font:inherit;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s ease,color .15s ease,box-shadow .15s ease}
+.cache-option:hover{color:var(--text)}
+.cache-option.active{background:var(--surface-solid);color:var(--text);box-shadow:var(--shadow-sm)}
+.switch-row{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:42px;width:min(100%,360px)}
+.switch-control{position:relative;display:inline-flex;width:42px;height:24px;flex:0 0 42px;cursor:pointer}
+.switch-control input{position:absolute;opacity:0;pointer-events:none}
+.switch-track{position:absolute;inset:0;border-radius:12px;background:var(--line-strong);transition:background .18s ease}
+.switch-track::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.24);transition:transform .18s var(--ease-out)}
+.switch-control input:checked+.switch-track{background:var(--green)}
+.switch-control input:checked+.switch-track::after{transform:translateX(18px)}
+.switch-control input:focus-visible+.switch-track{outline:2px solid var(--accent);outline-offset:2px}
 
 /* Buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);background:var(--surface);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:var(--text);border-radius:var(--radius-sm);padding:8px 16px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;letter-spacing:-0.01em;transition:all .15s var(--ease-out);min-height:34px;white-space:nowrap;user-select:none}
@@ -613,7 +626,28 @@ if (response.output_text) {
       <!-- Settings -->
       <section id="page-settings" style="display:none">
         <h2 style="font-size:18px;font-weight:700;margin-bottom:16px">Settings</h2>
-        <div class="card"><div class="card-body"><div class="form-group"><label class="form-label">Listen address</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div><div class="form-group"><label class="form-label">Chat timeout (seconds)</label><input class="form-input" id="setTimeout" type="number" placeholder="120"></div><div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select><p class="form-hint">Choose the language used by the administration console.</p></div><div style="margin-top:16px"><button class="btn primary" onclick="saveSettings()">Save settings</button></div></div></div>
+        <div class="card"><div class="card-body">
+          <div class="form-group"><label class="form-label">Listen address</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div>
+          <div class="form-group"><label class="form-label">Chat timeout (seconds)</label><input class="form-input" id="setTimeout" type="number" placeholder="120"></div>
+          <div class="form-group">
+            <label class="form-label">Cache strategy</label>
+            <div class="cache-segment" role="group" aria-label="Cache strategy">
+              <button type="button" class="cache-option active" id="cacheBalanced" onclick="setCacheStrategy('balanced')" aria-pressed="true">Balanced</button>
+              <button type="button" class="cache-option" id="cacheSticky" onclick="setCacheStrategy('sticky')" aria-pressed="false">Sticky</button>
+            </div>
+          </div>
+          <div class="form-group" id="stickyFullContextGroup" hidden>
+            <div class="switch-row">
+              <label class="form-label" for="setStickyFullContext" style="margin:0">Send full context</label>
+              <label class="switch-control">
+                <input type="checkbox" id="setStickyFullContext" checked>
+                <span class="switch-track"></span>
+              </label>
+            </div>
+          </div>
+          <div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select><p class="form-hint">Choose the language used by the administration console.</p></div>
+          <div style="margin-top:16px"><button class="btn primary" onclick="saveSettings()">Save settings</button></div>
+        </div></div>
       </section>
     </div>
   </main>
@@ -827,6 +861,10 @@ const localeText={
   'Reply': {'zh-CN':'回复','zh-TW':'回覆','ja':'返信','ko':'답변','es':'Respuesta','fr':'Réponse','de':'Antwort','pt-BR':'Resposta','ru':'Ответ','ar':'الرد'},
   'Listen address': {'zh-CN':'监听地址','zh-TW':'監聽位址','ja':'リスニングアドレス','ko':'수신 주소','es':'Dirección de escucha','fr':'Adresse d\'écoute','de':'Lauschadresse','pt-BR':'Endereço de escuta','ru':'Адрес прослушивания','ar':'عنوان الاستماع'},
   'Chat timeout (seconds)': {'zh-CN':'聊天超时（秒）','zh-TW':'聊天逾時（秒）','ja':'チャットタイムアウト（秒）','ko':'채팅 시간 초과(초)','es':'Tiempo de espera de chat (segundos)','fr':'Délai de chat (secondes)','de':'Chat-Timeout (Sekunden)','pt-BR':'Tempo limite do chat (segundos)','ru':'Тайм-аут чата (сек.)','ar':'مهلة الدردشة (ثوانٍ)'},
+  'Cache strategy': {'zh-CN':'缓存策略','zh-TW':'快取策略','ja':'キャッシュ戦略','ko':'캐시 전략','es':'Estrategia de caché','fr':'Stratégie de cache','de':'Cache-Strategie','pt-BR':'Estratégia de cache','ru':'Стратегия кэша','ar':'استراتيجية التخزين المؤقت'},
+  'Balanced': {'zh-CN':'均衡','zh-TW':'均衡','ja':'バランス','ko':'균형','es':'Equilibrado','fr':'Équilibré','de':'Ausgewogen','pt-BR':'Equilibrado','ru':'Сбалансированный','ar':'متوازن'},
+  'Sticky': {'zh-CN':'粘性缓存','zh-TW':'黏性快取','ja':'固定キャッシュ','ko':'고정 캐시','es':'Caché fija','fr':'Cache persistante','de':'Persistenter Cache','pt-BR':'Cache persistente','ru':'Закреплённый кэш','ar':'تخزين مؤقت ثابت'},
+  'Send full context': {'zh-CN':'发送完整上下文','zh-TW':'傳送完整上下文','ja':'完全なコンテキストを送信','ko':'전체 컨텍스트 전송','es':'Enviar contexto completo','fr':'Envoyer le contexte complet','de':'Vollständigen Kontext senden','pt-BR':'Enviar contexto completo','ru':'Отправлять полный контекст','ar':'إرسال السياق الكامل'},
   'Language': {'zh-CN':'语言','zh-TW':'語言','ja':'言語','ko':'언어','es':'Idioma','fr':'Langue','de':'Sprache','pt-BR':'Idioma','ru':'Язык','ar':'اللغة'},
   'Save settings': {'zh-CN':'保存设置','zh-TW':'儲存設定','ja':'設定を保存','ko':'설정 저장','es':'Guardar ajustes','fr':'Enregistrer les paramètres','de':'Einstellungen speichern','pt-BR':'Salvar configurações','ru':'Сохранить настройки','ar':'حفظ الإعدادات'},
   'Choose the language used by the administration console.': {'zh-CN':'选择管理控制台使用的语言。','zh-TW':'選擇管理主控台使用的語言。','ja':'管理コンソールで使用する言語を選択してください。','ko':'관리 콘솔에서 사용할 언어를 선택하세요.','es':'Elija el idioma que usará la consola de administración.','fr':'Choisissez la langue utilisée par la console d\'administration.','de':'Wählen Sie die Sprache, die von der Administrationskonsole verwendet wird.','pt-BR':'Escolha o idioma usado pelo console de administração.','ru':'Выберите язык, используемый консолью администратора.','ar':'اختر اللغة المستخدمة في وحدة تحكم الإدارة.'},
@@ -1581,12 +1619,24 @@ async function modelTestAll(){
   showNotice('模型测试完成','success');
 }
 
+let currentCacheStrategy='balanced';
+function setCacheStrategy(strategy){
+  currentCacheStrategy=strategy==='sticky'?'sticky':'balanced';
+  const sticky=currentCacheStrategy==='sticky';
+  $('cacheBalanced').classList.toggle('active',!sticky);
+  $('cacheSticky').classList.toggle('active',sticky);
+  $('cacheBalanced').setAttribute('aria-pressed',String(!sticky));
+  $('cacheSticky').setAttribute('aria-pressed',String(sticky));
+  $('stickyFullContextGroup').hidden=!sticky;
+}
 async function loadSettings(){
   try{
     const d=await api('/api/admin/settings');
     const v=d.settings||{};
     $('setListen').value=v.listenAddress||'';
     $('setTimeout').value=v.chatTimeoutSeconds||120;
+    $('setStickyFullContext').checked=v.stickyFullContext!==false;
+    setCacheStrategy(v.cacheStrategy);
   }catch(e){showNotice(e.message,'error');}
 }
 async function saveSettings(){
@@ -1596,6 +1646,8 @@ async function saveSettings(){
     const body={};
     if(listen)body.listenAddress=listen;
     if(timeout)body.chatTimeoutSeconds=parseInt(timeout);
+    body.cacheStrategy=currentCacheStrategy;
+    body.stickyFullContext=$('setStickyFullContext').checked;
     await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
     showNotice('设置已保存','success');
   }catch(e){showNotice(e.message,'error');}

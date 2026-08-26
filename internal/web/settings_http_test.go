@@ -34,6 +34,41 @@ func TestAdminSettingsPartialPutMerges(t *testing.T) {
 	}
 }
 
+func TestAdminSettingsCacheStrategyRoundTrip(t *testing.T) {
+	st := &settingsStore{path: filepath.Join(t.TempDir(), "settings.json"), v: defaultRuntimeSettings()}
+	s := &Server{settings: st}
+
+	r := httptest.NewRequest(http.MethodPut, "/api/admin/settings", bytes.NewBufferString(`{"cacheStrategy":"sticky","stickyFullContext":true}`))
+	w := httptest.NewRecorder()
+	s.adminSettings(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT=%d %s", w.Code, w.Body.String())
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/api/admin/settings", nil)
+	w = httptest.NewRecorder()
+	s.adminSettings(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET=%d %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Settings runtimeSettings `json:"settings"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Settings.CacheStrategy != "sticky" || !body.Settings.StickyFullContext {
+		t.Fatalf("cache settings not persisted: %#v", body.Settings)
+	}
+
+	r = httptest.NewRequest(http.MethodPut, "/api/admin/settings", bytes.NewBufferString(`{"cacheStrategy":"invalid"}`))
+	w = httptest.NewRecorder()
+	s.adminSettings(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid cache strategy PUT=%d", w.Code)
+	}
+}
+
 func TestAdminSettingsDuplicateKeysDoNotPanic(t *testing.T) {
 	// JSON 重复键是前端不该产生但可能出现的输入（如日志里错拼的字段）。
 	// 修复的 bug 是部分 PUT 零值覆盖，这里只验证这类脏输入不 panic。

@@ -62,6 +62,7 @@ type runtimeSettings struct {
 	Scope                      string         `json:"scope"`
 	ModelMappings              []modelMapping `json:"modelMappings"`
 	ToolPlanningMode           string         `json:"toolPlanningMode"`
+	CacheStrategy              string         `json:"cacheStrategy"`
 	RateLimitCooldownSeconds   int            `json:"rateLimitCooldownSeconds"`
 	Scenario                   string         `json:"scenario"`
 	MaxConversationMessages    int            `json:"maxConversationMessages"`
@@ -100,6 +101,7 @@ func defaultRuntimeSettings() runtimeSettings {
 		Authority: os.Getenv("M365_AUTHORITY"), RedirectURI: os.Getenv("M365_REDIRECT_URI"), Scope: os.Getenv("M365_SCOPE"),
 		ModelMappings:              append([]modelMapping(nil), defaultModelMappings...),
 		ToolPlanningMode:           toolPlanningMode(os.Getenv("M365_TOOL_PLANNING_MODE")),
+		CacheStrategy:              firstNonEmptySetting(os.Getenv("M365_CACHE_STRATEGY"), "balanced"),
 		RateLimitCooldownSeconds:   envInt("M365_RATE_LIMIT_COOLDOWN_SECONDS", 30),
 		Scenario:                   firstNonEmptySetting(os.Getenv("M365_SCENARIO"), "OfficeWebIncludedCopilot"),
 		MaxConversationMessages:    envInt("M365_MAX_CONVERSATION_MESSAGES", 600),
@@ -147,6 +149,9 @@ func firstNonEmptySetting(values ...string) string {
 }
 
 func validateSettings(v runtimeSettings) error {
+	if v.CacheStrategy != "balanced" && v.CacheStrategy != "sticky" {
+		return fmt.Errorf("缓存策略必须为 balanced 或 sticky")
+	}
 	if v.MaxToolCallsPerTurn < 1 || v.MaxToolCallsPerTurn > 64 {
 		return fmt.Errorf("每轮工具调用数必须为 1-64")
 	}

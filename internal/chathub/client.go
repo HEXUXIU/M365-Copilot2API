@@ -546,6 +546,9 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		if d == "" {
 			return nil
 		}
+		if isUpstreamFallback(d) {
+			return ErrEmptyCompletion
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

@@ -159,14 +159,14 @@ type anthropicTool struct {
 	InputSchema map[string]any `json:"input_schema"`
 }
 type anthropicRequest struct {
-	Model      string             `json:"model"`
-	System     any                `json:"system,omitempty"`
-	Messages   []anthropicMessage `json:"messages"`
-	Tools      []anthropicTool    `json:"tools,omitempty"`
-	ToolChoice any                `json:"tool_choice,omitempty"`
-	Stream     bool               `json:"stream,omitempty"`
-	MaxTokens  int                `json:"max_tokens,omitempty"`
-	StopSequences []string       `json:"stop_sequences,omitempty"`
+	Model         string             `json:"model"`
+	System        any                `json:"system,omitempty"`
+	Messages      []anthropicMessage `json:"messages"`
+	Tools         []anthropicTool    `json:"tools,omitempty"`
+	ToolChoice    any                `json:"tool_choice,omitempty"`
+	Stream        bool               `json:"stream,omitempty"`
+	MaxTokens     int                `json:"max_tokens,omitempty"`
+	StopSequences []string           `json:"stop_sequences,omitempty"`
 }
 
 func (r anthropicRequest) openAI() (oaiReq, error) {

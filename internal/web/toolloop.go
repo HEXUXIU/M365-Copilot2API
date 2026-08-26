@@ -124,7 +124,7 @@ func extractToolCalls(text string, tools []map[string]any, choice any) ([]detect
 			break
 		}
 		end += start
-		content := remaining[start+len("<m365-tool-call>"):end]
+		content := remaining[start+len("<m365-tool-call>") : end]
 		remaining = remaining[end+len("</m365-tool-call>"):]
 		var raw any
 		if json.Unmarshal([]byte(content), &raw) != nil {
@@ -195,6 +195,7 @@ func isImageLimitNotice(text string) bool {
 	t := strings.ToLower(text)
 	return strings.Contains(t, "无法生成更多图像") || strings.Contains(t, "unable to generate more images")
 }
+
 var sandboxHallucinationPatterns = []string{
 	"I can run that for you",
 	"I'll run that",

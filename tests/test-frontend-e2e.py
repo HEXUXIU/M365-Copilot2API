@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """M365-Copilot2API Frontend E2E Test — HTML structure + API interaction flow"""
 
-import sys, json, time, re, requests
+import sys, json, time, re, os, requests
 
 BASE = "http://127.0.0.1:4141"
 ADMIN_PW = "LNBuuAsbrS47XUM"
-API_KEY = "m365_9b7a656d5c03921308cafc946db8a760f475b33e715824e7d4021b5b7ba2dbf0"
+API_KEY = os.environ.get("M365_TEST_API_KEY", "")
 
 results = []
 tid = 0

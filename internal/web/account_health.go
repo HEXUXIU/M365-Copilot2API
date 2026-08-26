@@ -15,25 +15,25 @@ import (
 type ErrorCategory string
 
 const (
-	CategoryQuota429          ErrorCategory = "QUOTA_429"
-	CategoryOverload503       ErrorCategory = "OVERLOAD_503"
-	CategoryAuthExpired401    ErrorCategory = "AUTH_EXPIRED_401"
-	CategoryForbidden403      ErrorCategory = "FORBIDDEN_403"
-	CategoryRetryable422      ErrorCategory = "RETRYABLE_422"
-	CategoryUserBanned        ErrorCategory = "USER_BANNED"
-	CategoryUserThrottled     ErrorCategory = "USER_THROTTLED"
+	CategoryQuota429           ErrorCategory = "QUOTA_429"
+	CategoryOverload503        ErrorCategory = "OVERLOAD_503"
+	CategoryAuthExpired401     ErrorCategory = "AUTH_EXPIRED_401"
+	CategoryForbidden403       ErrorCategory = "FORBIDDEN_403"
+	CategoryRetryable422       ErrorCategory = "RETRYABLE_422"
+	CategoryUserBanned         ErrorCategory = "USER_BANNED"
+	CategoryUserThrottled      ErrorCategory = "USER_THROTTLED"
 	CategoryInsufficientTokens ErrorCategory = "INSUFFICIENT_TOKENS"
-	CategoryDesignerDisabled  ErrorCategory = "DESIGNER_DISABLED"
-	CategorySOCKS5            ErrorCategory = "SOCKS5"
-	CategoryDNS               ErrorCategory = "DNS"
-	CategoryTCP               ErrorCategory = "TCP"
-	CategoryTLS               ErrorCategory = "TLS"
-	CategoryWSHandshake       ErrorCategory = "WS_HANDSHAKE"
-	CategoryWSReadTimeout     ErrorCategory = "WS_READ_TIMEOUT"
+	CategoryDesignerDisabled   ErrorCategory = "DESIGNER_DISABLED"
+	CategorySOCKS5             ErrorCategory = "SOCKS5"
+	CategoryDNS                ErrorCategory = "DNS"
+	CategoryTCP                ErrorCategory = "TCP"
+	CategoryTLS                ErrorCategory = "TLS"
+	CategoryWSHandshake        ErrorCategory = "WS_HANDSHAKE"
+	CategoryWSReadTimeout      ErrorCategory = "WS_READ_TIMEOUT"
 	CategoryUpstreamStructured ErrorCategory = "UPSTREAM_STRUCTURED"
-	CategoryClientCanceled    ErrorCategory = "CLIENT_CANCELED"
-	CategoryGlobalUnavailable ErrorCategory = "GLOBAL_UNAVAILABLE"
-	CategoryUnknown           ErrorCategory = "UNKNOWN"
+	CategoryClientCanceled     ErrorCategory = "CLIENT_CANCELED"
+	CategoryGlobalUnavailable  ErrorCategory = "GLOBAL_UNAVAILABLE"
+	CategoryUnknown            ErrorCategory = "UNKNOWN"
 )
 
 type UpstreamHTTPError struct {
@@ -222,6 +222,26 @@ func IsAuthFailure(err error) bool {
 	return false
 }
 
+// IsTransientUpstreamFailure identifies connection failures that are safe to
+// retry before any assistant text has reached the client.
+func IsTransientUpstreamFailure(err error) bool {
+	if err == nil || IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err) {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"ws dial:", "handshake send:", "handshake recv:", "chat send:",
+		"ws read before completion:", "connection reset", "connection refused",
+		"broken pipe", "unexpected eof", "use of closed network connection",
+		"i/o timeout", "timeout",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func IsEmptyCompletion(err error) bool {
 	return errors.Is(err, chathub.ErrEmptyCompletion)
 }
@@ -299,11 +319,11 @@ func CooldownForCategory(cat ErrorCategory, retryAfter int, attempt int) time.Du
 }
 
 type globalCircuitState struct {
-	mu        sync.Mutex
+	mu          sync.Mutex
 	windowStart time.Time
-	total     int
-	failures  int
-	openUntil time.Time
+	total       int
+	failures    int
+	openUntil   time.Time
 }
 
 var globalCircuit = &globalCircuitState{}
@@ -383,10 +403,10 @@ func (g *globalCircuitState) Record(err error) {
 	g.mu.Unlock()
 }
 
-func GlobalCircuitIsOpen() bool { return globalCircuit.IsOpen() }
-func GlobalCircuitState() string { return globalCircuit.State() }
+func GlobalCircuitIsOpen() bool         { return globalCircuit.IsOpen() }
+func GlobalCircuitState() string        { return globalCircuit.State() }
 func GlobalCircuitOpenUntil() time.Time { return globalCircuit.OpenUntil() }
-func GlobalCircuitRecord(err error) { globalCircuit.Record(err) }
+func GlobalCircuitRecord(err error)     { globalCircuit.Record(err) }
 func ResetGlobalCircuit() {
 	globalCircuit.mu.Lock()
 	globalCircuit.windowStart = time.Time{}
@@ -397,18 +417,18 @@ func ResetGlobalCircuit() {
 }
 
 type accountHealth struct {
-	mu                       sync.Mutex
-	cooldown                 map[string]time.Time
-	authFail                 map[string]bool
-	limited                  map[string]bool
-	calls                    map[string]uint64
-	imageLimited             map[string]bool
-	imageLimitUntil          map[string]time.Time
-	imageGenCooldownUntil    map[string]time.Time
-	imageGenSystemCooldown   map[string]time.Time
-	lastThrottling           map[string]any
-	authFailReason           map[string]string
-	quotaAttempts            map[string]int
+	mu                     sync.Mutex
+	cooldown               map[string]time.Time
+	authFail               map[string]bool
+	limited                map[string]bool
+	calls                  map[string]uint64
+	imageLimited           map[string]bool
+	imageLimitUntil        map[string]time.Time
+	imageGenCooldownUntil  map[string]time.Time
+	imageGenSystemCooldown map[string]time.Time
+	lastThrottling         map[string]any
+	authFailReason         map[string]string
+	quotaAttempts          map[string]int
 }
 
 func newAccountHealth() *accountHealth {
@@ -588,6 +608,17 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 		window = 60 * time.Second
 	}
 	cat := ClassifyError(err)
+	// ChatHub's generic fallback is a transient, tenant-scoped completion
+	// failure. It should trigger the caller's bounded retry, but must not cool
+	// down or quarantine the account; doing so can drain the whole pool when
+	// several accounts share the same upstream condition.
+	if errors.Is(err, chathub.ErrEmptyCompletion) {
+		h.mu.Lock()
+		delete(h.cooldown, accountID)
+		delete(h.limited, accountID)
+		h.mu.Unlock()
+		return
+	}
 	GlobalCircuitRecord(err)
 	if cat == CategoryClientCanceled {
 		return

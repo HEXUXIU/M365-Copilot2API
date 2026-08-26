@@ -42,39 +42,42 @@ var configurableCodexModels = []string{
 }
 
 type runtimeSettings struct {
-	MaxToolCallsPerTurn int            `json:"maxToolCallsPerTurn"`
-	MaxToolRounds       int            `json:"maxToolRounds"`
-	ContextWindow       int            `json:"contextWindow"`
-	MaxOutputTokens     int            `json:"maxOutputTokens"`
-	ChatTimeoutSeconds  int            `json:"chatTimeoutSeconds"`
-	ImageTimeoutSeconds int            `json:"imageTimeoutSeconds"`
-	LogLevel            string         `json:"logLevel"`
-	DebugLogPath        string         `json:"debugLogPath"`
-	ListenAddress       string         `json:"listenAddress"`
-	ConfigPath          string         `json:"configPath"`
-	TokenCachePath      string         `json:"tokenCachePath"`
-	SessionCachePath    string         `json:"sessionCachePath"`
-	OutboundProxy       string         `json:"outboundProxy"`
-	ProxyPool           []string       `json:"proxyPool,omitempty"`
-	ClientID            string         `json:"clientId"`
-	Authority           string         `json:"authority"`
-	RedirectURI         string         `json:"redirectUri"`
-	Scope               string         `json:"scope"`
-	ModelMappings       []modelMapping `json:"modelMappings"`
-	ToolPlanningMode       string         `json:"toolPlanningMode"`
-	RateLimitCooldownSeconds int          `json:"rateLimitCooldownSeconds"`
-	Scenario                string         `json:"scenario"`
-	MaxConversationMessages int            `json:"maxConversationMessages"`
-	LicenseType               string         `json:"licenseType"`
-	AccountConcurrencyLimit   int            `json:"accountConcurrencyLimit"`
-	EnableMemoryV2            bool           `json:"enableMemoryV2"`
-	EnableDeepWork            bool           `json:"enableDeepWork"`
-	EnableComputerUse         bool           `json:"enableComputerUse"`
-	EnableRealtimeVoice       bool           `json:"enableRealtimeVoice"`
-	EnableSystemPromptOverride bool          `json:"enableSystemPromptOverride"`
-	EnableDesignerImageGen4o  bool           `json:"enableDesignerImageGen4o"`
-	EnableCodeCanvas          bool           `json:"enableCodeCanvas"`
-	EnableSydneyReconnect     bool           `json:"enableSydneyReconnect"`
+	MaxToolCallsPerTurn        int            `json:"maxToolCallsPerTurn"`
+	MaxToolRounds              int            `json:"maxToolRounds"`
+	ContextWindow              int            `json:"contextWindow"`
+	MaxOutputTokens            int            `json:"maxOutputTokens"`
+	ChatTimeoutSeconds         int            `json:"chatTimeoutSeconds"`
+	ImageTimeoutSeconds        int            `json:"imageTimeoutSeconds"`
+	LogLevel                   string         `json:"logLevel"`
+	DebugLogPath               string         `json:"debugLogPath"`
+	ListenAddress              string         `json:"listenAddress"`
+	ConfigPath                 string         `json:"configPath"`
+	TokenCachePath             string         `json:"tokenCachePath"`
+	SessionCachePath           string         `json:"sessionCachePath"`
+	OutboundProxy              string         `json:"outboundProxy"`
+	ProxyPool                  []string       `json:"proxyPool,omitempty"`
+	ClientID                   string         `json:"clientId"`
+	Authority                  string         `json:"authority"`
+	RedirectURI                string         `json:"redirectUri"`
+	Scope                      string         `json:"scope"`
+	ModelMappings              []modelMapping `json:"modelMappings"`
+	ToolPlanningMode           string         `json:"toolPlanningMode"`
+	CacheStrategy              string         `json:"cacheStrategy"`
+	StickyFullContext          bool           `json:"stickyFullContext"`
+	StickyAccountConcurrency   int            `json:"stickyAccountConcurrency"`
+	RateLimitCooldownSeconds   int            `json:"rateLimitCooldownSeconds"`
+	Scenario                   string         `json:"scenario"`
+	MaxConversationMessages    int            `json:"maxConversationMessages"`
+	LicenseType                string         `json:"licenseType"`
+	AccountConcurrencyLimit    int            `json:"accountConcurrencyLimit"`
+	EnableMemoryV2             bool           `json:"enableMemoryV2"`
+	EnableDeepWork             bool           `json:"enableDeepWork"`
+	EnableComputerUse          bool           `json:"enableComputerUse"`
+	EnableRealtimeVoice        bool           `json:"enableRealtimeVoice"`
+	EnableSystemPromptOverride bool           `json:"enableSystemPromptOverride"`
+	EnableDesignerImageGen4o   bool           `json:"enableDesignerImageGen4o"`
+	EnableCodeCanvas           bool           `json:"enableCodeCanvas"`
+	EnableSydneyReconnect      bool           `json:"enableSydneyReconnect"`
 }
 
 type settingsStore struct {
@@ -98,21 +101,24 @@ func defaultRuntimeSettings() runtimeSettings {
 		DebugLogPath: os.Getenv("M365_DEBUG_LOG"), ListenAddress: os.Getenv("M365_LISTEN"), ConfigPath: os.Getenv("M365_CONFIG"),
 		TokenCachePath: os.Getenv("M365_TOKEN_CACHE"), SessionCachePath: os.Getenv("M365_SESSION_CACHE"), OutboundProxy: os.Getenv(outbound.EnvProxy), ClientID: os.Getenv("M365_CLIENT_ID"),
 		Authority: os.Getenv("M365_AUTHORITY"), RedirectURI: os.Getenv("M365_REDIRECT_URI"), Scope: os.Getenv("M365_SCOPE"),
-		ModelMappings:    append([]modelMapping(nil), defaultModelMappings...),
-		ToolPlanningMode: toolPlanningMode(os.Getenv("M365_TOOL_PLANNING_MODE")),
-		RateLimitCooldownSeconds: envInt("M365_RATE_LIMIT_COOLDOWN_SECONDS", 30),
-		Scenario:                 firstNonEmptySetting(os.Getenv("M365_SCENARIO"), "OfficeWebIncludedCopilot"),
-		MaxConversationMessages:  envInt("M365_MAX_CONVERSATION_MESSAGES", 600),
-		LicenseType:               firstNonEmptySetting(os.Getenv("M365_LICENSE_TYPE"), "Starter"),
-		AccountConcurrencyLimit:   envInt("M365_ACCOUNT_CONCURRENCY_LIMIT", 8),
-		EnableMemoryV2:            os.Getenv("M365_ENABLE_MEMORY_V2") == "true",
-		EnableDeepWork:            os.Getenv("M365_ENABLE_DEEP_WORK") == "true",
-		EnableComputerUse:         os.Getenv("M365_ENABLE_COMPUTER_USE") == "true",
-		EnableRealtimeVoice:       os.Getenv("M365_ENABLE_REALTIME_VOICE") == "true",
+		ModelMappings:              append([]modelMapping(nil), defaultModelMappings...),
+		ToolPlanningMode:           toolPlanningMode(os.Getenv("M365_TOOL_PLANNING_MODE")),
+		CacheStrategy:              firstNonEmptySetting(os.Getenv("M365_CACHE_STRATEGY"), "balanced"),
+		StickyFullContext:          os.Getenv("M365_STICKY_FULL_CONTEXT") != "false",
+		StickyAccountConcurrency:   envInt("M365_STICKY_ACCOUNT_CONCURRENCY", 32),
+		RateLimitCooldownSeconds:   envInt("M365_RATE_LIMIT_COOLDOWN_SECONDS", 30),
+		Scenario:                   firstNonEmptySetting(os.Getenv("M365_SCENARIO"), "OfficeWebIncludedCopilot"),
+		MaxConversationMessages:    envInt("M365_MAX_CONVERSATION_MESSAGES", 600),
+		LicenseType:                firstNonEmptySetting(os.Getenv("M365_LICENSE_TYPE"), "Starter"),
+		AccountConcurrencyLimit:    envInt("M365_ACCOUNT_CONCURRENCY_LIMIT", 8),
+		EnableMemoryV2:             os.Getenv("M365_ENABLE_MEMORY_V2") == "true",
+		EnableDeepWork:             os.Getenv("M365_ENABLE_DEEP_WORK") == "true",
+		EnableComputerUse:          os.Getenv("M365_ENABLE_COMPUTER_USE") == "true",
+		EnableRealtimeVoice:        os.Getenv("M365_ENABLE_REALTIME_VOICE") == "true",
 		EnableSystemPromptOverride: os.Getenv("M365_ENABLE_SYSTEM_PROMPT_OVERRIDE") == "true",
-		EnableDesignerImageGen4o:  os.Getenv("M365_ENABLE_DESIGNER_IMAGE_GEN_4O") == "true",
-		EnableCodeCanvas:          os.Getenv("M365_ENABLE_CODE_CANVAS") == "true",
-		EnableSydneyReconnect:     os.Getenv("M365_ENABLE_SYDNEY_RECONNECT") == "true",
+		EnableDesignerImageGen4o:   os.Getenv("M365_ENABLE_DESIGNER_IMAGE_GEN_4O") == "true",
+		EnableCodeCanvas:           os.Getenv("M365_ENABLE_CODE_CANVAS") == "true",
+		EnableSydneyReconnect:      os.Getenv("M365_ENABLE_SYDNEY_RECONNECT") == "true",
 	}
 }
 func settingsPath() string {
@@ -147,6 +153,9 @@ func firstNonEmptySetting(values ...string) string {
 }
 
 func validateSettings(v runtimeSettings) error {
+	if v.CacheStrategy != "balanced" && v.CacheStrategy != "sticky" {
+		return fmt.Errorf("缓存策略必须为 balanced 或 sticky")
+	}
 	if v.MaxToolCallsPerTurn < 1 || v.MaxToolCallsPerTurn > 64 {
 		return fmt.Errorf("每轮工具调用数必须为 1-64")
 	}

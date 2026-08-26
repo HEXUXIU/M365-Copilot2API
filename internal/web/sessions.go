@@ -37,7 +37,21 @@ func openSessionStore() *sessionStore {
 	s.persist = &persistStore{flush: s.flush}
 	if b, err := os.ReadFile(path); err == nil {
 		if err := json.Unmarshal(b, &s.data); err != nil {
-			log.Printf("[sessions] failed to unmarshal %s: %v", path, err)
+			// Older releases persisted sessions as an array. Accept that format
+			// during upgrades and normalize it to the current ID-keyed map.
+			var legacy []conversation
+			if legacyErr := json.Unmarshal(b, &legacy); legacyErr != nil {
+				log.Printf("[sessions] failed to unmarshal %s: %v", path, err)
+			} else {
+				for _, v := range legacy {
+					if v.ID == "" {
+						v.ID = uuid.NewString()
+					}
+					s.data[v.ID] = v
+				}
+				log.Printf("[sessions] migrated legacy array path=%s count=%d", path, len(legacy))
+				s.persist.markDirty()
+			}
 		}
 	}
 	return s

@@ -448,9 +448,10 @@ func (s *Store) EnsureValid(id string) (AccountToken, error) {
 	found := false
 	for _, a := range s.data.Accounts {
 		if a.ID == id || a.OID == id || a.Email == id {
-			acc = a
-			found = true
-			break
+			if !found || a.UpdatedAt.After(acc.UpdatedAt) {
+				acc = a
+				found = true
+			}
 		}
 	}
 	if !found {
@@ -481,6 +482,31 @@ func (s *Store) EnsureValid(id string) (AccountToken, error) {
 		return acc, fmtExpired()
 	}
 	s.mu.Unlock()
+	return s.refreshInflight(acc)
+}
+
+// EnsureValidFor preserves the pre-v0.5 refresh API used by the background
+// prefetcher while the latest cache implementation keeps one standard window.
+func (s *Store) EnsureValidFor(id string, minValidity time.Duration) (AccountToken, error) {
+	window := minValidity
+	if window < 30*time.Second {
+		window = 30 * time.Second
+	}
+	s.mu.Lock()
+	var acc AccountToken
+	for _, a := range s.data.Accounts {
+		if a.ID == id || a.OID == id || a.Email == id {
+			acc = a
+			break
+		}
+	}
+	s.mu.Unlock()
+	if acc.ID == "" {
+		return AccountToken{}, os.ErrNotExist
+	}
+	if time.Now().Before(acc.ExpiresAt.Add(-window)) {
+		return acc, nil
+	}
 	return s.refreshInflight(acc)
 }
 
@@ -529,7 +555,21 @@ func (s *Store) refreshInflight(acc AccountToken) (AccountToken, error) {
 		if tok.TenantID == "" {
 			tok.TenantID = acc.TID
 		}
-		f.acc, f.err = s.Upsert(tok)
+		updated, upErr := s.Upsert(tok)
+		if upErr == nil {
+			s.mu.Lock()
+			for i := range s.data.Accounts {
+				if s.data.Accounts[i].ID == acc.ID || s.data.Accounts[i].OID == acc.OID || (acc.Email != "" && s.data.Accounts[i].Email == acc.Email) {
+					s.data.Accounts[i].AccessToken = tok.AccessToken
+					s.data.Accounts[i].ExpiresAt = tok.ExpiresAt
+					updated = s.data.Accounts[i]
+					break
+				}
+			}
+			_ = s.saveLocked()
+			s.mu.Unlock()
+		}
+		f.acc, f.err = updated, upErr
 	}
 	close(f.done)
 	s.mu.Lock()
@@ -541,34 +581,54 @@ func (s *Store) refreshInflight(acc AccountToken) (AccountToken, error) {
 func fmtExpired() error { return errors.New("token_expired: refresh token missing or expired") }
 
 func (s *Store) RefreshAllExpired() []TokenRefreshResult {
+	return s.RefreshAllDue(30*time.Second, 4)
+}
+
+// RefreshAllDue refreshes accounts whose access token has less than
+// minValidity remaining. Refreshes run concurrently across accounts, while
+// refreshInflight still coalesces duplicate work for the same account.
+func (s *Store) RefreshAllDue(minValidity time.Duration, maxConcurrent int) []TokenRefreshResult {
+	if minValidity < 30*time.Second {
+		minValidity = 30 * time.Second
+	}
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
 	s.mu.Lock()
 	candidates := make([]AccountToken, 0, len(s.data.Accounts))
 	for _, a := range s.data.Accounts {
-		remaining := a.ExpiresAt.Sub(time.Now())
-		threshold := 120 * time.Second
-		if total := a.ExpiresAt.Sub(a.UpdatedAt); total > 0 {
-			if t := total / 10; t < threshold {
-				threshold = t
-			}
-		}
-		if remaining < threshold && a.RefreshToken != "" {
+		if time.Now().After(a.ExpiresAt.Add(-minValidity)) && a.RefreshToken != "" {
 			candidates = append(candidates, a)
 		}
 	}
 	s.mu.Unlock()
-	var results []TokenRefreshResult
-	for _, a := range candidates {
-		acc, err := s.EnsureValid(a.ID)
-		r := TokenRefreshResult{ID: a.ID, Email: a.Email}
-		if err != nil {
-			r.Success = false
-			r.Error = err.Error()
-		} else {
-			r.Success = true
-			r.ExpiresAt = acc.ExpiresAt
-		}
-		results = append(results, r)
+	if len(candidates) == 0 {
+		return []TokenRefreshResult{}
 	}
+	results := make([]TokenRefreshResult, len(candidates))
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	for i, a := range candidates {
+		wg.Add(1)
+		go func(i int, a AccountToken) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			acc, err := s.EnsureValidFor(a.ID, minValidity)
+			if err == nil && acc.AccessToken == "" {
+				err = errors.New("empty access token after refresh")
+			}
+			r := TokenRefreshResult{ID: a.ID, Email: a.Email}
+			if err != nil {
+				r.Error = err.Error()
+			} else {
+				r.Success = true
+				r.ExpiresAt = acc.ExpiresAt
+			}
+			results[i] = r
+		}(i, a)
+	}
+	wg.Wait()
 	return results
 }
 

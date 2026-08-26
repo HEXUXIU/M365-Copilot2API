@@ -15,7 +15,7 @@ type pluginCacheEntry struct {
 }
 
 type pluginCache struct {
-	mu    sync.Mutex
+	mu      sync.Mutex
 	entries map[string]pluginCacheEntry
 }
 

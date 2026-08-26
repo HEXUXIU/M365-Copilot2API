@@ -2,15 +2,24 @@ package web
 
 import (
 	"context"
+	"log"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"m365-copilot2api/internal/chathub"
 )
 
 const defaultAccountConcurrency = 8
+
+const (
+	defaultTransientRetryAttempts = 2
+	maxTransientRetryAttempts     = 5
+	defaultTransientRetryDelay    = 100 * time.Millisecond
+)
 
 type accountConcurrency struct {
 	mu       sync.Mutex
@@ -108,6 +117,68 @@ func (s *Server) accountClient(accountID string) *chathub.Client {
 	return s.chat
 }
 
+func transientRetryAttempts() int {
+	raw := strings.TrimSpace(os.Getenv("M365_TRANSIENT_RETRY_ATTEMPTS"))
+	if raw == "" {
+		return defaultTransientRetryAttempts
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 0 {
+		return defaultTransientRetryAttempts
+	}
+	if parsed > maxTransientRetryAttempts {
+		return maxTransientRetryAttempts
+	}
+	return parsed
+}
+
+func transientRetryDelay(attempt int) time.Duration {
+	base := defaultTransientRetryDelay
+	if raw := strings.TrimSpace(os.Getenv("M365_TRANSIENT_RETRY_DELAY_MS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 && parsed <= 5000 {
+			base = time.Duration(parsed) * time.Millisecond
+		}
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := base
+	for i := 1; i < attempt && delay < 2*time.Second; i++ {
+		delay *= 2
+	}
+	if delay > 2*time.Second {
+		return 2 * time.Second
+	}
+	return delay
+}
+
+// callWithTransientRetry reconnects the same account and conversation only
+// while no result has been exposed to the caller. Account failover remains in
+// the protocol handlers, where conversation migration can be decided safely.
+func callWithTransientRetry(ctx context.Context, accountID string, observed func() bool, call func() (chathub.Result, error)) (chathub.Result, error) {
+	maxRetries := transientRetryAttempts()
+	for attempt := 0; ; attempt++ {
+		result, err := call()
+		if err == nil || attempt >= maxRetries || !IsTransientUpstreamFailure(err) || (observed != nil && observed()) {
+			return result, err
+		}
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		retry := attempt + 1
+		log.Printf("[transient-retry] account=%s retry=%d/%d category=%s", accountID, retry, maxRetries, ClassifyError(err))
+		timer := time.NewTimer(transientRetryDelay(retry))
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return result, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
 func (s *Server) chatWithAccount(ctx context.Context, accountID string, account chathub.Account, request chathub.Request) (chathub.Result, error) {
 	release, err := s.accountConcurrency.Acquire(ctx, accountID)
 	if err != nil {
@@ -117,7 +188,10 @@ func (s *Server) chatWithAccount(ctx context.Context, accountID string, account 
 	if s.accountPool != nil {
 		s.accountPool.MarkCall(accountID)
 	}
-	result, err := s.accountClient(accountID).Chat(ctx, account, request)
+	client := s.accountClient(accountID)
+	result, err := callWithTransientRetry(ctx, accountID, nil, func() (chathub.Result, error) {
+		return client.Chat(ctx, account, request)
+	})
 	s.markAccountResult(accountID, err)
 	return result, err
 }
@@ -131,7 +205,15 @@ func (s *Server) chatWithAccountEvents(ctx context.Context, accountID string, ac
 	if s.accountPool != nil {
 		s.accountPool.MarkCall(accountID)
 	}
-	result, err := s.accountClient(accountID).ChatWithEvents(ctx, account, request, onEvent)
+	client := s.accountClient(accountID)
+	var observed atomic.Bool
+	wrappedEvent := func(event chathub.StreamEvent) error {
+		observed.Store(true)
+		return onEvent(event)
+	}
+	result, err := callWithTransientRetry(ctx, accountID, observed.Load, func() (chathub.Result, error) {
+		return client.ChatWithEvents(ctx, account, request, wrappedEvent)
+	})
 	s.markAccountResult(accountID, err)
 	return result, err
 }
@@ -145,7 +227,23 @@ func (s *Server) chatWithAccountReasoning(ctx context.Context, accountID string,
 	if s.accountPool != nil {
 		s.accountPool.MarkCall(accountID)
 	}
-	result, err := s.accountClient(accountID).ChatWithReasoning(ctx, account, request, onDelta, onReasoning)
+	client := s.accountClient(accountID)
+	var observed atomic.Bool
+	wrappedDelta := func(value string) error {
+		if value != "" {
+			observed.Store(true)
+		}
+		return onDelta(value)
+	}
+	wrappedReasoning := func(value string) error {
+		if value != "" {
+			observed.Store(true)
+		}
+		return onReasoning(value)
+	}
+	result, err := callWithTransientRetry(ctx, accountID, observed.Load, func() (chathub.Result, error) {
+		return client.ChatWithReasoning(ctx, account, request, wrappedDelta, wrappedReasoning)
+	})
 	s.markAccountResult(accountID, err)
 	return result, err
 }

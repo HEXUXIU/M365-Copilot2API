@@ -368,6 +368,8 @@ curl http://127.0.0.1:4141/v1/messages \
 
 `M365_AFFINITY_MODE=observe` 只采集和预热绑定，不改变现有路由；确认 `/api/health` 中亲和状态正常后切换为 `enforce`。设置 `M365_REDIS_URL=redis://...` 后会使用 Redis 作为共享亲和存储，Redis 不可用时自动回退到进程内存储。`off` 和 `observe` 模式继续使用主线 `convCache`，`enforce` 模式由精确会话绑定独立管理复用。Responses API 在 `off` 模式保持原有的 `extractAPIKey` 租户命名空间，滚动升级不会破坏 `previous_response_id` 查找；启用亲和后才使用哈希租户键。核心实现使用进程内存储或 Redis，缓存统计保持保守值，不会把普通历史消息误报成命中。
 
+`M365_TRANSIENT_RETRY_ATTEMPTS` 控制同账号、同会话在尚未输出任何正文或工具事件时的瞬时网络重连次数（默认 `2`，最大 `5`），`M365_TRANSIENT_RETRY_DELAY_MS` 控制首次退避时间（默认 `100ms`，后续指数退避且单次最多 `2s`）。该重连只处理 WebSocket 握手、连接重置、超时等传输错误；已经开始输出的流不会重放，账号切换与上游兜底文本仍沿用原有恢复逻辑。
+
 从 `off` 切换到 `observe`/`enforce` 时，Responses API 的租户键会切换为哈希命名空间；进程内的旧 `previous_response_id` 状态不会迁移。滚动升级时应保持模式不变，或接受旧响应链需要重新建立。
 
 工具规划器默认使用一次性云端会话，成功后自动清理；需要让规划器复用调用方会话时显式设置 `M365_AFFINITY_REUSE_ROUTER_CONVERSATION=true`。请求中的 `prompt_cache_key` 只用于稳定账号亲和路由，不等同于会话续接，也不会单独声称缓存命中。

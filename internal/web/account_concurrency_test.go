@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"m365-copilot2api/internal/chathub"
 )
 
 func TestAccountConcurrencyLimitsAndReleasesSlots(t *testing.T) {
@@ -53,5 +55,68 @@ func TestAccountConcurrencyUsesDocumentedDefault(t *testing.T) {
 	limiter := newAccountConcurrency()
 	if limiter.limit != defaultAccountConcurrency {
 		t.Fatalf("limit = %d, want %d", limiter.limit, defaultAccountConcurrency)
+	}
+}
+
+func TestCallWithTransientRetryEventuallySucceeds(t *testing.T) {
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "2")
+	t.Setenv("M365_TRANSIENT_RETRY_DELAY_MS", "1")
+	calls := 0
+	result, err := callWithTransientRetry(context.Background(), "account-a", nil, func() (chathub.Result, error) {
+		calls++
+		if calls == 1 {
+			return chathub.Result{}, errors.New("ws dial: websocket: bad handshake")
+		}
+		return chathub.Result{Text: "ok"}, nil
+	})
+	if err != nil || result.Text != "ok" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want 2", calls)
+	}
+}
+
+func TestCallWithTransientRetryStopsAtBudget(t *testing.T) {
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "2")
+	t.Setenv("M365_TRANSIENT_RETRY_DELAY_MS", "1")
+	calls := 0
+	_, err := callWithTransientRetry(context.Background(), "account-a", nil, func() (chathub.Result, error) {
+		calls++
+		return chathub.Result{}, errors.New("ws dial: websocket: bad handshake")
+	})
+	if err == nil {
+		t.Fatal("expected final transient error")
+	}
+	if calls != 3 {
+		t.Fatalf("calls=%d want initial call plus 2 retries", calls)
+	}
+}
+
+func TestCallWithTransientRetryDoesNotReplayObservedStream(t *testing.T) {
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "2")
+	t.Setenv("M365_TRANSIENT_RETRY_DELAY_MS", "1")
+	calls := 0
+	observed := true
+	_, err := callWithTransientRetry(context.Background(), "account-a", func() bool { return observed }, func() (chathub.Result, error) {
+		calls++
+		return chathub.Result{}, errors.New("ws read before completion: connection reset")
+	})
+	if err == nil {
+		t.Fatal("expected stream error")
+	}
+	if calls != 1 {
+		t.Fatalf("observed stream was replayed %d times", calls)
+	}
+}
+
+func TestTransientRetryAttemptsCanBeDisabledAndIsCapped(t *testing.T) {
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "0")
+	if got := transientRetryAttempts(); got != 0 {
+		t.Fatalf("disabled retries=%d", got)
+	}
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "99")
+	if got := transientRetryAttempts(); got != maxTransientRetryAttempts {
+		t.Fatalf("capped retries=%d want %d", got, maxTransientRetryAttempts)
 	}
 }

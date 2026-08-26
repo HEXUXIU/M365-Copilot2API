@@ -531,6 +531,13 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 	}
 	cat := ClassifyError(err)
 	GlobalCircuitRecord(err)
+	// ChatHub's generic fallback is a transient, tenant-scoped completion
+	// failure. It should trigger the caller's bounded retry, but must not cool
+	// down or quarantine the account; doing so can drain the whole pool when
+	// several accounts share the same upstream condition.
+	if errors.Is(err, chathub.ErrEmptyCompletion) {
+		return
+	}
 	if cat == CategoryClientCanceled {
 		return
 	}

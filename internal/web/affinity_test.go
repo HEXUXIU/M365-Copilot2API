@@ -85,6 +85,40 @@ func TestHistoryLookupRequiresAssistantBearingExactPrefix(t *testing.T) {
 	}
 }
 
+func TestResponsesReconstructedTextHistoryResolvesExactBinding(t *testing.T) {
+	store := newMemoryAffinityStore(time.Hour, 100)
+	ctx := context.Background()
+	tenant := hashString("tenant-a")
+	stored := []oaiMsg{
+		{Role: "user", Content: "summarize the document"},
+		{Role: "assistant", Content: "summary result"},
+	}
+	binding := affinityBinding{
+		ID: "binding-responses", TenantHash: tenant, AccountID: "acc-1",
+		ConversationID: "conv-1", SessionID: "sess-1",
+		HistoryDigest: historyDigest(stored), HistoryCount: len(stored), Generation: 1,
+	}
+	if err := store.PutBinding(ctx, binding, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	reconstructed := []oaiMsg{
+		{Role: "user", Content: []any{map[string]any{"type": "input_text", "text": "summarize the document"}}},
+		{Role: "assistant", Content: []any{map[string]any{"type": "output_text", "text": "summary result", "annotations": []any{}}}},
+		{Role: "user", Content: []any{map[string]any{"type": "input_text", "text": "expand section two"}}},
+	}
+	resolved, prefix, ok, err := resolveHistoryBinding(ctx, store, tenant, reconstructed, 64)
+	if err != nil || !ok || resolved.ID != binding.ID || prefix != len(stored) {
+		t.Fatalf("protocol-equivalent Responses history did not resolve: resolved=%+v prefix=%d ok=%t err=%v", resolved, prefix, ok, err)
+	}
+
+	otherChat := append([]oaiMsg(nil), reconstructed...)
+	otherChat[1].Content = []any{map[string]any{"type": "output_text", "text": "different answer", "annotations": []any{}}}
+	if _, _, ok, err := resolveHistoryBinding(ctx, store, tenant, otherChat, 64); err != nil || ok {
+		t.Fatalf("different Responses history crossed bindings: ok=%t err=%v", ok, err)
+	}
+}
+
 func TestMemoryAffinityHistoryKeepsConcurrentEqualDigests(t *testing.T) {
 	store := newMemoryAffinityStore(time.Hour, 100)
 	ctx := context.Background()

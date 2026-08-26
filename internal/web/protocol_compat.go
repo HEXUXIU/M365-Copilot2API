@@ -19,6 +19,7 @@ type responsesRequest struct {
 	Stream             bool             `json:"stream,omitempty"`
 	User               string           `json:"user,omitempty"`
 	Reasoning          *reasoningConfig `json:"reasoning,omitempty"`
+	PromptCacheKey     string           `json:"prompt_cache_key,omitempty"`
 	PreviousResponseID string           `json:"previous_response_id,omitempty"`
 	Conversation       string           `json:"conversation,omitempty"`
 	NewConversation    bool             `json:"new_conversation,omitempty"`
@@ -30,7 +31,7 @@ type responsesRequest struct {
 const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`
 
 func (r responsesRequest) openAI() (oaiReq, error) {
-	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User}
+	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User, PromptCacheKey: r.PromptCacheKey}
 	if r.Temperature != nil {
 		o.Temperature = r.Temperature
 	}
@@ -61,6 +62,11 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			}
 			typ, _ := m["type"].(string)
 			switch typ {
+			case "reasoning":
+				// A Responses reasoning item is opaque model output carried in a
+				// reconstructed history. It is not a user message and must not be
+				// replayed into ChatHub as one.
+				continue
 			case "function_call_progress":
 				// Progress is deliberately not converted into an assistant/tool
 				// message. It is transport metadata from a long-running client-side

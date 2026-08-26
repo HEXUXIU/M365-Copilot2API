@@ -20,6 +20,31 @@ func TestParseContentAcceptsResponsesTextBlocks(t *testing.T) {
 	}
 }
 
+func TestResponsesOpenAIMapsCacheKeyAndIgnoresReasoningHistory(t *testing.T) {
+	r := responsesRequest{
+		Model:          "gpt-5.6-sol",
+		PromptCacheKey: "stable-chat-key",
+		Input: []any{
+			map[string]any{"type": "reasoning", "id": "rs_1", "summary": []any{map[string]any{"type": "summary_text", "text": "internal summary"}}},
+			map[string]any{"type": "message", "role": "assistant", "content": []any{map[string]any{"type": "output_text", "text": "previous answer", "annotations": []any{}}}},
+			map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "continue"}}},
+		},
+	}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.PromptCacheKey != r.PromptCacheKey {
+		t.Fatalf("prompt_cache_key=%q want=%q", o.PromptCacheKey, r.PromptCacheKey)
+	}
+	if len(o.Messages) != 2 {
+		t.Fatalf("reasoning item became a prompt message: %#v", o.Messages)
+	}
+	if o.Messages[0].Role != "assistant" || o.Messages[1].Role != "user" {
+		t.Fatalf("unexpected roles after conversion: %#v", o.Messages)
+	}
+}
+
 func TestResponsesUsageEstimateIsNonZeroForText(t *testing.T) {
 	usage := estimateResponsesUsage("gpt-5.5", []oaiMsg{{Role: "user", Content: "hello"}}, nil, nil, "world").Values
 	if usage["input_tokens"].(int) <= 0 || usage["output_tokens"].(int) <= 0 || usage["total_tokens"].(int) <= 0 {

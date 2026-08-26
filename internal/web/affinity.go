@@ -133,6 +133,9 @@ func deriveAffinityKey(tenant string, body *oaiReq, r *http.Request) affinityKey
 
 func canonicalMessage(msg oaiMsg) map[string]any {
 	content := canonicalContentValue(msg.Content)
+	if text, ok := canonicalTextContent(msg.Content); ok {
+		content = text
+	}
 	// OpenAI-compatible clients commonly round-trip an assistant tool-call
 	// message as content:"" even when the gateway emitted content:null. Both
 	// forms mean that the turn contains only tool calls.
@@ -162,6 +165,47 @@ func canonicalMessage(msg oaiMsg) map[string]any {
 		out["tool_calls"] = calls
 	}
 	return out
+}
+
+// canonicalTextContent collapses Responses API text containers to the same
+// value used by Chat Completions. This removes transport-only differences such
+// as input_text/output_text and annotations without weakening image or tool
+// identity checks.
+func canonicalTextContent(value any) (string, bool) {
+	var blocks []map[string]any
+	switch typed := value.(type) {
+	case []any:
+		blocks = make([]map[string]any, 0, len(typed))
+		for _, raw := range typed {
+			block, ok := raw.(map[string]any)
+			if !ok {
+				return "", false
+			}
+			blocks = append(blocks, block)
+		}
+	case []map[string]any:
+		blocks = typed
+	default:
+		return "", false
+	}
+	if len(blocks) == 0 {
+		return "", false
+	}
+	var text strings.Builder
+	for _, block := range blocks {
+		typ, _ := block["type"].(string)
+		switch typ {
+		case "text", "input_text", "output_text":
+		default:
+			return "", false
+		}
+		part, ok := block["text"].(string)
+		if !ok {
+			return "", false
+		}
+		text.WriteString(part)
+	}
+	return text.String(), true
 }
 
 func emptyMessageContent(value any) bool {

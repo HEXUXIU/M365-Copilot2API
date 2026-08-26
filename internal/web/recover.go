@@ -26,6 +26,20 @@ func (w *streamingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Preserve streaming and ResponseController capabilities through the panic
+// recovery wrapper. Without Flush, SSE frames remain buffered until enough
+// data accumulates or the handler returns.
+func (w *streamingWriter) Flush() {
+	w.headerWritten = true
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *streamingWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 // recoverPanics 捕获 handler panic，已开始流式时不写错误体，否则返回 JSON 500。
 func recoverPanics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

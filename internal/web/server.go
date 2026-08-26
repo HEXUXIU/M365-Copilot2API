@@ -1713,7 +1713,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		requestID = uuid.NewString()
 	}
 	startedAt := time.Now()
-	log.Printf("[req-trace] id=%s stage=http_start stream=%t", requestID, r.URL.Query().Get("stream") == "true")
+	log.Printf("[req-trace] id=%s stage=http_start", requestID)
 	defer func() {
 		log.Printf("[req-trace] id=%s stage=http_return total_ms=%d", requestID, time.Since(startedAt).Milliseconds())
 	}()
@@ -1745,7 +1745,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	normalizeLegacyTools(&body)
 	body.ConversationID = firstNonEmpty(body.ConversationID, body.ConversationIDC)
 	body.SessionID = firstNonEmpty(body.SessionID, body.SessionIDC)
-	log.Printf("[req-trace] id=%s stage=body_parsed messages=%d tools=%d choice=%s raw_bytes=%d", requestID, len(body.Messages), len(body.Tools), normalizedToolChoiceMode(body.ToolChoice), len(raw))
+	log.Printf("[req-trace] id=%s stage=body_parsed stream=%t messages=%d tools=%d choice=%s raw_bytes=%d", requestID, body.Stream, len(body.Messages), len(body.Tools), normalizedToolChoiceMode(body.ToolChoice), len(raw))
 	if err := validateToolConversation(body.Messages); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", err.Error())
 		return

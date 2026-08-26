@@ -85,6 +85,9 @@ func TestModelsAdvertiseContextAndReasoning(t *testing.T) {
 		if m["shell_type"] != "shell_command" || m["visibility"] != "list" || m["supported_in_api"] != true || m["priority"] != float64(1) {
 			t.Fatalf("missing Codex execution metadata: %#v", m)
 		}
+		if m["supports_reasoning_summaries"] != true || m["default_reasoning_summary"] != "auto" {
+			t.Fatalf("reasoning summaries are not enabled by default: %#v", m)
+		}
 		if _, ok := m["additional_speed_tiers"].([]any); !ok {
 			t.Fatalf("missing speed tiers: %#v", m)
 		}

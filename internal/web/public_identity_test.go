@@ -335,6 +335,13 @@ func TestPublicIdentityStreamFilterEmitsOrdinaryTextImmediately(t *testing.T) {
 	}
 }
 
+func TestPublicReasoningStreamFilterEmitsOrdinaryTextImmediately(t *testing.T) {
+	filter := newPublicReasoningStreamFilter()
+	if got := filter.Push("正在比较两个候选方案"); got != "正在比较两个候选方案" {
+		t.Fatalf("ordinary reasoning stream text was buffered: %q", got)
+	}
+}
+
 func TestPublicIdentityStreamFilterKeepsChineseProviderPrefixSplit(t *testing.T) {
 	filter := newPublicIdentityStreamFilter("gpt-5.6-sol")
 	var got strings.Builder

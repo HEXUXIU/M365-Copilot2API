@@ -23,7 +23,7 @@ func classifyUpdateMessages(messages []any) []StreamEvent {
 		// ChatHub marks the multi-step reasoning transcript (ChainOfThought cards)
 		// via contentOrigin and addToChainOfThought. Expose it separately so the
 		// OpenAI-compatible layer can render it as reasoning_content.
-		if origin == "ChainOfThoughtSummary" || cot {
+		if origin == "ChainOfThoughtSummary" || cot || (mt == "Progress" && ct == "EarlyProgress") {
 			kind = "reasoning"
 		}
 		name, args := extractToolFields(m)

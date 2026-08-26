@@ -2067,10 +2067,26 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		var text strings.Builder
+		var reasoning strings.Builder
 		var pending strings.Builder
 		var streamedTools []detectedToolCall
 		first := true
 		identityFilter := newPublicIdentityStreamFilter(model)
+		reasoningFilter := newPublicReasoningStreamFilter()
+		emitDelta := func(delta map[string]any) error {
+			if len(delta) == 0 {
+				return nil
+			}
+			if err := r.Context().Err(); err != nil {
+				return err
+			}
+			if first {
+				delta["role"] = "assistant"
+				first = false
+			}
+			chunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}}
+			return sw.data(mustJSON(chunk))
+		}
 		emitText := func(part string) error {
 			if part == "" {
 				return nil
@@ -2079,17 +2095,15 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if part == "" {
 				return nil
 			}
-			if err := r.Context().Err(); err != nil {
-				return err
+			return emitDelta(map[string]any{"content": part})
+		}
+		emitReasoning := func(part string) error {
+			if part == "" {
+				return nil
 			}
-			delta := map[string]any{"content": part}
-			if first {
-				delta["role"] = "assistant"
-				first = false
-			}
-			chunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}}
-			if err := sw.data(mustJSON(chunk)); err != nil {
-				return err
+			reasoning.WriteString(part)
+			if part = reasoningFilter.Push(part); part != "" {
+				return emitDelta(map[string]any{"reasoning_content": part})
 			}
 			return nil
 		}
@@ -2097,6 +2111,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
 				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
 				return nil
+			}
+			if ev.Kind == "reasoning" && ev.Text != "" {
+				return emitReasoning(ev.Text)
 			}
 			if ev.Kind != "text" || ev.Text == "" {
 				return nil
@@ -2150,7 +2167,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		})
-		if err != nil && text.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
+		if err != nil && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
 			originalErr := err
 			// A throttled stream may retry on the next healthy account: only the
 			// ": connected" preamble reached the client, so the retried stream is
@@ -2170,6 +2187,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
 						streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
 						return nil
+					}
+					if ev.Kind == "reasoning" && ev.Text != "" {
+						return emitReasoning(ev.Text)
 					}
 					if ev.Kind != "text" || ev.Text == "" {
 						return nil
@@ -2295,10 +2315,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
+		if part := reasoningFilter.Flush(); part != "" {
+			if err := emitDelta(map[string]any{"reasoning_content": part}); err != nil {
+				log.Printf("[req-trace] id=%s stage=reasoning_stream_write err=%v", requestID, err)
+				return
+			}
+		}
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String()}, answerPrompt, startedAt, affinityState)
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String(), ReasoningContent: sanitizePublicReasoningText(reasoning.String())}, answerPrompt, startedAt, affinityState)
 		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 		finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": chatUsage(usage)}
 		if res.Throttling != nil {

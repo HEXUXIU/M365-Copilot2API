@@ -98,6 +98,69 @@ func TestStreamingResponsesResultIncludesUsage(t *testing.T) {
 	}
 }
 
+func TestResponsesResultProjectsReasoningSummary(t *testing.T) {
+	src := map[string]any{
+		"choices": []any{map[string]any{"message": map[string]any{
+			"content": "final answer", "reasoning_content": "checked the alternatives",
+		}}},
+	}
+
+	t.Run("non_stream", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		writeResponsesResult(rr, "gpt-5.6-sol", false, src)
+		var response map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		output, _ := response["output"].([]any)
+		if len(output) != 2 {
+			t.Fatalf("output=%#v", output)
+		}
+		reasoning, _ := output[0].(map[string]any)
+		message, _ := output[1].(map[string]any)
+		if reasoning["type"] != "reasoning" || message["type"] != "message" {
+			t.Fatalf("unexpected output order: %#v", output)
+		}
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		writeResponsesResult(rr, "gpt-5.6-sol", true, src)
+		body := rr.Body.String()
+		for _, want := range []string{
+			"event: response.reasoning_summary_part.added",
+			"event: response.reasoning_summary_text.delta",
+			"event: response.reasoning_summary_text.done",
+			"event: response.reasoning_summary_part.done",
+			"event: response.content_part.added",
+			"event: response.output_text.delta",
+			"event: response.output_text.done",
+			"event: response.content_part.done",
+		} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("missing %q in %s", want, body)
+			}
+		}
+		if strings.Index(body, `"output_index":0`) > strings.Index(body, `"output_index":1`) {
+			t.Fatalf("reasoning must precede message output: %s", body)
+		}
+		sequence := 0
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.HasPrefix(line, "data: ") {
+				continue
+			}
+			var event map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+				t.Fatal(err)
+			}
+			if got := int(event["sequence_number"].(float64)); got != sequence {
+				t.Fatalf("sequence=%d want=%d event=%#v", got, sequence, event)
+			}
+			sequence++
+		}
+	})
+}
+
 func TestResponsesStreamEmitsFailedForInnerRequestError(t *testing.T) {
 	s := &Server{}
 	r := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"gpt-5.5","input":[],"stream":true}`))

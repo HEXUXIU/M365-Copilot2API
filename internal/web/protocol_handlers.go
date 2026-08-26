@@ -134,20 +134,36 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, _ := w.(http.Flusher)
+	sequence := 0
 	emit := func(name string, v any) error {
+		if event, ok := v.(map[string]any); ok {
+			event["sequence_number"] = sequence
+			sequence++
+		}
 		return writeSSE(r, w, flusher, name, v)
 	}
 	id := responseID
 	created := time.Now().Unix()
-	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "status": "in_progress", "model": model, "output": []any{}}})
+	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}})
 
 	var text strings.Builder
 	messageID := "msg_" + uuid.NewString()
-	contentID := "txt_" + uuid.NewString()
 	textStarted := false
+	textOutputIndex := -1
+	var reasoning strings.Builder
+	reasoningID := "rs_" + uuid.NewString()
+	reasoningStarted := false
+	reasoningOutputIndex := -1
+	nextOutputIndex := 0
+	allocateOutputIndex := func() int {
+		index := nextOutputIndex
+		nextOutputIndex++
+		return index
+	}
 	type tcState struct {
 		ID, Name, Args, Type string
 		ItemID               string
+		OutputIndex          int
 	}
 	calls := map[int]*tcState{}
 	var innerUsage map[string]any
@@ -174,13 +190,25 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		}
 		choice, _ := choices[0].(map[string]any)
 		delta, _ := choice["delta"].(map[string]any)
+		if part, ok := delta["reasoning_content"].(string); ok && part != "" {
+			if !reasoningStarted {
+				reasoningStarted = true
+				reasoningOutputIndex = allocateOutputIndex()
+				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": reasoningOutputIndex, "item": map[string]any{"type": "reasoning", "id": reasoningID, "summary": []any{}}})
+				emit("response.reasoning_summary_part.added", map[string]any{"type": "response.reasoning_summary_part.added", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "part": map[string]any{"type": "summary_text", "text": ""}})
+			}
+			reasoning.WriteString(part)
+			emit("response.reasoning_summary_text.delta", map[string]any{"type": "response.reasoning_summary_text.delta", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "delta": part})
+		}
 		if content, ok := delta["content"].(string); ok && content != "" {
 			text.WriteString(content)
 			if !textStarted {
 				textStarted = true
-				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{map[string]any{"type": "output_text", "id": contentID, "text": "", "annotations": []any{}}}}})
+				textOutputIndex = allocateOutputIndex()
+				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": textOutputIndex, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{}}})
+				emit("response.content_part.added", map[string]any{"type": "response.content_part.added", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
 			}
-			emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "item_id": messageID, "delta": content})
+			emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "delta": content})
 		}
 		if rawCalls, ok := delta["tool_calls"].([]any); ok {
 			for _, raw := range rawCalls {
@@ -205,10 +233,10 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 						prefix = "ctc_"
 						item = map[string]any{"type": "custom_tool_call", "call_id": "", "name": "", "input": "", "status": "in_progress"}
 					}
-					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ}
+					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ, OutputIndex: allocateOutputIndex()}
 					calls[idx] = st
 					item["id"] = st.ItemID
-					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": idx, "item": item})
+					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": st.OutputIndex, "item": item})
 				}
 				if v, ok := tc["id"].(string); ok {
 					st.ID = v
@@ -220,7 +248,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 				if v, ok := fn["arguments"].(string); ok {
 					st.Args += v
 					if st.Type != "custom" {
-						emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": idx, "item_id": st.ItemID, "delta": v})
+						emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": st.OutputIndex, "item_id": st.ItemID, "delta": v})
 					}
 				}
 			}
@@ -241,7 +269,7 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		})
 		return
 	}
-	if len(calls) == 0 && strings.TrimSpace(text.String()) == "" {
+	if len(calls) == 0 && strings.TrimSpace(text.String()) == "" && strings.TrimSpace(reasoning.String()) == "" {
 		// Never leave a Responses stream after response.created without a
 		// terminal event: clients otherwise render this as a successful blank
 		// answer and may reuse an incomplete response on the next turn.
@@ -254,7 +282,16 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		})
 		return
 	}
-	output := []any{}
+	outputByIndex := map[int]any{}
+	if reasoningStarted {
+		reasoningText := reasoning.String()
+		summary := map[string]any{"type": "summary_text", "text": reasoningText}
+		item := map[string]any{"type": "reasoning", "id": reasoningID, "summary": []any{summary}}
+		emit("response.reasoning_summary_text.done", map[string]any{"type": "response.reasoning_summary_text.done", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "text": reasoningText})
+		emit("response.reasoning_summary_part.done", map[string]any{"type": "response.reasoning_summary_part.done", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "part": summary})
+		emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": reasoningOutputIndex, "item": item})
+		outputByIndex[reasoningOutputIndex] = item
+	}
 	if len(calls) > 0 {
 		keys := make([]int, 0, len(calls))
 		for k := range calls {
@@ -269,30 +306,42 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 			if st.Type == "custom" {
 				input := customToolInput(st.Args)
 				item := map[string]any{"type": "custom_tool_call", "id": st.ItemID, "call_id": st.ID, "name": st.Name, "input": input, "status": "completed"}
-				output = append(output, item)
-				emit("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "output_index": i, "item_id": item["id"], "delta": input})
-				emit("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "output_index": i, "item_id": item["id"], "input": input})
-				emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
+				outputByIndex[st.OutputIndex] = item
+				emit("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "output_index": st.OutputIndex, "item_id": item["id"], "delta": input})
+				emit("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "output_index": st.OutputIndex, "item_id": item["id"], "input": input})
+				emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": st.OutputIndex, "item": item})
 				continue
 			}
 			item := map[string]any{"type": "function_call", "id": st.ItemID, "call_id": st.ID, "name": st.Name, "arguments": st.Args, "status": "completed"}
-			output = append(output, item)
-			emit("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "output_index": i, "item_id": st.ItemID, "arguments": st.Args})
-			emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": i, "item": item})
+			outputByIndex[st.OutputIndex] = item
+			emit("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "output_index": st.OutputIndex, "item_id": st.ItemID, "arguments": st.Args})
+			emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": st.OutputIndex, "item": item})
 		}
-	} else {
-		item := map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{map[string]any{"type": "output_text", "id": contentID, "text": "", "annotations": []any{}}}}
-		output = append(output, item)
+	} else if text.Len() > 0 {
 		if !textStarted {
-			emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": 0, "item": item})
-			emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": 0, "content_index": 0, "item_id": messageID, "delta": text.String()})
+			textStarted = true
+			textOutputIndex = allocateOutputIndex()
+			emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": textOutputIndex, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{}}})
+			emit("response.content_part.added", map[string]any{"type": "response.content_part.added", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
+			emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "delta": text.String()})
 		}
-		emit("response.output_text.done", map[string]any{"type": "response.output_text.done", "output_index": 0, "content_index": 0, "item_id": messageID, "text": text.String()})
-		item["status"] = "completed"
-		item["content"] = []any{map[string]any{"type": "output_text", "id": contentID, "text": text.String(), "annotations": []any{}}}
-		emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": 0, "item": item})
+		contentPart := map[string]any{"type": "output_text", "text": text.String(), "annotations": []any{}}
+		item := map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{contentPart}}
+		emit("response.output_text.done", map[string]any{"type": "response.output_text.done", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "text": text.String()})
+		emit("response.content_part.done", map[string]any{"type": "response.content_part.done", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": contentPart})
+		emit("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": textOutputIndex, "item": item})
+		outputByIndex[textOutputIndex] = item
 	}
-	usageOutput := text.String()
+	outputIndexes := make([]int, 0, len(outputByIndex))
+	for index := range outputByIndex {
+		outputIndexes = append(outputIndexes, index)
+	}
+	sort.Ints(outputIndexes)
+	output := make([]any, 0, len(outputIndexes))
+	for _, index := range outputIndexes {
+		output = append(output, outputByIndex[index])
+	}
+	usageOutput := text.String() + reasoning.String()
 	for _, call := range calls {
 		usageOutput += call.Name + call.Args
 	}

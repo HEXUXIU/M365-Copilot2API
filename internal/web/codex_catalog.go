@@ -297,7 +297,7 @@ func modelCatalog() []map[string]any {
 			"shell_type": "shell_command", "visibility": "list", "supported_in_api": true, "priority": 1,
 			"additional_speed_tiers": []string{}, "service_tiers": []any{},
 			"availability_nux": nil, "upgrade": nil, "include_skills_usage_instructions": false,
-			"supports_reasoning_summaries": true, "default_reasoning_summary": "none",
+			"supports_reasoning_summaries": true, "default_reasoning_summary": "auto",
 			"support_verbosity": true, "default_verbosity": "low", "apply_patch_tool_type": "freeform",
 			"web_search_tool_type": "text_and_image", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000},
 			"supports_parallel_tool_calls": true, "supports_image_detail_original": true,

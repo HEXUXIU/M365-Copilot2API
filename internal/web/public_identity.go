@@ -579,12 +579,44 @@ func (f *publicReasoningStreamFilter) consume(final bool) string {
 		f.pending = f.pending[end:]
 		return sanitizePublicReasoningText(chunk)
 	}
-	if len(f.pending) > 4096 {
-		chunk := f.pending[:len(f.pending)-256]
-		f.pending = f.pending[len(f.pending)-256:]
+	if !publicReasoningStreamMayNeedBuffer(f.pending) {
+		chunk := f.pending
+		f.pending = ""
+		return sanitizePublicReasoningText(chunk)
+	}
+	if len(f.pending) > publicIdentityNeutralBufferLimit {
+		cut := len(f.pending) - publicIdentityNeutralTailBytes
+		for cut > 0 && !utf8.RuneStart(f.pending[cut]) {
+			cut--
+		}
+		chunk := f.pending[:cut]
+		f.pending = f.pending[cut:]
 		return sanitizePublicReasoningText(chunk)
 	}
 	return ""
+}
+
+var publicReasoningStreamMarkers = []string{
+	"you are", "system prompt", "developer message", "prompt confidentiality",
+	"tool protocol", "based on", "content policy", "priority instructions",
+}
+
+func publicReasoningStreamMayNeedBuffer(value string) bool {
+	if publicIdentityStreamMayNeedBuffer(value) {
+		return true
+	}
+	lower := strings.ToLower(value)
+	for _, marker := range publicReasoningStreamMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+		for n := 2; n <= len(marker) && n <= len(lower); n++ {
+			if strings.HasSuffix(lower, marker[:n]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func lastPublicIdentityBoundary(value string) int {

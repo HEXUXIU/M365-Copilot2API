@@ -771,7 +771,11 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 
 					for _, ev := range classifyUpdateMessages(msgs) {
 						if ev.Kind == "reasoning" {
-							reasoningBuf.WriteString(ev.Text)
+							if reasoningBuf.Len() > 0 {
+								reasoningBuf.WriteByte('\n')
+								ev.Text = "\n" + ev.Text
+							}
+							reasoningBuf.WriteString(strings.TrimPrefix(ev.Text, "\n"))
 						}
 						ev.Raw = eventRaw(arg)
 						if ev.Kind != "text" && onEvent != nil {

@@ -1828,6 +1828,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if affinityState == nil {
 		affinityState = &affinityRequest{}
 	}
+	// Apply the resolved account/conversation binding before routing. Without
+	// this, affinity state was recorded but never affected production requests.
+	affinityState.apply(&body)
 	// 内容键会话复用：命中后云端对话已存全量历史，只需把客户端新增的
 	// 消息拼成增量 prompt 发送（对齐 DeepSeek 上下文缓存语义）。
 	answerPrompt := prompt

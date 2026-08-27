@@ -475,6 +475,31 @@ func appendResponsesAssistantHistory(messages []oaiMsg, text string, calls []map
 	return append(messages, oaiMsg{Role: "assistant", Content: text, ToolCalls: calls})
 }
 
+// mergeResponsesContinuation keeps repeated request-level system policies out
+// of the assistant-call/tool-result pair. Codex resends additional_tools on
+// every turn, which recreates the custom-exec policy before the tool output.
+func mergeResponsesContinuation(parent, current []oaiMsg) []oaiMsg {
+	leadingSystem := 0
+	for leadingSystem < len(current) && strings.EqualFold(strings.TrimSpace(current[leadingSystem].Role), "system") {
+		leadingSystem++
+	}
+	merged := append([]oaiMsg(nil), parent...)
+	for _, policy := range current[:leadingSystem] {
+		duplicate := false
+		policyText := contentToString(policy.Content)
+		for _, existing := range parent {
+			if strings.EqualFold(strings.TrimSpace(existing.Role), "system") && contentToString(existing.Content) == policyText {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			merged = append([]oaiMsg{policy}, merged...)
+		}
+	}
+	return append(merged, current[leadingSystem:]...)
+}
+
 func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []byte, int, error) {
 	o.Stream = false
 	b, _ := json.Marshal(o)
@@ -552,7 +577,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		if s.debug != nil {
 			s.debug.add(debugRecord{ID: "resp_" + uuid.NewString(), At: time.Now(), Path: "/v1/responses", Method: "POST", Status: 200, Level: "info", Gateway: map[string]any{"previous_response_id": body.PreviousResponseID, "tenantHash": tenantHashPrefix(tenant), "session": sessionHashPrefix(sessionID), "tool_ids": toolIDs, "version": claim.Version, "parentToolCalls": claim.ToolCount, "action": "claimed"}})
 		}
-		o.Messages = append(claim.Messages, o.Messages...)
+		o.Messages = mergeResponsesContinuation(claim.Messages, o.Messages)
 	}
 	if s.settings != nil && s.settings.get().ToolProtocolMode == "pi_compat" {
 		normalized, normalizeErr := normalizeResponsesToolHistory(o.Messages)

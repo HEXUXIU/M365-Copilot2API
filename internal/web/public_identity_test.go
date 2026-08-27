@@ -176,7 +176,7 @@ func TestSanitizePublicReasoningTextBlocksInternalPromptLeaks(t *testing.T) {
 }
 
 func TestSanitizePublicReasoningTextDropsStatusPlaceholders(t *testing.T) {
-	for _, input := range []string{"Taking a look...", "Taking a look…", "Give me a moment...", "Just a sec...", "Digging in...", "Queuing things up...", "Getting things ready…", "Putting it together…", "Lining things up…", "Looking into it…", "Gathering details…", "Checking into it…", "Making it happen…", "Hang on a sec…", "Checking that now…", "Thinking..."} {
+	for _, input := range []string{"Taking a look...", "Taking a look…", "Give me a moment...", "Just a sec...", "Digging in...", "Queuing things up...", "Getting things ready…", "Putting it together…", "Lining things up…", "Looking into it…", "Gathering details…", "Checking into it…", "Making it happen…", "Hang on a sec…", "Checking that now…", "Coding and executing", "Thinking..."} {
 		if got := sanitizePublicReasoningText(input); got != "" {
 			t.Fatalf("reasoning placeholder was published: %q", got)
 		}

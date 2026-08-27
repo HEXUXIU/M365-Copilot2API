@@ -14,6 +14,10 @@ func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) st
 - Only use tools from the available list above
 - Validate all arguments against the tool's schema
 - Do not invent tools that are not in the list`
+	if toolChoiceRequiresCall(choice) {
+		rules += `
+- MODE requires a tool call. You must select at least one available tool; never respond with NO_TOOL_NEEDED`
+	}
 	// Multi-turn: completed tool evidence (tool[...], tool_calls:) was already
 	// acted upon, so re-invoking those tools would duplicate work.
 	if strings.Contains(prompt, "tool_calls:") || strings.Contains(prompt, "tool[call_") {
@@ -32,6 +36,28 @@ Rules:
 
 User request and evidence:
 %s`, defs, mode, rules, prompt)
+}
+
+func explicitToolRequest(messages []oaiMsg) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if !strings.EqualFold(messages[i].Role, "user") {
+			continue
+		}
+		text := strings.ToLower(strings.TrimSpace(contentToString(messages[i].Content)))
+		patterns := []string{
+			"必须实际调用工具", "必须调用工具", "务必调用工具", "必须使用工具",
+			"使用终端工具", "调用终端工具", "实际调用终端", "实际使用终端",
+			"must actually call", "must call the tool", "must use the tool",
+			"must use a tool", "use the terminal tool", "use a terminal tool",
+		}
+		for _, pattern := range patterns {
+			if strings.Contains(text, pattern) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func modelToolRepairPrompt(prompt, invalid string, tools []map[string]any, choice any) string {

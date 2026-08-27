@@ -5,6 +5,18 @@ import (
 	"testing"
 )
 
+func TestExplicitToolRequestOnlyChecksLatestUserMessage(t *testing.T) {
+	if !explicitToolRequest([]oaiMsg{{Role: "user", Content: "请使用终端工具读取 go.mod，必须实际调用工具。"}}) {
+		t.Fatal("explicit Chinese tool request was not detected")
+	}
+	if !explicitToolRequest([]oaiMsg{{Role: "user", Content: "You must actually call the terminal tool."}}) {
+		t.Fatal("explicit English tool request was not detected")
+	}
+	if explicitToolRequest([]oaiMsg{{Role: "user", Content: "必须调用工具"}, {Role: "assistant", Content: "ok"}, {Role: "user", Content: "现在直接回答问题"}}) {
+		t.Fatal("stale tool request affected the latest user turn")
+	}
+}
+
 func TestParseModelToolDecisionAutoAndParallel(t *testing.T) {
 	calls, ok := parseModelToolDecision(`{"calls":[{"name":"get_weather","arguments":{"city":"Beijing"}},{"name":"get_time","arguments":{"city":"Beijing"}}]}`, testTools(), "auto")
 	if !ok || len(calls) != 2 {

@@ -1961,6 +1961,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if body.ToolChoice == nil && len(toolMaps) > 0 {
 		body.ToolChoice = "auto"
 	}
+	if len(toolMaps) > 0 && normalizedToolChoiceMode(body.ToolChoice) == "auto" && explicitToolRequest(body.Messages) {
+		body.ToolChoice = "required"
+		log.Printf("[tool-router] id=%s explicit user tool request promoted choice=required", requestID)
+	}
 	var mcpServerURL string
 	if len(toolMaps) > 0 {
 		scheme := "http"

@@ -162,7 +162,7 @@ func TestSanitizePublicReasoningTextBlocksInternalPromptLeaks(t *testing.T) {
 }
 
 func TestSanitizePublicReasoningTextDropsStatusPlaceholders(t *testing.T) {
-	for _, input := range []string{"Taking a look...", "Taking a look…", "Give me a moment...", "Just a sec...", "Digging in...", "Queuing things up...", "Getting things ready…", "Putting it together…", "Lining things up…", "Looking into it…", "Thinking..."} {
+	for _, input := range []string{"Taking a look...", "Taking a look…", "Give me a moment...", "Just a sec...", "Digging in...", "Queuing things up...", "Getting things ready…", "Putting it together…", "Lining things up…", "Looking into it…", "Gathering details…", "Checking into it…", "Thinking..."} {
 		if got := sanitizePublicReasoningText(input); got != "" {
 			t.Fatalf("reasoning placeholder was published: %q", got)
 		}
@@ -181,6 +181,7 @@ func TestPublicReasoningStreamFilterDropsSplitStatusPlaceholder(t *testing.T) {
 		{"Taking a look", "…"},
 		{"Lining things ", "up", "…"},
 		{"Looking into ", "it…"},
+		{"Gathering ", "details…"},
 	} {
 		filter := newPublicReasoningStreamFilter()
 		var got strings.Builder

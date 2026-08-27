@@ -2116,6 +2116,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if len(rawCalls) == 0 {
 			rawCalls = fencedToolCalls(text.String(), toolMaps, body.ToolChoice)
 		}
+		if len(rawCalls) == 0 {
+			if recovered, ok := extractTextToolCalls(text.String(), toolMaps, body.ToolChoice); ok {
+				log.Printf("[req-trace] id=%s stage=text_tools count=%d", requestID, len(recovered))
+				rawCalls = recovered
+			}
+		}
 		calls, rejected := validateCalls("stream", rawCalls)
 		toolResult := chathub.Result{Text: text.String()}
 		if len(calls) == 0 && rejected > 0 {
@@ -2564,6 +2570,21 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		calls, rejected := validateCalls("native", rawCalls)
 		invalidDetectedTool = invalidDetectedTool || rejected > 0
 		if len(calls) > 0 {
+			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
+			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
+				calls = calls[:1]
+			}
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
+			return
+		}
+	}
+	// Text recovery: M365 sometimes emits tool calls as XML, inline JSON, or
+	// natural language rather than structured ChatHub events.
+	if rawCalls, ok := extractTextToolCalls(res.Text, toolMaps, body.ToolChoice); ok && len(rawCalls) > 0 {
+		calls, rejected := validateCalls("text", rawCalls)
+		invalidDetectedTool = invalidDetectedTool || rejected > 0
+		if len(calls) > 0 {
+			log.Printf("[req-trace] id=%s stage=text_tools count=%d", requestID, len(calls))
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
 				calls = calls[:1]

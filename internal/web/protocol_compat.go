@@ -47,6 +47,7 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		o.Reasoning = r.Reasoning
 		o.ReasoningEffort = r.Reasoning.Effort
 	}
+	extraTools := []map[string]any{}
 	switch v := r.Input.(type) {
 	case string:
 		if v == "" {
@@ -61,6 +62,19 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			}
 			typ, _ := m["type"].(string)
 			switch typ {
+			case "additional_tools":
+				// Codex delivers its tool declarations inside the input array as
+				// {"type":"additional_tools","role":"developer","tools":[...]} instead
+				// of the top-level tools field. Merge them into the declaration set
+				// processed below so ChatHub learns about the available tools.
+				if tl, ok := m["tools"].([]any); ok {
+					for _, rt := range tl {
+						if t, ok := rt.(map[string]any); ok {
+							extraTools = append(extraTools, t)
+						}
+					}
+				}
+				continue
 			case "function_call_progress":
 				// Progress is deliberately not converted into an assistant/tool
 				// message. It is transport metadata from a long-running client-side
@@ -114,6 +128,9 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		}
 	default:
 		return o, fmt.Errorf("input must be string or array")
+	}
+	if len(extraTools) > 0 {
+		r.Tools = append(extraTools, r.Tools...)
 	}
 	hasCustomExec := false
 	for _, t := range r.Tools {

@@ -80,6 +80,49 @@ func TestResponsesCustomToolOutputToOpenAI(t *testing.T) {
 	}
 }
 
+func TestResponsesAdditionalToolsToOpenAI(t *testing.T) {
+	r := responsesRequest{Model: "gpt-5.6-luna", Input: []any{
+		map[string]any{
+			"type": "additional_tools", "role": "developer",
+			"tools": []any{
+				map[string]any{"type": "custom", "name": "exec", "description": "run a command", "format": map[string]any{"type": "grammar"}},
+				map[string]any{"type": "function", "name": "wait", "description": "wait", "parameters": map[string]any{"type": "object"}},
+			},
+		},
+		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "run ls"}}},
+	}}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatalf("openAI() error: %v", err)
+	}
+	if len(o.Tools) != 1 || o.Tools[0].Type != "custom" {
+		t.Fatalf("tools=%#v, want only custom exec from additional_tools", o.Tools)
+	}
+	if len(o.Messages) != 2 || o.Messages[1].Role != "user" {
+		t.Fatalf("messages=%#v, want custom exec policy + user message", o.Messages)
+	}
+}
+
+func TestResponsesAdditionalToolsNoInputTools(t *testing.T) {
+	r := responsesRequest{Model: "gpt-5.6-luna", Input: []any{
+		map[string]any{
+			"type": "additional_tools", "role": "developer",
+			"tools": []any{
+				map[string]any{"type": "function", "name": "wait", "description": "wait", "parameters": map[string]any{"type": "object"}},
+				map[string]any{"type": "function", "name": "request_user_input", "description": "ask", "parameters": map[string]any{"type": "object"}},
+			},
+		},
+		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "hi"}}},
+	}}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatalf("openAI() error: %v", err)
+	}
+	if len(o.Tools) != 2 {
+		t.Fatalf("tools=%#v, want wait + request_user_input", o.Tools)
+	}
+}
+
 func TestAnthropicToOpenAI(t *testing.T) {
 	r := anthropicRequest{Model: "m", System: any("be concise"), Messages: []anthropicMessage{{Role: "user", Content: any("weather")}}, Tools: []anthropicTool{{Name: "weather", InputSchema: map[string]any{"type": "object"}}}}
 	o, err := r.openAI()

@@ -93,7 +93,7 @@ func TestCacheUsageProtocolMappings(t *testing.T) {
 	t.Run("tool_stream_terminal", func(t *testing.T) {
 		rr := httptest.NewRecorder()
 		calls := []detectedToolCall{{ID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{"q":"x"}`)}}
-		if err := writeToolResponse(rr, "chatcmpl-test", "gpt-test", true, calls, chathub.Result{}, chatUsage(u)); err != nil {
+		if err := writeToolResponse(rr, "chatcmpl-test", "gpt-test", true, true, calls, chathub.Result{}, chatUsage(u)); err != nil {
 			t.Fatal(err)
 		}
 		frames := strings.Split(rr.Body.String(), "\n\n")
@@ -112,6 +112,23 @@ func TestCacheUsageProtocolMappings(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("terminal usage missing: %s", rr.Body.String())
+		}
+	})
+
+	t.Run("tool_non_stream", func(t *testing.T) {
+		rr := httptest.NewRecorder()
+		calls := []detectedToolCall{{ID: "call-1", Name: "lookup", Arguments: json.RawMessage(`{"q":"x"}`)}}
+		if err := writeToolResponse(rr, "chatcmpl-test", "gpt-test", false, true, calls, chathub.Result{}, chatUsage(u)); err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		usage := payload["usage"].(map[string]any)
+		details := usage["prompt_tokens_details"].(map[string]any)
+		if numberInt64(usage["prompt_tokens"]) != 100 || numberInt64(details["cached_tokens"]) != 64 {
+			t.Fatalf("tool usage override missing: %s", rr.Body.String())
 		}
 	})
 }

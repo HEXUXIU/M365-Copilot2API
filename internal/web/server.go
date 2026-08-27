@@ -1799,8 +1799,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// Preserve role boundaries when adapting OpenAI messages to ChatHub's
 	// single message.text field. This keeps system/developer instructions,
 	// history, and the current user turn distinguishable.
+	explicitAttachments := append([]chathub.Attachment(nil), body.Attachments...)
 	var prompt string
-	prompt, body.Attachments = flattenPromptMessages(body.Messages, body.Attachments)
+	prompt, body.Attachments = flattenPromptMessages(body.Messages, explicitAttachments)
 	log.Printf("[req-trace] id=%s stage=prompt_flattened prompt_len=%d attachments=%d", requestID, len(prompt), len(body.Attachments))
 	fmt.Printf("[multimodal-entry] messages=%d attachments=%d prompt_len=%d\n", len(body.Messages), len(body.Attachments), len(prompt))
 	prompt = strings.TrimSpace(prompt)
@@ -1882,7 +1883,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	resolvedConversationID := ""
 	fullStickyContext := s.settings.get().CacheStrategy == "sticky" && s.settings.get().StickyFullContext
 	if !fullStickyContext && affinityState.enforced && affinityState.incremental && affinityState.prefixCount > 0 && affinityState.prefixCount < len(body.Messages) {
-		incPrompt, incAtt := flattenPromptMessages(body.Messages[affinityState.prefixCount:], nil)
+		incPrompt, incAtt := flattenPromptMessages(body.Messages[affinityState.prefixCount:], explicitAttachments)
 		incPrompt = strings.TrimSpace(incPrompt)
 		if incPrompt != "" {
 			answerPrompt = incPrompt
@@ -1897,7 +1898,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			body.AccountID = firstNonEmpty(body.AccountID, resolved.AccountID)
 			log.Printf("[session-resolver] matched=%s conversation=%s history=%d total=%d", resolved.MatchedBy, resolved.ConversationID, resolved.HistoryLen, len(body.Messages))
 			if resolved.HistoryLen > 0 && resolved.HistoryLen < len(body.Messages) {
-				incPrompt, incAtt := flattenPromptMessages(body.Messages[resolved.HistoryLen:], nil)
+				incPrompt, incAtt := flattenPromptMessages(body.Messages[resolved.HistoryLen:], explicitAttachments)
 				incPrompt = strings.TrimSpace(incPrompt)
 				if incPrompt != "" {
 					answerPrompt = incPrompt
@@ -1935,7 +1936,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		sysHash := systemPromptHash(body.Messages)
 		if cached := s.convCache.Lookup(acc.ID, convCacheModel); cached != nil && cached.SystemPrompt == sysHash {
 			if len(body.Messages) > cached.MessageCount {
-				incPrompt, incAtt := flattenPromptMessages(body.Messages[cached.MessageCount:], nil)
+				incPrompt, incAtt := flattenPromptMessages(body.Messages[cached.MessageCount:], explicitAttachments)
 				incPrompt = strings.TrimSpace(incPrompt)
 				if incPrompt != "" {
 					body.ConversationID = cached.ConversationID
@@ -1991,6 +1992,78 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	account := chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}
 	localeInfo := parseLocaleFromHeaders(r)
+	reuseRouterConversation := s.affinity != nil && s.affinity.config.ReuseRouterConversation
+	routerConversation := newRouterConversation(reuseRouterConversation, &body)
+	fullRouterAttachments := append([]chathub.Attachment(nil), body.Attachments...)
+	routerInput, routerAttachments := routerPlanningInput(answerPrompt, body.Attachments, explicitAttachments, body.Messages, affinityState, reuseRouterConversation)
+	runRouter := func(text string, attachments []chathub.Attachment, coldText string, coldAttachments []chathub.Attachment) (chathub.Result, error) {
+		request := func(prompt string, requestAttachments []chathub.Attachment) chathub.Request {
+			req := chathub.Request{
+				Text: prompt, Tone: tone, Attachments: requestAttachments,
+				LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisablePool: true,
+			}
+			routerConversation.apply(&req)
+			return req
+		}
+		res, routeErr := s.chatWithAccount(ctx, acc.ID, account, request(text, attachments))
+		coldReplay := false
+		for attempt := 0; routeErr != nil && attempt < 3 && (IsEmptyCompletion(routeErr) || IsRateLimited(routeErr) || IsAuthFailure(routeErr) || IsTransientUpstreamFailure(routeErr)); attempt++ {
+			next, nextErr := s.nextHealthyAccount(acc.ID)
+			if nextErr != nil {
+				break
+			}
+			attemptText, attemptAttachments := text, attachments
+			if routerConversation.active() {
+				routerConversation.reset()
+				coldReplay = true
+			}
+			if coldReplay {
+				attemptText, attemptAttachments = coldText, coldAttachments
+			}
+			nextAccount := chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
+			ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
+			res2, err2 := s.chatWithAccount(ctx2, next.ID, nextAccount, request(attemptText, attemptAttachments))
+			cancel2()
+			if err2 == nil {
+				affinityState.markMigration("router_account_failover")
+				affinityState.switchAccount(next.ID)
+				body.AccountID = next.ID
+				acc, account = next, nextAccount
+				res, routeErr = res2, nil
+				break
+			}
+			routeErr = err2
+		}
+		if routeErr == nil {
+			if transientID := routerConversation.accept(&res); transientID != "" {
+				s.dropTransientConversation(transientID)
+			}
+		}
+		return res, routeErr
+	}
+	bindRouterCalls := func(res chathub.Result, calls []detectedToolCall, routePrompt string) reuseUsage {
+		if !reuseRouterConversation {
+			callJSON, _ := json.Marshal(toolCallMessageMaps(calls))
+			return reuseUsage{PromptTokens: EstimateTokens(routePrompt), CompletionTokens: EstimateTokens(string(callJSON))}
+		}
+		routerConversation.adopt(&body)
+		res.Reasoning = ""
+		if body.SessionKey != "" {
+			s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: routePrompt})
+		}
+		if body.User != "" && res.ConversationID != "" {
+			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
+		}
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, routePrompt, startedAt, affinityState)
+		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
+		if res.ConversationID != "" {
+			resolved := s.sessionResolver.Resolve(r, &body)
+			if !resolved.IsNew {
+				w.Header().Set(sessionHeaderName, resolved.SessionID)
+			}
+		}
+		return usage
+	}
 	// The stream is opened by the actual response path below. Do not emit a
 	// tool preamble here: a request may contain tools in its schema while still
 	// being an ordinary text question.
@@ -2003,26 +2076,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		// Only fall through to text streaming when the router explicitly selects
 		// no tool; this prevents a natural-language preamble from becoming a
 		// completed assistant turn with the actual call lost.
-		routePrompt := modelToolRouterPrompt(answerPrompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
-		routeReq := chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisablePool: true}
-		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, routeReq)
-		for attempt := 0; routeErr != nil && attempt < 3 && (IsEmptyCompletion(routeErr) || IsRateLimited(routeErr) || IsAuthFailure(routeErr)); attempt++ {
-			next, nerr := s.nextHealthyAccount(acc.ID)
-			if nerr != nil {
-				break
-			}
-			ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
-			res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, routeReq)
-			cancel2()
-			if err2 == nil {
-				routeRes, routeErr = res2, nil
-				acc = next
-				account = chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
-				break
-			}
-			routeErr = err2
-		}
+		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments)
 		log.Printf("[req-trace] id=%s stage=router_return elapsed_ms=%d err=%t", requestID, time.Since(startedAt).Milliseconds(), routeErr != nil)
 		if routeErr != nil {
 			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "tool router: "+routeErr.Error())
@@ -2032,10 +2089,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls = filterCompletedCalls(calls, ledger)
 		calls, _ = validateCalls("router", calls)
 		if !parsed {
-			repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: modelToolRepairPrompt(answerPrompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice), Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisablePool: true})
-			if repairErr == nil && repairRes.ConversationID != "" {
-				s.dropTransientConversation(repairRes.ConversationID)
+			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			if reuseRouterConversation && routerConversation.active() {
+				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
 			}
+			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -2053,8 +2112,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			routeRes.Reasoning = ""
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, body.shouldSendStreamUsage(), calls, routeRes)
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
 			return
+		}
+		if reuseRouterConversation {
+			routerConversation.adopt(&body)
+			body.Attachments = nil
+			answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
 		}
 	}
 	if body.Stream {
@@ -2316,7 +2381,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		calls, rejected := validateCalls("stream", rawCalls)
-		toolResult := chathub.Result{Text: text.String()}
+		toolResult := res
+		toolResult.Text = text.String()
 		if len(calls) == 0 && rejected > 0 {
 			// A native ChatHub event can contain a fabricated or empty tool name.
 			// Do not leak it to the local runner: ask the model to remap the intent
@@ -2352,12 +2418,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
 				calls = calls[:1]
 			}
-			_ = writeToolResponse(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult)
-			if body.User != "" && res.ConversationID != "" {
-				s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
+			toolResult.Reasoning = ""
+			if body.User != "" && toolResult.ConversationID != "" {
+				s.userSessions.Put(tenantFromRequest(r), body.User, toolResult.ConversationID, toolResult.SessionID, acc.ID)
 			}
-			s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String()}, answerPrompt, startedAt, affinityState)
-			s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
+			usage := s.bindConversation(acc, &body, r, toolResult, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, answerPrompt, startedAt, affinityState)
+			s.storeConvCache(acc.ID, convCacheModel, toolResult, tone, body.Messages, convReused)
+			_ = writeToolResponse(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage))
 			return
 		}
 		if err := emitText(pending.String()); err != nil {
@@ -2392,39 +2459,26 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// Ask the upstream model to select and validate the next tool. The gateway
 	// remains tool-agnostic; it only validates and serializes the decision.
 	if planningMode == "router" && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
-		routePrompt := modelToolRouterPrompt(answerPrompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		routeReq := chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisablePool: true}
-		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, routeReq)
+		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments)
 		if routeErr != nil {
-			s.accountPool.MarkFailure(acc.ID, routeErr, s.getRateLimitCooldown())
-			if IsRateLimited(routeErr) || IsAuthFailure(routeErr) || IsEmptyCompletion(routeErr) {
-				next, nerr := s.nextHealthyAccount(acc.ID)
-				if nerr == nil {
-					ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
-					defer cancel2()
-					if res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, routeReq); err2 == nil {
-						routeRes, routeErr = res2, nil
-						acc = next
-						account = chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
-					} else {
-						s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
-					}
-				}
+			msg := upstreamError(routeErr)
+			if IsRateLimited(routeErr) {
+				msg = "upstream is rate limiting; try again shortly"
 			}
-			if routeErr != nil {
-				msg := upstreamError(routeErr)
-				if IsRateLimited(routeErr) {
-					msg = "upstream is rate limiting; try again shortly"
-				}
-				writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", msg)
-				return
-			}
-			s.markAccountSuccess(acc.ID)
+			writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", msg)
+			return
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
 		if !parsed {
-			repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: modelToolRepairPrompt(answerPrompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice), Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisablePool: true})
+			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			if reuseRouterConversation && routerConversation.active() {
+				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
+			}
+			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -2447,7 +2501,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			routeRes.Reasoning = ""
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
 			return
 		}
 		if toolChoiceRequiresCall(body.ToolChoice) {
@@ -2455,7 +2510,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			retryText := `Select at least one required next tool call from FUNCTION_DEFINITIONS. Validate every argument against its schema. Return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.
 APPLICATION_REQUEST_AND_EVIDENCE:
 ` + prompt + "\n" + ledger.RouterContext() + "\nFUNCTION_DEFINITIONS:\n" + string(defs)
-			retryRes, retryErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: retryText, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+			if reuseRouterConversation && routerConversation.active() {
+				retryText = `The previous routing decision selected no call, but tool_choice requires at least one. Select a declared tool from the function definitions already provided and return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.`
+			}
+			coldRetryText := `Select at least one required next tool call from FUNCTION_DEFINITIONS. Validate every argument against its schema. Return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.
+APPLICATION_REQUEST_AND_EVIDENCE:
+` + prompt + "\n" + ledger.RouterContext() + "\nFUNCTION_DEFINITIONS:\n" + string(defs)
+			retryRes, retryErr := runRouter(retryText, nil, coldRetryText, fullRouterAttachments)
 			if retryErr == nil {
 				calls, parsed = parseModelToolDecision(retryRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -2470,12 +2531,18 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 						calls = calls[:1]
 					}
 					retryRes.Reasoning = ""
-					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, retryRes)
+					routerUsage := bindRouterCalls(retryRes, calls, retryText)
+					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, retryRes, chatUsage(routerUsage))
 					return
 				}
 			}
 			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "model did not select a required tool after constrained retry")
 			return
+		}
+		if reuseRouterConversation {
+			routerConversation.adopt(&body)
+			body.Attachments = nil
+			answerPrompt = "Continue from the tool-routing turn immediately above. Give the final assistant answer to the user's request. Do not mention the router or repeat its control output."
 		}
 	}
 	answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, protocolMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
@@ -2737,25 +2804,22 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
 		s.logThrottlingWarning(acc.ID, res.Throttling)
 	}
-	if body.Stream {
-		if body.User != "" && res.ConversationID != "" {
-			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
+	bindResult := func(result chathub.Result, assistant oaiMsg) reuseUsage {
+		if body.SessionKey != "" {
+			s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: result.ConversationID, SessionID: result.SessionID, Title: prompt})
 		}
-		s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: assistantHistoryText(res.Text, toolMaps, body.ToolChoice)}, prompt, startedAt, affinityState)
-		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
-		return
+		if body.User != "" && result.ConversationID != "" {
+			s.userSessions.Put(tenantFromRequest(r), body.User, result.ConversationID, result.SessionID, acc.ID)
+			log.Printf("[user-session] put user=%s conversation=%s session=%s", body.User, result.ConversationID, result.SessionID)
+		}
+		usage := s.bindConversation(acc, &body, r, result, assistant, prompt, startedAt, affinityState)
+		s.storeConvCache(acc.ID, convCacheModel, result, tone, body.Messages, convReused)
+		return usage
 	}
-
-	if body.SessionKey != "" {
-		s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: prompt})
-	}
-	if body.User != "" && res.ConversationID != "" {
-		s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
-		log.Printf("[user-session] put user=%s conversation=%s session=%s", body.User, res.ConversationID, res.SessionID)
-	}
-	usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: assistantHistoryText(res.Text, toolMaps, body.ToolChoice)}, prompt, startedAt, affinityState)
-	s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
-	if res.ConversationID != "" {
+	setSessionHeader := func(result chathub.Result) {
+		if result.ConversationID == "" {
+			return
+		}
 		resolved := s.sessionResolver.Resolve(r, &body)
 		if !resolved.IsNew {
 			w.Header().Set(sessionHeaderName, resolved.SessionID)
@@ -2769,7 +2833,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	if len(toolMaps) > 0 && isToolRefusal(res.Text) {
 		log.Printf("[tool-eject] model refused tools, retrying with correction")
 		correction := "Your previous response incorrectly denied that caller tools are available. They are real, active, and callable on the caller's Windows machine. Call the appropriate tool now. Do not explain tool availability.\n\nUser request:\n" + prompt
-		res2, err2 := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: correction, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+		res2, err2 := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: correction, Tone: tone, ConversationID: res.ConversationID, SessionID: res.SessionID, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 		if err2 == nil && !isToolRefusal(res2.Text) {
 			res = res2
 		}
@@ -2777,7 +2841,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	if len(toolMaps) > 0 && isSandboxHallucination(res.Text) {
 		log.Printf("[sandbox-eject] model used code interpreter/sandbox, retrying with explicit tool instruction")
 		correction := "CRITICAL: You must NOT use any built-in code interpreter, Python sandbox, or cloud execution environment. The caller has provided a bash tool that runs Windows PowerShell 5.1 on their local machine — use it to execute any commands or code. Do NOT say you cannot run code. Do NOT say you only have a Linux container. Do NOT say you have no Windows execution channel. You DO have a bash tool that runs on Windows. Call the bash tool NOW with the appropriate PowerShell command.\n\nUser request:\n" + prompt
-		res2, err2 := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: correction, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+		res2, err2 := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: correction, Tone: tone, ConversationID: res.ConversationID, SessionID: res.SessionID, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 		if err2 == nil && !isSandboxHallucination(res2.Text) {
 			res = res2
 		}
@@ -2791,7 +2855,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
 				calls = calls[:1]
 			}
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
+			res.Reasoning = ""
+			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+			setSessionHeader(res)
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
 			return
 		}
 	}
@@ -2803,7 +2870,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
 				calls = calls[:1]
 			}
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
+			res.Reasoning = ""
+			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+			setSessionHeader(res)
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
 			return
 		}
 	}
@@ -2819,7 +2889,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
 				calls = calls[:1]
 			}
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res)
+			res.Reasoning = ""
+			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+			setSessionHeader(res)
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
 			return
 		}
 	}
@@ -2827,13 +2900,14 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	// structured event that failed the declared-name/schema boundary.
 	if (planningMode == "native" || invalidDetectedTool) && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
 		routePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, ConversationID: res.ConversationID, SessionID: res.SessionID, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 		if routeErr == nil {
 			calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 			if !parsed {
-				repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed. OUTPUT:\n` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+				repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed. OUTPUT:\n` + compactToolResult(routeRes.Text, 6000), Tone: tone, ConversationID: routeRes.ConversationID, SessionID: routeRes.SessionID, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 				if repairErr == nil {
 					calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
+					routeRes = repairRes
 				}
 			}
 			calls, _ = validateCalls("native-recovery", calls)
@@ -2844,7 +2918,9 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 				routeRes.Reasoning = ""
-				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
+				usage := bindResult(routeRes, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+				setSessionHeader(routeRes)
+				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(usage))
 				return
 			}
 		}
@@ -2864,6 +2940,8 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	}
 	res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
 	res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
+	usage := bindResult(res, oaiMsg{Role: "assistant", Content: res.Text, ReasoningContent: res.Reasoning})
+	setSessionHeader(res)
 	log.Printf("[debug] res.Text bytes=%d content=%q", len(res.Text), res.Text)
 	created := time.Now().Unix()
 

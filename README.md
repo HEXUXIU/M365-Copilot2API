@@ -216,6 +216,7 @@ python manage.py stop     # 停止服务
 | `M365_CACHE_STRATEGY` | `balanced` | 缓存策略：`balanced` 使用连接池；`sticky` 强化账号/会话粘性并为每轮新建连接 |
 | `M365_STICKY_FULL_CONTEXT` | `true` | sticky 模式完整发送会话前缀，启用上游缓存读取 |
 | `M365_STICKY_ACCOUNT_CONCURRENCY` | `32` | sticky 模式单账号并发上限，避免高并发时绑定迁移 |
+| `M365_AFFINITY_REUSE_ROUTER_CONVERSATION` | `false` | 让 router 工具规划续接亲和会话；已绑定轮次只发送新增消息 |
 | `M365_MAX_TOOL_CALLS_PER_TURN` | `1` | 单轮最多并行工具调用数（有副作用操作自动降为串行） |
 | `M365_MAX_TOOL_ROUNDS` | `16` | 单次请求最大工具轮次 |
 | `M365_CONTEXT_WINDOW` | `128000` | 上下文窗口 |

@@ -7,33 +7,8 @@ import (
 	"unicode/utf8"
 )
 
-func writeToolResponse(w http.ResponseWriter, id, model string, args ...any) error {
-	var stream, sendUsage bool
-	// Usage is always emitted for tool streams; clients rely on a terminal usage frame.
-	sendUsage = true
-	var calls []detectedToolCall
-	var res chathub.Result
-	var usageOverride map[string]any
-	if len(args) >= 4 && func() bool { _, ok := args[1].(bool); return ok }() {
-		stream, _ = args[0].(bool)
-		sendUsage, _ = args[1].(bool)
-		calls, _ = args[2].([]detectedToolCall)
-		res, _ = args[3].(chathub.Result)
-	} else if len(args) >= 3 {
-		// Legacy call shape: stream, calls, result, usage.
-		stream, _ = args[0].(bool)
-		calls, _ = args[1].([]detectedToolCall)
-		res, _ = args[2].(chathub.Result)
-		sendUsage = true
-		if len(args) > 3 {
-			usageOverride, _ = args[3].(map[string]any)
-		}
-	} else if len(args) >= 2 {
-		calls, _ = args[0].([]detectedToolCall)
-		res, _ = args[1].(chathub.Result)
-		stream = true
-		sendUsage = true
-	}
+func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsage bool, calls []detectedToolCall, res chathub.Result, usageOverride map[string]any) error {
+	// Usage is always emitted for tool streams; Codex relies on a terminal usage frame.
 	toolCalls := toolCallMaps(calls)
 	msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": toolCalls}
 	if res.Reasoning != "" {
@@ -104,6 +79,10 @@ func writeToolResponse(w http.ResponseWriter, id, model string, args ...any) err
 		_ = sseSafeRaw(w, flusher, "data: [DONE]\n\n")
 		return nil
 	}
-	jsonOut(w, map[string]any{"id": id, "object": "chat.completion", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": "tool_calls"}}, "m365": compatM365Metadata(res), "usage": map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}})
+	usage := usageOverride
+	if usage == nil {
+		usage = map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
+	}
+	jsonOut(w, map[string]any{"id": id, "object": "chat.completion", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "message": msg, "finish_reason": "tool_calls"}}, "m365": compatM365Metadata(res), "usage": usage})
 	return nil
 }

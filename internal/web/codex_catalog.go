@@ -35,7 +35,7 @@ type reasoningEffortPreset struct {
 var advertisedReasoningEfforts = []reasoningEffortPreset{
 	{Effort: "none", Description: "Disable additional reasoning."},
 	{Effort: "minimal", Description: "Fast responses with minimal reasoning."},
-	{Effort: "fast", Description: "Fastest available response mode."},
+	{Effort: "fast", Description: "Speed-priority tier; keeps the selected model reasoning policy."},
 	{Effort: "low", Description: "Fast responses with lighter reasoning."},
 	{Effort: "medium", Description: "Balances speed and reasoning depth for everyday tasks."},
 	{Effort: "high", Description: "Greater reasoning depth for complex problems."},

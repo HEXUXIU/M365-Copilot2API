@@ -232,13 +232,13 @@ func TestResponsesFastReasoningAndServiceTierArePreserved(t *testing.T) {
 	}
 }
 
-func TestResponsesFastServiceTierDefaultsReasoningEffort(t *testing.T) {
+func TestResponsesFastServiceTierDoesNotOverrideReasoningEffort(t *testing.T) {
 	r := responsesRequest{Model: "gpt-5.6-sol", Input: "hello", ServiceTier: "fast"}
 	o, err := r.openAI()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.ReasoningEffort != "fast" || o.ServiceTier != "fast" {
+	if o.ReasoningEffort != "" || o.ServiceTier != "fast" {
 		t.Fatalf("request fields effort=%q service_tier=%q", o.ReasoningEffort, o.ServiceTier)
 	}
 }

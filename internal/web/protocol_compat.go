@@ -159,9 +159,6 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		o.Reasoning = r.Reasoning
 		o.ReasoningEffort = r.Reasoning.Effort
 	}
-	if strings.TrimSpace(o.ReasoningEffort) == "" && strings.EqualFold(strings.TrimSpace(r.ServiceTier), "fast") {
-		o.ReasoningEffort = "fast"
-	}
 	switch v := r.Input.(type) {
 	case string:
 		if v == "" {

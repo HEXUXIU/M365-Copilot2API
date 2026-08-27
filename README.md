@@ -353,7 +353,7 @@ curl http://127.0.0.1:4141/v1/messages \
 | `gpt-5.6-luna` | `medium` | 推理折中 |
 
 - 模型映射把公开模型名翻译成上游 tone；控制台可增删映射、调整默认推理级别。
-- 推理强度还可通过请求内的 `reasoning_effort` 参数调整，支持 `none`、`minimal`、`fast`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra`。部分 Codex 客户端只发送 `service_tier`，其中 `fast` 会自动使用轻量推理档位。
+- 推理强度还可通过请求内的 `reasoning_effort` 参数调整，支持 `none`、`minimal`、`fast`、`low`、`medium`、`high`、`xhigh`、`max`、`ultra`。`fast` 表示速度优先层级；它会被接受并透传，但不会强制把已选择的模型切换到轻量推理路线。
 - M365 订阅会上线的新模型名（如 `gpt-5.2`、`gpt-5.4`、`codex` 系）以实际目录为准，可在控制台配置导入。
 
 ## 账号亲和与会话复用

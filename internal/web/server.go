@@ -1756,11 +1756,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if body.Reasoning != nil && strings.TrimSpace(body.Reasoning.Effort) != "" {
 		effort = body.Reasoning.Effort
 	}
-	// Some Codex clients send only service_tier. Treat the fast tier as the
-	// lightest reasoning preset, while an explicit reasoning_effort wins.
-	if strings.TrimSpace(effort) == "" && strings.EqualFold(strings.TrimSpace(body.ServiceTier), "fast") {
-		effort = "fast"
-	}
 	tone, toneErr := reasoningTone(body.Model, effort)
 	if toneErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", toneErr.Error())

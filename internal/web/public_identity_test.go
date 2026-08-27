@@ -162,7 +162,7 @@ func TestSanitizePublicReasoningTextBlocksInternalPromptLeaks(t *testing.T) {
 }
 
 func TestSanitizePublicReasoningTextDropsStatusPlaceholders(t *testing.T) {
-	for _, input := range []string{"Taking a look...", "Give me a moment...", "Just a sec...", "Digging in...", "Queuing things up...", "Getting things ready…", "Putting it together…", "Thinking..."} {
+	for _, input := range []string{"Taking a look...", "Taking a look…", "Give me a moment...", "Just a sec...", "Digging in...", "Queuing things up...", "Getting things ready…", "Putting it together…", "Lining things up…", "Looking into it…", "Thinking..."} {
 		if got := sanitizePublicReasoningText(input); got != "" {
 			t.Fatalf("reasoning placeholder was published: %q", got)
 		}
@@ -176,14 +176,21 @@ func TestSanitizePublicReasoningTextDropsStatusPlaceholders(t *testing.T) {
 }
 
 func TestPublicReasoningStreamFilterDropsSplitStatusPlaceholder(t *testing.T) {
-	filter := newPublicReasoningStreamFilter()
-	var got strings.Builder
-	for _, chunk := range []string{"Give me ", "a moment", "..."} {
-		got.WriteString(filter.Push(chunk))
-	}
-	got.WriteString(filter.Flush())
-	if got.Len() != 0 {
-		t.Fatalf("split reasoning placeholder leaked: %q", got.String())
+	for _, chunks := range [][]string{
+		{"Give me ", "a moment", "..."},
+		{"Taking a look", "…"},
+		{"Lining things ", "up", "…"},
+		{"Looking into ", "it…"},
+	} {
+		filter := newPublicReasoningStreamFilter()
+		var got strings.Builder
+		for _, chunk := range chunks {
+			got.WriteString(filter.Push(chunk))
+		}
+		got.WriteString(filter.Flush())
+		if got.Len() != 0 {
+			t.Fatalf("split reasoning placeholder leaked for %#v: %q", chunks, got.String())
+		}
 	}
 }
 

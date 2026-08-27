@@ -1711,7 +1711,12 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 			mcp.GlobalToolRegistry.MergeTools(mcpTools)
 		}
 	}
-	req.MCPServerURL = mcpServerURL
+	// Router mode owns tool selection. Once a tool result is already present,
+	// keep the schema for context but hide the execution endpoint so the
+	// upstream cannot start a duplicate second planning/execution loop.
+	if planningMode != "router" || len(ledger.Completed) == 0 {
+		req.MCPServerURL = mcpServerURL
+	}
 	if cfg.CacheStrategy == "sticky" || len(req.Tools) > 0 || req.MCPServerURL != "" {
 		req.DisablePool = true
 	}

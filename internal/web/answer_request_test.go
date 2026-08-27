@@ -70,3 +70,11 @@ func TestBuildAnswerRequestPiCompatNativeKeepsUpstreamTools(t *testing.T) {
 		t.Fatalf("pi_compat native lost upstream planner: tools=%d choice=%#v mcp=%q", len(req.Tools), req.ToolChoice, req.MCPServerURL)
 	}
 }
+
+func TestBuildAnswerRequestRouterHidesMCPAfterCompletedTool(t *testing.T) {
+	ledger := agentLedger{Completed: []toolEvidence{{ID: "call_1", Name: "read_file", Arguments: `{}`, Result: "ok"}}}
+	req := buildAnswerRequest("[user]\nsummarize", "magic", answerRequestTestBody(), ledger, "router", "pi_compat", "http://127.0.0.1:4142/v1/mcp/sse", runtimeSettings{}, chathub.FeatureFlags{}, chathubLocale{}, false)
+	if len(req.Tools) != 1 || req.MCPServerURL != "" {
+		t.Fatalf("router finalization should retain schema and hide executor: tools=%d mcp=%q", len(req.Tools), req.MCPServerURL)
+	}
+}

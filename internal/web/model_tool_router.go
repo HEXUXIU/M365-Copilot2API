@@ -34,6 +34,22 @@ User request and evidence:
 %s`, defs, mode, rules, prompt)
 }
 
+func modelToolRepairPrompt(prompt, invalid string, tools []map[string]any, choice any) string {
+	defs, _ := json.Marshal(tools)
+	return fmt.Sprintf(`Repair the invalid tool-routing output. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}.
+Use only FUNCTION_DEFINITIONS and validate every argument against its schema. Respect TOOL_CHOICE. Use {"calls":[]} only when the application request does not need a tool.
+
+TOOL_CHOICE: %s
+APPLICATION_REQUEST_AND_EVIDENCE:
+%s
+
+FUNCTION_DEFINITIONS:
+%s
+
+INVALID_ROUTER_OUTPUT:
+%s`, normalizedToolChoiceMode(choice), prompt, defs, compactToolResult(invalid, 6000))
+}
+
 func toolChoiceRequiresCall(choice any) bool {
 	mode := normalizedToolChoiceMode(choice)
 	return mode == "required" || strings.HasPrefix(mode, "named:")

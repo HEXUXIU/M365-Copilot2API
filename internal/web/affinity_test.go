@@ -233,8 +233,9 @@ func TestConfirmedReuseUsageFields(t *testing.T) {
 	if inputDetails["cached_tokens"] != int64(80) {
 		t.Fatalf("unexpected responses usage: %#v", responses)
 	}
-	if got := anthropicUsage(u)["cache_read_input_tokens"]; got != int64(80) {
-		t.Fatalf("unexpected anthropic cached tokens: %#v", got)
+	anthropic := anthropicUsage(u)
+	if anthropic["input_tokens"] != int64(40) || anthropic["cache_read_input_tokens"] != int64(80) || anthropic["cache_creation_input_tokens"] != int64(0) {
+		t.Fatalf("unexpected anthropic usage: %#v", anthropic)
 	}
 
 	u.Confirmed = false

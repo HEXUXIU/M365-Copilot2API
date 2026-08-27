@@ -788,9 +788,10 @@ func responsesUsage(u reuseUsage) map[string]any {
 }
 
 func anthropicUsage(u reuseUsage) map[string]any {
+	cached := confirmedCachedTokens(u)
 	return map[string]any{
-		"input_tokens": u.PromptTokens, "output_tokens": u.CompletionTokens,
-		"cache_read_input_tokens":     confirmedCachedTokens(u),
+		"input_tokens": u.PromptTokens - cached, "output_tokens": u.CompletionTokens,
+		"cache_read_input_tokens":     cached,
 		"cache_creation_input_tokens": int64(0),
 	}
 }

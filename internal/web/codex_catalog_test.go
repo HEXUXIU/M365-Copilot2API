@@ -242,3 +242,32 @@ func TestResponsesFastServiceTierDoesNotOverrideReasoningEffort(t *testing.T) {
 		t.Fatalf("request fields effort=%q service_tier=%q", o.ReasoningEffort, o.ServiceTier)
 	}
 }
+
+func TestAllReasoningEffortsRouteAndConvert(t *testing.T) {
+	levels := []string{"none", "minimal", "fast", "low", "medium", "high", "xhigh", "max", "ultra"}
+	for _, level := range levels {
+		level := level
+		t.Run(level, func(t *testing.T) {
+			got, err := reasoningTone("gpt-5.5", level)
+			if err != nil {
+				t.Fatalf("reasoningTone error: %v", err)
+			}
+			want := "Gpt_5_5_Chat"
+			switch level {
+			case "medium", "high", "xhigh", "max", "ultra":
+				want = "Gpt_5_5_Reasoning"
+			}
+			if got != want {
+				t.Fatalf("tone=%q want=%q", got, want)
+			}
+			r := responsesRequest{Model: "gpt-5.5", Input: "hello", Reasoning: &reasoningConfig{Effort: level}}
+			o, err := r.openAI()
+			if err != nil {
+				t.Fatalf("openAI error: %v", err)
+			}
+			if o.ReasoningEffort != level {
+				t.Fatalf("converted effort=%q want=%q", o.ReasoningEffort, level)
+			}
+		})
+	}
+}

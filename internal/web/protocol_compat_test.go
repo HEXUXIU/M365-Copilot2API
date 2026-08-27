@@ -25,6 +25,59 @@ func TestResponsesCustomExecToOpenAI(t *testing.T) {
 	}
 }
 
+func TestResponsesAdditionalToolsItemToOpenAI(t *testing.T) {
+	r := responsesRequest{Input: []any{
+		map[string]any{"type": "additional_tools", "role": "developer", "tools": []any{
+			map[string]any{"type": "custom", "name": "exec", "description": "run a command", "format": map[string]any{"type": "grammar"}},
+			map[string]any{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}},
+			map[string]any{"type": "namespace", "name": "collaboration", "tools": []any{}},
+		}},
+		map[string]any{"type": "message", "role": "user", "content": []any{map[string]any{"type": "input_text", "text": "必须实际调用工具"}}},
+	}}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Tools) != 1 || o.Tools[0].Type != "custom" {
+		t.Fatalf("tools=%#v, want only the inline custom exec tool", o.Tools)
+	}
+	if len(o.Messages) != 2 || o.Messages[1].Role != "user" {
+		t.Fatalf("additional_tools leaked into messages: %#v", o.Messages)
+	}
+	if !o.ExplicitToolRequired {
+		t.Fatal("explicit tool request was not preserved")
+	}
+}
+
+func TestResponsesPreservesExplicitToolRequestBeforeInternalUserItem(t *testing.T) {
+	r := responsesRequest{Input: []any{
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "请读取 go.mod，必须实际调用工具。"}}},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "You have 100 weighted tokens left"}}},
+	}}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.ExplicitToolRequired {
+		t.Fatal("explicit tool requirement was lost after an internal user item")
+	}
+}
+
+func TestResponsesClearsExplicitToolRequestAfterToolOutput(t *testing.T) {
+	r := responsesRequest{Input: []any{
+		map[string]any{"role": "user", "content": "必须实际调用工具"},
+		map[string]any{"type": "custom_tool_call", "call_id": "call_exec", "name": "exec", "input": "pwd"},
+		map[string]any{"type": "custom_tool_call_output", "call_id": "call_exec", "output": "C:/project"},
+	}}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.ExplicitToolRequired {
+		t.Fatal("completed tool output kept the required-call flag")
+	}
+}
+
 func TestResponsesCustomExecIsExclusiveTool(t *testing.T) {
 	r := responsesRequest{Input: "edit the project", Tools: []map[string]any{
 		{"type": "custom", "name": "exec", "description": "local execution"},

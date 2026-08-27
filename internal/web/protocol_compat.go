@@ -172,6 +172,19 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			}
 			typ, _ := m["type"].(string)
 			switch typ {
+			case "additional_tools":
+				inlineTools, _ := m["tools"].([]any)
+				for _, rawTool := range inlineTools {
+					tool, ok := rawTool.(map[string]any)
+					if !ok {
+						continue
+					}
+					toolType, _ := tool["type"].(string)
+					if toolType == "custom" || toolType == "function" {
+						r.Tools = append(r.Tools, tool)
+					}
+				}
+				continue
 			case "reasoning":
 				// A Responses reasoning item is opaque model output carried in a
 				// reconstructed history. It is not a user message and must not be
@@ -262,7 +275,30 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	if hasCustomExec {
 		o.Messages = append([]oaiMsg{{Role: "system", Content: customExecWorkspaceInstruction}}, o.Messages...)
 	}
+	o.ExplicitToolRequired = explicitToolRequestInResponses(o.Messages)
 	return o, nil
+}
+
+// Responses clients may append internal user items after the application task.
+// Preserve an explicit tool requirement until the task is completed or a tool
+// result starts the continuation turn.
+func explicitToolRequestInResponses(messages []oaiMsg) bool {
+	required := false
+	for _, message := range messages {
+		switch strings.ToLower(strings.TrimSpace(message.Role)) {
+		case "user":
+			if explicitToolRequest([]oaiMsg{message}) {
+				required = true
+			}
+		case "tool":
+			required = false
+		case "assistant":
+			if len(message.ToolCalls) == 0 {
+				required = false
+			}
+		}
+	}
+	return required
 }
 
 type anthropicMessage struct {

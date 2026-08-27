@@ -15,6 +15,9 @@ func TestExplicitToolRequestOnlyChecksLatestUserMessage(t *testing.T) {
 	if explicitToolRequest([]oaiMsg{{Role: "user", Content: "必须调用工具"}, {Role: "assistant", Content: "ok"}, {Role: "user", Content: "现在直接回答问题"}}) {
 		t.Fatal("stale tool request affected the latest user turn")
 	}
+	if explicitToolRequest([]oaiMsg{{Role: "user", Content: "必须调用工具"}, {Role: "assistant", ToolCalls: []map[string]any{{"id": "call_1"}}}, {Role: "tool", ToolCallID: "call_1", Content: "done"}}) {
+		t.Fatal("completed tool result reactivated the original tool request")
+	}
 }
 
 func TestParseModelToolDecisionAutoAndParallel(t *testing.T) {

@@ -19,6 +19,20 @@ import (
 	"github.com/google/uuid"
 )
 
+type explicitToolRequiredContextKey struct{}
+
+func carryExplicitToolRequirement(r *http.Request, required bool) *http.Request {
+	if !required {
+		return r
+	}
+	return r.WithContext(context.WithValue(r.Context(), explicitToolRequiredContextKey{}, true))
+}
+
+func explicitToolRequirementFromContext(ctx context.Context) bool {
+	required, _ := ctx.Value(explicitToolRequiredContextKey{}).(bool)
+	return required
+}
+
 // responseNamespace builds the dual isolation key tenant\x00session so a
 // tenant can never read another tenant's response, and even within the same
 // tenant two explicit sessions (X-M365-Session-Id) cannot cross-read. The
@@ -122,6 +136,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 	o.Stream = true
 	b, _ := json.Marshal(o)
 	r2 := r.Clone(r.Context())
+	r2 = carryExplicitToolRequirement(r2, o.ExplicitToolRequired)
 	r2.Method = http.MethodPost
 	r2.Body = io.NopCloser(bytes.NewReader(b))
 	r2.ContentLength = int64(len(b))
@@ -464,6 +479,7 @@ func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []
 	o.Stream = false
 	b, _ := json.Marshal(o)
 	r2 := r.Clone(r.Context())
+	r2 = carryExplicitToolRequirement(r2, o.ExplicitToolRequired)
 	r2.Method = http.MethodPost
 	r2.Body = io.NopCloser(bytes.NewReader(b))
 	r2.ContentLength = int64(len(b))

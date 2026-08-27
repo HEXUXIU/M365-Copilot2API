@@ -40,7 +40,11 @@ User request and evidence:
 
 func explicitToolRequest(messages []oaiMsg) bool {
 	for i := len(messages) - 1; i >= 0; i-- {
-		if !strings.EqualFold(messages[i].Role, "user") {
+		role := strings.ToLower(strings.TrimSpace(messages[i].Role))
+		if role == "tool" || role == "assistant" {
+			return false
+		}
+		if role != "user" {
 			continue
 		}
 		text := strings.ToLower(strings.TrimSpace(contentToString(messages[i].Content)))

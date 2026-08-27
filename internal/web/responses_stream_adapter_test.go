@@ -42,6 +42,27 @@ func TestStreamResponsesAdapterCommitsBeforeCompletedIsVisible(t *testing.T) {
 	}
 }
 
+func TestStreamResponsesAdapterCarriesExplicitToolRequirement(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	seen := false
+	run := func(w http.ResponseWriter, r *http.Request) {
+		seen = explicitToolRequirementFromContext(r.Context())
+		responsesInnerStream(
+			`{"choices":[{"delta":{"content":"done"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+			`[DONE]`,
+		)(w, r)
+	}
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{ExplicitToolRequired: true}, "gpt-5.6-sol", "resp_required", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	if !seen {
+		t.Fatal("explicit tool requirement was lost in the inner stream request")
+	}
+}
+
 func TestStreamResponsesAdapterCommitFailureSuppressesCompleted(t *testing.T) {
 	s := newResponsesAdapterTestServer()
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

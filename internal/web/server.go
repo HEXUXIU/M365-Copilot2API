@@ -1527,34 +1527,35 @@ type oaiReq struct {
 	StreamOptions  *struct {
 		IncludeUsage bool `json:"include_usage"`
 	} `json:"stream_options,omitempty"`
-	MaxTokens           *int                 `json:"max_tokens,omitempty"`
-	MaxCompletionTokens *int                 `json:"max_completion_tokens,omitempty"`
-	Temperature         *float64             `json:"temperature,omitempty"`
-	TopP                *float64             `json:"top_p,omitempty"`
-	FrequencyPenalty    *float64             `json:"frequency_penalty,omitempty"`
-	PresencePenalty     *float64             `json:"presence_penalty,omitempty"`
-	Stop                any                  `json:"stop,omitempty"`
-	N                   *int                 `json:"n,omitempty"`
-	Seed                *int64               `json:"seed,omitempty"`
-	Logprobs            *bool                `json:"logprobs,omitempty"`
-	TopLogprobs         *int                 `json:"top_logprobs,omitempty"`
-	User                string               `json:"user"`
-	AccountID           string               `json:"accountId"`
-	ConversationID      string               `json:"conversation_id"`
-	SessionID           string               `json:"session_id"`
-	SessionKey          string               `json:"session_key"`
-	PromptCacheKey      string               `json:"prompt_cache_key,omitempty"`
-	ConversationIDC     string               `json:"conversationId,omitempty"`
-	SessionIDC          string               `json:"sessionId,omitempty"`
-	Attachments         []chathub.Attachment `json:"attachments,omitempty"`
-	Tools               []chathub.Tool       `json:"tools,omitempty"`
-	Functions           []json.RawMessage    `json:"functions,omitempty"`
-	ToolChoice          any                  `json:"tool_choice,omitempty"`
-	FunctionCall        any                  `json:"function_call,omitempty"`
-	ParallelToolCalls   *bool                `json:"parallel_tool_calls,omitempty"`
-	Reasoning           *reasoningConfig     `json:"reasoning,omitempty"`
-	ReasoningEffort     string               `json:"reasoning_effort,omitempty"`
-	Metadata            *oaiMetadata         `json:"metadata,omitempty"`
+	MaxTokens            *int                 `json:"max_tokens,omitempty"`
+	MaxCompletionTokens  *int                 `json:"max_completion_tokens,omitempty"`
+	Temperature          *float64             `json:"temperature,omitempty"`
+	TopP                 *float64             `json:"top_p,omitempty"`
+	FrequencyPenalty     *float64             `json:"frequency_penalty,omitempty"`
+	PresencePenalty      *float64             `json:"presence_penalty,omitempty"`
+	Stop                 any                  `json:"stop,omitempty"`
+	N                    *int                 `json:"n,omitempty"`
+	Seed                 *int64               `json:"seed,omitempty"`
+	Logprobs             *bool                `json:"logprobs,omitempty"`
+	TopLogprobs          *int                 `json:"top_logprobs,omitempty"`
+	User                 string               `json:"user"`
+	AccountID            string               `json:"accountId"`
+	ConversationID       string               `json:"conversation_id"`
+	SessionID            string               `json:"session_id"`
+	SessionKey           string               `json:"session_key"`
+	PromptCacheKey       string               `json:"prompt_cache_key,omitempty"`
+	ConversationIDC      string               `json:"conversationId,omitempty"`
+	SessionIDC           string               `json:"sessionId,omitempty"`
+	Attachments          []chathub.Attachment `json:"attachments,omitempty"`
+	Tools                []chathub.Tool       `json:"tools,omitempty"`
+	Functions            []json.RawMessage    `json:"functions,omitempty"`
+	ToolChoice           any                  `json:"tool_choice,omitempty"`
+	ExplicitToolRequired bool                 `json:"-"`
+	FunctionCall         any                  `json:"function_call,omitempty"`
+	ParallelToolCalls    *bool                `json:"parallel_tool_calls,omitempty"`
+	Reasoning            *reasoningConfig     `json:"reasoning,omitempty"`
+	ReasoningEffort      string               `json:"reasoning_effort,omitempty"`
+	Metadata             *oaiMetadata         `json:"metadata,omitempty"`
 }
 
 type oaiMetadata struct {
@@ -1769,7 +1770,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", err.Error())
 		return
 	}
-	explicitToolRequired := explicitToolRequest(body.Messages)
+	explicitToolRequired := body.ExplicitToolRequired || explicitToolRequirementFromContext(r.Context()) || explicitToolRequest(body.Messages)
 	// Rebuild a protocol-neutral evidence ledger from actual tool calls/results.
 	// Round limits apply only to the current user turn; full history still informs evidence.
 	ledger := buildAgentLedger(body.Messages)

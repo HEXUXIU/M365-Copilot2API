@@ -19,7 +19,10 @@ import (
 
 const previousResponseHeader = "X-M365-Previous-Response-Id"
 
-var errAffinityOwnerGeneration = errors.New("affinity lock owner generation failed")
+var (
+	errAffinityOwnerGeneration = errors.New("affinity lock owner generation failed")
+	errAffinityLockTimeout     = errors.New("session affinity lock timeout")
+)
 
 type affinityKey struct {
 	TenantHash string
@@ -695,7 +698,7 @@ func (s *memoryAffinityStore) Acquire(ctx context.Context, key string, ttl, wait
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			s.removeWaiter(key, waiter)
-			return nil, errors.New("session affinity lock timeout")
+			return nil, errAffinityLockTimeout
 		}
 		timer := time.NewTimer(remaining)
 		select {
@@ -707,7 +710,7 @@ func (s *memoryAffinityStore) Acquire(ctx context.Context, key string, ttl, wait
 			return nil, ctx.Err()
 		case <-timer.C:
 			s.removeWaiter(key, waiter)
-			return nil, errors.New("session affinity lock timeout")
+			return nil, errAffinityLockTimeout
 		case <-waiter:
 			if !timer.Stop() {
 				select {

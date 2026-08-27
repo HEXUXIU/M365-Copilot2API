@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,44 @@ func responsesInnerStream(lines ...string) func(http.ResponseWriter, *http.Reque
 		for _, line := range lines {
 			fmt.Fprintf(w, "data: %s\n\n", line)
 		}
+	}
+}
+
+func TestStreamResponsesAdapterCommitsBeforeCompletedIsVisible(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	called := false
+	ok := s.streamResponsesAdapterWithRunnerAndCompletion(w, r, oaiReq{}, "gpt-5.6-sol", "resp_terminal", "session", "tenant", responsesInnerStream(
+		`{"choices":[{"delta":{"content":"done"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	), func(terminal []byte) error {
+		called = true
+		if strings.Contains(w.Body.String(), "event: response.completed") {
+			t.Fatal("response.completed was visible before state commit")
+		}
+		if !strings.Contains(string(terminal), "event: response.completed") {
+			t.Fatalf("commit hook did not receive terminal event: %s", terminal)
+		}
+		return nil
+	})
+	if !ok || !called || !strings.Contains(w.Body.String(), "event: response.completed") {
+		t.Fatalf("ok=%v called=%v body=%s", ok, called, w.Body.String())
+	}
+}
+
+func TestStreamResponsesAdapterCommitFailureSuppressesCompleted(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	ok := s.streamResponsesAdapterWithRunnerAndCompletion(w, r, oaiReq{}, "gpt-5.6-sol", "resp_terminal", "session", "tenant", responsesInnerStream(
+		`{"choices":[{"delta":{"content":"done"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	), func([]byte) error { return errors.New("lost lease") })
+	if ok || strings.Contains(w.Body.String(), "event: response.completed") || !strings.Contains(w.Body.String(), "event: response.failed") {
+		t.Fatalf("commit failure terminal handling is wrong: %s", w.Body.String())
 	}
 }
 

@@ -353,7 +353,7 @@ func (s *redisAffinityStore) Acquire(ctx context.Context, key string, ttl, wait 
 			}, nil
 		}
 		if time.Now().After(deadline) {
-			return nil, errors.New("session affinity lock timeout")
+			return nil, errAffinityLockTimeout
 		}
 		select {
 		case <-ctx.Done():

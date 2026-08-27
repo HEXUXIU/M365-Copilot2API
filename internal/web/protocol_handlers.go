@@ -3,6 +3,7 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -109,11 +110,15 @@ func (p *pipeResponseWriter) Flush() {}
 
 // streamResponsesAdapter converts the internal OpenAI SSE incrementally instead
 // of buffering the entire completion in httptest.ResponseRecorder.
-func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string) {
-	s.streamResponsesAdapterWithRunner(w, r, o, model, responseID, affinitySessionID, tenant, s.openaiChat)
+func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, beforeCompleted func([]byte) error) bool {
+	return s.streamResponsesAdapterWithRunnerAndCompletion(w, r, o, model, responseID, affinitySessionID, tenant, s.openaiChat, beforeCompleted)
 }
 
-func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, run func(http.ResponseWriter, *http.Request)) {
+func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, run func(http.ResponseWriter, *http.Request)) bool {
+	return s.streamResponsesAdapterWithRunnerAndCompletion(w, r, o, model, responseID, affinitySessionID, tenant, run, nil)
+}
+
+func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, run func(http.ResponseWriter, *http.Request), beforeCompleted func([]byte) error) bool {
 	o.Stream = true
 	b, _ := json.Marshal(o)
 	r2 := r.Clone(r.Context())
@@ -179,7 +184,7 @@ func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http
 	scanner.Buffer(make([]byte, 4096), 2<<20)
 	for scanner.Scan() {
 		if r.Context().Err() != nil {
-			return
+			return false
 		}
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
@@ -301,7 +306,7 @@ func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http
 				"error": map[string]any{"code": status, "message": message},
 			},
 		})
-		return
+		return false
 	}
 	if len(calls) == 0 && strings.TrimSpace(text.String()) == "" && strings.TrimSpace(reasoning.String()) == "" {
 		// Never leave a Responses stream after response.created without a
@@ -314,7 +319,7 @@ func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http
 				"error": map[string]any{"code": "empty_upstream_response", "message": "ChatHub returned no text or tool call"},
 			},
 		})
-		return
+		return false
 	}
 	for _, call := range calls {
 		if call == nil || strings.TrimSpace(call.ID) == "" || strings.TrimSpace(call.Name) == "" {
@@ -325,7 +330,7 @@ func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http
 					"error": map[string]any{"code": "invalid_tool_call", "message": "upstream tool call is missing call_id or name"},
 				},
 			})
-			return
+			return false
 		}
 	}
 	outputByIndex := map[int]any{}
@@ -398,7 +403,6 @@ func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http
 	usage := responsesUsage(u)
 	source := usageSourceFromCachedTokens(cached)
 	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": usage, "m365": localUsageMetadata(source)}
-	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
 	stored := append([]oaiMsg(nil), o.Messages...)
 	var converted []map[string]any
 	if len(calls) > 0 {
@@ -414,10 +418,39 @@ func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http
 		}
 	}
 	stored = appendResponsesAssistantHistory(stored, text.String(), converted)
-	s.storeResponsesHistory(tenant, id, affinitySessionID, stored)
+	s.storeResponsesHistory(r.Context(), tenant, id, affinitySessionID, stored)
 	if s.affinity != nil {
 		s.affinity.bindResponse(r.Context(), s.affinityTenantIdentity(r), id, affinitySessionID)
 	}
+	completed := map[string]any{"type": "response.completed", "response": resp, "sequence_number": sequence}
+	sequence++
+	payload, _ := json.Marshal(completed)
+	terminal := []byte(fmt.Sprintf("event: response.completed\ndata: %s\n\n", payload))
+	if beforeCompleted != nil {
+		if err := beforeCompleted(terminal); err != nil {
+			log.Printf("[responses-state] pre-terminal commit failed response=%s: %v", shortPrefix(hashString(responseID)), err)
+			emit("response.failed", map[string]any{
+				"type": "response.failed",
+				"response": map[string]any{
+					"id": id, "object": "response", "status": "failed", "model": model,
+					"error": map[string]any{"code": "response_state_commit_failed", "message": "response state changed before completion"},
+				},
+			})
+			return false
+		}
+	}
+	if err := r.Context().Err(); err != nil {
+		return false
+	}
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	if _, err := w.Write(terminal); err != nil {
+		return false
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return true
 }
 
 func appendResponsesAssistantHistory(messages []oaiMsg, text string, calls []map[string]any) []oaiMsg {
@@ -475,72 +508,35 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	affinitySessionID := sessionID
 	publicID := "resp_" + uuid.NewString()
 	nsKey := responseNamespace(tenant, sessionID)
+	var claim *responseClaim
+	claimFinished := false
+	defer func() {
+		if claim != nil && !claimFinished {
+			s.releaseResponseClaim(r.Context(), claim)
+			responseStateAudit(claim, "released")
+		}
+	}()
 	if body.PreviousResponseID != "" {
 		toolIDs := extractResponsesToolOutputIDs(body.Input)
-		s.responseMu.Lock()
-		bucket := s.responseMessages[nsKey]
-		prior, ok := bucket[body.PreviousResponseID]
-		if !ok || len(prior.Messages) == 0 {
-			s.responseMu.Unlock()
-			writeResponsesError(w, 400, "invalid_request_error", "unknown previous_response_id")
+		var replay *responseReplay
+		var claimErr error
+		claim, replay, claimErr = s.claimResponse(r.Context(), nsKey, body.PreviousResponseID, responseRequestDigest(body), tenant, sessionID, toolIDs)
+		if claimErr != nil {
+			status, errorType, message := responseStateErrorFields(claimErr)
+			writeResponsesError(w, status, errorType, message)
 			return
 		}
-		if prior.Tenant != "" && prior.Tenant != tenant {
-			s.responseMu.Unlock()
-			writeResponsesError(w, 400, "invalid_request_error", "previous_response_id tenant mismatch")
+		if replay != nil {
+			log.Printf("[responses-audit] tenantHash=%s session=%s previous=%s action=replayed tool_ids=%v", tenantHashPrefix(tenant), sessionHashPrefix(sessionID), body.PreviousResponseID, toolIDs)
+			writeResponseReplay(w, replay)
 			return
 		}
-		if prior.SessionID != sessionID {
-			s.responseMu.Unlock()
-			writeResponsesError(w, 400, "invalid_request_error", "previous_response_id session mismatch")
-			return
-		}
-		if prior.Consumed {
-			dupVersion := prior.Version
-			s.responseMu.Unlock()
-			log.Printf("[responses-audit] tenantHash=%s session=%s previous=%s action=rejected_consumed version=%d tool_ids=%v", tenantHashPrefix(tenant), sessionHashPrefix(sessionID), body.PreviousResponseID, dupVersion, toolIDs)
-			if s.debug != nil {
-				s.debug.add(debugRecord{ID: "resp_" + uuid.NewString(), At: time.Now(), Path: "/v1/responses", Method: "POST", Status: 409, Level: "warn", Gateway: map[string]any{"previous_response_id": body.PreviousResponseID, "tenantHash": tenantHashPrefix(tenant), "session": sessionHashPrefix(sessionID), "tool_ids": toolIDs, "version": dupVersion, "action": "rejected_consumed"}})
-			}
-			writeResponsesError(w, 409, "conflict", "previous_response_id already consumed")
-			return
-		}
-		if len(toolIDs) > 0 {
-			if len(prior.ToolCalls) == 0 {
-				s.responseMu.Unlock()
-				writeResponsesError(w, 400, "invalid_request_error", "previous_response_id has no pending tool calls")
-				return
-			}
-			seen := make(map[string]bool, len(toolIDs))
-			for _, id := range toolIDs {
-				if seen[id] {
-					s.responseMu.Unlock()
-					writeResponsesError(w, 400, "invalid_request_error", "duplicate call_id: "+id)
-					return
-				}
-				seen[id] = true
-				if _, ok := prior.ToolCalls[id]; !ok {
-					s.responseMu.Unlock()
-					writeResponsesError(w, 400, "invalid_request_error", "call_id not in parent pending set: "+id)
-					return
-				}
-			}
-		} else if len(prior.ToolCalls) > 0 {
-			s.responseMu.Unlock()
-			writeResponsesError(w, 400, "invalid_request_error", "previous_response_id expects tool outputs for pending calls")
-			return
-		}
-		prior.Version++
-		prior.Consumed = true
-		messages := append([]oaiMsg(nil), prior.Messages...)
-		newVersion := prior.Version
-		parentToolCount := len(prior.ToolCalls)
-		s.responseMu.Unlock()
-		log.Printf("[responses-audit] tenantHash=%s session=%s previous=%s action=consumed version=%d tool_ids=%v parentToolCalls=%d", tenantHashPrefix(tenant), sessionHashPrefix(sessionID), body.PreviousResponseID, newVersion, toolIDs, parentToolCount)
+		responseStateAudit(claim, "claimed")
+		log.Printf("[responses-audit] tenantHash=%s session=%s previous=%s action=claimed version=%d tool_ids=%v parentToolCalls=%d", tenantHashPrefix(tenant), sessionHashPrefix(sessionID), body.PreviousResponseID, claim.Version, toolIDs, claim.ToolCount)
 		if s.debug != nil {
-			s.debug.add(debugRecord{ID: "resp_" + uuid.NewString(), At: time.Now(), Path: "/v1/responses", Method: "POST", Status: 200, Level: "info", Gateway: map[string]any{"previous_response_id": body.PreviousResponseID, "tenantHash": tenantHashPrefix(tenant), "session": sessionHashPrefix(sessionID), "tool_ids": toolIDs, "version": newVersion, "parentToolCalls": parentToolCount, "action": "consumed"}})
+			s.debug.add(debugRecord{ID: "resp_" + uuid.NewString(), At: time.Now(), Path: "/v1/responses", Method: "POST", Status: 200, Level: "info", Gateway: map[string]any{"previous_response_id": body.PreviousResponseID, "tenantHash": tenantHashPrefix(tenant), "session": sessionHashPrefix(sessionID), "tool_ids": toolIDs, "version": claim.Version, "parentToolCalls": claim.ToolCount, "action": "claimed"}})
 		}
-		o.Messages = append(messages, o.Messages...)
+		o.Messages = append(claim.Messages, o.Messages...)
 	}
 	if s.settings != nil && s.settings.get().ToolProtocolMode == "pi_compat" {
 		normalized, normalizeErr := normalizeResponsesToolHistory(o.Messages)
@@ -553,7 +549,28 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(sessionHeaderName, affinitySessionID)
 	r.Header.Set(previousResponseHeader, affinitySessionID)
 	if body.Stream {
-		s.streamResponsesAdapter(w, r, o, firstNonEmpty(body.Model, defaultPublicModelName), publicID, affinitySessionID, nsKey)
+		streamWriter := w
+		var capture *captureResponseWriter
+		if claim != nil {
+			capture = &captureResponseWriter{ResponseWriter: w}
+			streamWriter = capture
+		}
+		var beforeCompleted func([]byte) error
+		if claim != nil {
+			beforeCompleted = func(terminal []byte) error {
+				replay := capture.replay()
+				replay.Body = append(replay.Body, terminal...)
+				if err := s.finishResponseClaim(r.Context(), claim, publicID, replay); err != nil {
+					return err
+				}
+				claimFinished = true
+				responseStateAudit(claim, "committed")
+				return nil
+			}
+		}
+		if !s.streamResponsesAdapter(streamWriter, r, o, firstNonEmpty(body.Model, defaultPublicModelName), publicID, affinitySessionID, nsKey, beforeCompleted) {
+			return
+		}
 		return
 	}
 	out, raw, status, err := s.runOpenAIAdapter(r, o)
@@ -599,7 +616,6 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	// Retain the normalized history so a subsequent previous_response_id can
 	// validate its function_call_output against the original tool call.
 	if _, ok := out["id"].(string); ok {
-		publicID := "resp_" + uuid.NewString()
 		out["m365_response_id"] = publicID
 		stored := append([]oaiMsg(nil), o.Messages...)
 		var storedToolCalls []map[string]any
@@ -618,31 +634,24 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		toolCallsMap := buildRespToolCallsMap(storedToolCalls)
 		s.responseMu.Lock()
-		bucket := s.responseMessages[nsKey]
-		if bucket == nil {
-			bucket = map[string]*RespNode{}
-			s.responseMessages[nsKey] = bucket
-		}
-		for k, h := range bucket {
-			if time.Since(h.At) > time.Hour {
-				delete(bucket, k)
-			}
-		}
-		if len(bucket) >= maxResponsesPerTenant {
-			var oldestKey string
-			var oldestAt time.Time
-			for k, h := range bucket {
-				if oldestKey == "" || h.At.Before(oldestAt) {
-					oldestKey, oldestAt = k, h.At
-				}
-			}
-			delete(bucket, oldestKey)
-		}
-		bucket[publicID] = &RespNode{At: time.Now(), Messages: stored, ToolCalls: toolCallsMap, Version: 1, Consumed: false, ParentID: body.PreviousResponseID, Tenant: tenant, SessionID: sessionID}
+		s.persistResponseNodeLocked(r.Context(), nsKey, publicID, &RespNode{At: time.Now(), Messages: stored, ToolCalls: toolCallsMap, Version: 1, Consumed: false, ParentID: body.PreviousResponseID, Tenant: tenant, SessionID: sessionID})
 		s.responseMu.Unlock()
 		log.Printf("[responses-audit] tenantHash=%s session=%s new=%s parent=%s toolCalls=%d version=1", tenantHashPrefix(tenant), sessionHashPrefix(sessionID), publicID, body.PreviousResponseID, len(toolCallsMap))
 	}
-	writeResponsesResult(w, firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, out)
+	if claim == nil {
+		writeResponsesResult(w, firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, out)
+		return
+	}
+	recorder := httptest.NewRecorder()
+	writeResponsesResult(recorder, firstNonEmpty(body.Model, defaultPublicModelName), false, out)
+	replay := responseReplay{Status: recorder.Code, Header: recorder.Header().Clone(), Body: append([]byte(nil), recorder.Body.Bytes()...)}
+	if err := s.finishResponseClaim(r.Context(), claim, publicID, replay); err != nil {
+		writeResponsesError(w, http.StatusConflict, "conflict", "previous_response_id state changed before completion")
+		return
+	}
+	claimFinished = true
+	responseStateAudit(claim, "committed")
+	writeResponseReplay(w, &replay)
 }
 
 func (s *Server) responsesTenantKeys(r *http.Request) (tenant, affinityTenant string) {
@@ -654,29 +663,9 @@ func (s *Server) responsesTenantKeys(r *http.Request) (tenant, affinityTenant st
 	return affinityTenant, affinityTenant
 }
 
-func (s *Server) storeResponsesHistory(tenant, responseID, affinitySessionID string, messages []oaiMsg) {
+func (s *Server) storeResponsesHistory(ctx context.Context, tenant, responseID, affinitySessionID string, messages []oaiMsg) {
 	s.responseMu.Lock()
 	defer s.responseMu.Unlock()
-	bucket := s.responseMessages[tenant]
-	if bucket == nil {
-		bucket = map[string]*RespNode{}
-		s.responseMessages[tenant] = bucket
-	}
-	for key, history := range bucket {
-		if time.Since(history.At) > time.Hour {
-			delete(bucket, key)
-		}
-	}
-	if len(bucket) >= maxResponsesPerTenant {
-		var oldestKey string
-		var oldestAt time.Time
-		for key, history := range bucket {
-			if oldestKey == "" || history.At.Before(oldestAt) {
-				oldestKey, oldestAt = key, history.At
-			}
-		}
-		delete(bucket, oldestKey)
-	}
 	nodeTenant := tenant
 	if separator := strings.IndexByte(nodeTenant, 0); separator >= 0 {
 		nodeTenant = nodeTenant[:separator]
@@ -685,7 +674,7 @@ func (s *Server) storeResponsesHistory(tenant, responseID, affinitySessionID str
 	if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" {
 		toolCalls = messages[len(messages)-1].ToolCalls
 	}
-	bucket[responseID] = &RespNode{At: time.Now(), Messages: append([]oaiMsg(nil), messages...), ToolCalls: buildRespToolCallsMap(toolCalls), SessionID: affinitySessionID, Version: 1, Tenant: nodeTenant}
+	s.persistResponseNodeLocked(ctx, tenant, responseID, &RespNode{At: time.Now(), Messages: append([]oaiMsg(nil), messages...), ToolCalls: buildRespToolCallsMap(toolCalls), SessionID: affinitySessionID, Version: 1, Tenant: nodeTenant})
 }
 
 func responsesOutputHasContent(src map[string]any) bool {

@@ -162,7 +162,7 @@ func (m *affinityManager) markStoreError(err error) affinityStore {
 	}
 	// Caller cancellation is not evidence that a shared primary store failed.
 	// Degrading here sends unrelated requests to an empty local store.
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, errAffinityLockTimeout) || errors.Is(err, errAffinityOwnerGeneration) {
 		if m.primary != nil {
 			return m.primary
 		}
@@ -277,7 +277,9 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 	}
 	if state.enforced && lockID != "" {
 		release, err := state.store.Acquire(ctx, state.key.TenantHash+":"+lockID, m.config.LockTTL, m.config.LockWait)
-		if err != nil && state.store == m.primary {
+		if err != nil && state.store == m.primary &&
+			!errors.Is(err, errAffinityLockTimeout) && !errors.Is(err, errAffinityOwnerGeneration) &&
+			!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			state.store = m.markStoreError(err)
 			release, err = state.store.Acquire(ctx, state.key.TenantHash+":"+lockID, m.config.LockTTL, m.config.LockWait)
 		}

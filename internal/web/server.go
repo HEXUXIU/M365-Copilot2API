@@ -205,14 +205,23 @@ type ToolCallRecord struct {
 }
 
 type RespNode struct {
-	At        time.Time                  `json:"at"`
-	Messages  []oaiMsg                   `json:"messages"`
-	ToolCalls map[string]*ToolCallRecord `json:"tool_calls,omitempty"`
-	Version   int64                      `json:"version"`
-	Consumed  bool                       `json:"consumed"`
-	ParentID  string                     `json:"parent_id,omitempty"`
-	Tenant    string                     `json:"tenant,omitempty"`
-	SessionID string                     `json:"session_id,omitempty"`
+	At             time.Time                  `json:"at"`
+	Messages       []oaiMsg                   `json:"messages"`
+	ToolCalls      map[string]*ToolCallRecord `json:"tool_calls,omitempty"`
+	Version        int64                      `json:"version"`
+	Consumed       bool                       `json:"consumed"`
+	ConsumedDigest string                     `json:"consumed_digest,omitempty"`
+	ChildID        string                     `json:"child_id,omitempty"`
+	LeaseID        string                     `json:"lease_id,omitempty"`
+	LeaseDigest    string                     `json:"lease_digest,omitempty"`
+	LeaseUntil     time.Time                  `json:"lease_until,omitempty"`
+	ReplayStatus   int                        `json:"replay_status,omitempty"`
+	ReplayHeader   http.Header                `json:"replay_header,omitempty"`
+	ReplayBody     []byte                     `json:"replay_body,omitempty"`
+	ParentID       string                     `json:"parent_id,omitempty"`
+	Tenant         string                     `json:"tenant,omitempty"`
+	SessionID      string                     `json:"session_id,omitempty"`
+	wait           chan struct{}              `json:"-"`
 }
 
 // respHistory is kept as an alias so older code or tests referencing the old

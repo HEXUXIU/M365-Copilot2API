@@ -65,6 +65,13 @@ func extractTextToolCalls(text string, tools []map[string]any, choice any) ([]de
 	return out, true
 }
 
+func assistantHistoryText(text string, tools []map[string]any, choice any) string {
+	if _, ok := extractTextToolCalls(text, tools, choice); ok {
+		return removeTextToolContent(text)
+	}
+	return text
+}
+
 func extractAllTextToolCalls(text string) []textToolCall {
 	if c := parseTextXML(text); len(c) > 0 {
 		return c

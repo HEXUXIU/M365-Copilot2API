@@ -192,3 +192,11 @@ func TestZaiRemoveToolContent(t *testing.T) {
 		t.Fatalf("leading text lost: %q", cleaned)
 	}
 }
+
+func TestAssistantHistoryTextRemovesRecoveredToolPayload(t *testing.T) {
+	text := "Before\n<tool_call><name>read_file</name><arguments>{\"path\":\"/tmp/x\"}</arguments></tool_call>"
+	got := assistantHistoryText(text, textTestTools(), nil)
+	if strings.Contains(got, "tool_call") || !strings.Contains(got, "Before") {
+		t.Fatalf("unexpected history text: %q", got)
+	}
+}

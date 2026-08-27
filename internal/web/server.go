@@ -2741,7 +2741,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: res.Text}, prompt, startedAt, affinityState)
+		s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: assistantHistoryText(res.Text, toolMaps, body.ToolChoice)}, prompt, startedAt, affinityState)
 		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 		return
 	}
@@ -2753,7 +2753,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 		log.Printf("[user-session] put user=%s conversation=%s session=%s", body.User, res.ConversationID, res.SessionID)
 	}
-	usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: res.Text}, prompt, startedAt, affinityState)
+	usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: assistantHistoryText(res.Text, toolMaps, body.ToolChoice)}, prompt, startedAt, affinityState)
 	s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 	if res.ConversationID != "" {
 		resolved := s.sessionResolver.Resolve(r, &body)

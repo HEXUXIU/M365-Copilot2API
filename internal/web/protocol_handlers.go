@@ -483,7 +483,7 @@ func mergeResponsesContinuation(parent, current []oaiMsg) []oaiMsg {
 	for leadingSystem < len(current) && strings.EqualFold(strings.TrimSpace(current[leadingSystem].Role), "system") {
 		leadingSystem++
 	}
-	merged := append([]oaiMsg(nil), parent...)
+	policies := make([]oaiMsg, 0, leadingSystem)
 	for _, policy := range current[:leadingSystem] {
 		duplicate := false
 		policyText := contentToString(policy.Content)
@@ -494,9 +494,10 @@ func mergeResponsesContinuation(parent, current []oaiMsg) []oaiMsg {
 			}
 		}
 		if !duplicate {
-			merged = append([]oaiMsg{policy}, merged...)
+			policies = append(policies, policy)
 		}
 	}
+	merged := append(policies, parent...)
 	return append(merged, current[leadingSystem:]...)
 }
 

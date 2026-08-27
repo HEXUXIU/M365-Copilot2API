@@ -44,3 +44,14 @@ func TestMergeResponsesContinuationMovesNewPolicyBeforePendingCall(t *testing.T)
 		t.Fatalf("normalized continuation: %v", err)
 	}
 }
+
+func TestMergeResponsesContinuationPreservesPolicyOrder(t *testing.T) {
+	merged := mergeResponsesContinuation(nil, []oaiMsg{
+		{Role: "system", Content: "first"},
+		{Role: "system", Content: "second"},
+		{Role: "tool", ToolCallID: "call_3", Content: "done"},
+	})
+	if len(merged) != 3 || contentToString(merged[0].Content) != "first" || contentToString(merged[1].Content) != "second" {
+		t.Fatalf("policy order changed: %#v", merged)
+	}
+}

@@ -1769,6 +1769,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", err.Error())
 		return
 	}
+	explicitToolRequired := explicitToolRequest(body.Messages)
 	// Rebuild a protocol-neutral evidence ledger from actual tool calls/results.
 	// Round limits apply only to the current user turn; full history still informs evidence.
 	ledger := buildAgentLedger(body.Messages)
@@ -1961,7 +1962,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if body.ToolChoice == nil && len(toolMaps) > 0 {
 		body.ToolChoice = "auto"
 	}
-	if len(toolMaps) > 0 && normalizedToolChoiceMode(body.ToolChoice) == "auto" && explicitToolRequest(body.Messages) {
+	if len(toolMaps) > 0 && normalizedToolChoiceMode(body.ToolChoice) == "auto" && explicitToolRequired {
 		body.ToolChoice = "required"
 		log.Printf("[tool-router] id=%s explicit user tool request promoted choice=required", requestID)
 	}

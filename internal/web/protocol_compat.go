@@ -17,6 +17,7 @@ type responsesRequest struct {
 	Tools              []map[string]any `json:"tools,omitempty"`
 	ToolChoice         any              `json:"tool_choice,omitempty"`
 	Stream             bool             `json:"stream,omitempty"`
+	ServiceTier        string           `json:"service_tier,omitempty"`
 	User               string           `json:"user,omitempty"`
 	Reasoning          *reasoningConfig `json:"reasoning,omitempty"`
 	PromptCacheKey     string           `json:"prompt_cache_key,omitempty"`
@@ -141,7 +142,7 @@ func normalizeResponsesToolHistory(messages []oaiMsg) ([]oaiMsg, error) {
 }
 
 func (r responsesRequest) openAI() (oaiReq, error) {
-	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User, PromptCacheKey: r.PromptCacheKey}
+	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User, PromptCacheKey: r.PromptCacheKey, ServiceTier: r.ServiceTier}
 	if r.Temperature != nil {
 		o.Temperature = r.Temperature
 	}
@@ -157,6 +158,9 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	if r.Reasoning != nil {
 		o.Reasoning = r.Reasoning
 		o.ReasoningEffort = r.Reasoning.Effort
+	}
+	if strings.TrimSpace(o.ReasoningEffort) == "" && strings.EqualFold(strings.TrimSpace(r.ServiceTier), "fast") {
+		o.ReasoningEffort = "fast"
 	}
 	switch v := r.Input.(type) {
 	case string:

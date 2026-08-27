@@ -35,10 +35,13 @@ type reasoningEffortPreset struct {
 var advertisedReasoningEfforts = []reasoningEffortPreset{
 	{Effort: "none", Description: "Disable additional reasoning."},
 	{Effort: "minimal", Description: "Fast responses with minimal reasoning."},
+	{Effort: "fast", Description: "Fastest available response mode."},
 	{Effort: "low", Description: "Fast responses with lighter reasoning."},
 	{Effort: "medium", Description: "Balances speed and reasoning depth for everyday tasks."},
 	{Effort: "high", Description: "Greater reasoning depth for complex problems."},
 	{Effort: "xhigh", Description: "Extra high reasoning depth for complex problems."},
+	{Effort: "max", Description: "Maximum available reasoning depth."},
+	{Effort: "ultra", Description: "Highest available reasoning depth."},
 }
 
 // gatewayCodexBaseInstructions is returned only in the Codex model catalog.
@@ -226,10 +229,10 @@ func normalizeReasoningEffort(e string) (string, error) {
 		return "", nil
 	}
 	switch e {
-	case "none", "minimal", "low", "medium", "high", "xhigh":
+	case "none", "minimal", "fast", "low", "medium", "high", "xhigh", "max", "ultra":
 		return e, nil
 	}
-	return "", fmt.Errorf("unsupported reasoning effort %q; use none, minimal, low, medium, high, or xhigh", e)
+	return "", fmt.Errorf("unsupported reasoning effort %q; use none, minimal, fast, low, medium, high, xhigh, max, or ultra", e)
 }
 func reasoningTone(model, effort string) (string, error) {
 	e, err := normalizeReasoningEffort(effort)
@@ -244,7 +247,7 @@ func reasoningTone(model, effort string) (string, error) {
 	if strings.Contains(strings.ToLower(model), "reasoning") {
 		return base, nil
 	}
-	if e == "" || e == "none" || e == "minimal" || e == "low" {
+	if e == "" || e == "none" || e == "minimal" || e == "fast" || e == "low" {
 		return base, nil
 	}
 	switch strings.ToLower(strings.TrimSpace(model)) {
@@ -295,8 +298,9 @@ func modelCatalog() []map[string]any {
 			"base_instructions": gatewayCodexBaseInstructions, "model_messages": codexModelMessages(),
 			"default_reasoning_level": defaultReasoningLevel, "object": "model", "owned_by": "gateway",
 			"shell_type": "shell_command", "visibility": "list", "supported_in_api": true, "priority": 1,
-			"additional_speed_tiers": []string{}, "service_tiers": []any{},
-			"availability_nux": nil, "upgrade": nil, "include_skills_usage_instructions": false,
+			"additional_speed_tiers": []string{"fast"},
+			"service_tiers":          []map[string]any{{"id": "default", "name": "Default"}, {"id": "fast", "name": "Fast"}},
+			"availability_nux":       nil, "upgrade": nil, "include_skills_usage_instructions": false,
 			"supports_reasoning_summaries": true, "default_reasoning_summary": "auto",
 			"support_verbosity": true, "default_verbosity": "low", "apply_patch_tool_type": "freeform",
 			"web_search_tool_type": "text_and_image", "truncation_policy": map[string]any{"mode": "tokens", "limit": 10000},

@@ -1210,6 +1210,7 @@ type chatBody struct {
 	FunctionCall    any               `json:"function_call,omitempty"`
 	Reasoning       *reasoningConfig  `json:"reasoning,omitempty"`
 	ReasoningEffort string            `json:"reasoning_effort,omitempty"`
+	ServiceTier     string            `json:"service_tier,omitempty"`
 	ResponseFormat  *responseFormat   `json:"response_format,omitempty"`
 }
 
@@ -1555,6 +1556,7 @@ type oaiReq struct {
 	ParallelToolCalls    *bool                `json:"parallel_tool_calls,omitempty"`
 	Reasoning            *reasoningConfig     `json:"reasoning,omitempty"`
 	ReasoningEffort      string               `json:"reasoning_effort,omitempty"`
+	ServiceTier          string               `json:"service_tier,omitempty"`
 	Metadata             *oaiMetadata         `json:"metadata,omitempty"`
 }
 
@@ -1753,6 +1755,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	effort := body.ReasoningEffort
 	if body.Reasoning != nil && strings.TrimSpace(body.Reasoning.Effort) != "" {
 		effort = body.Reasoning.Effort
+	}
+	// Some Codex clients send only service_tier. Treat the fast tier as the
+	// lightest reasoning preset, while an explicit reasoning_effort wins.
+	if strings.TrimSpace(effort) == "" && strings.EqualFold(strings.TrimSpace(body.ServiceTier), "fast") {
+		effort = "fast"
 	}
 	tone, toneErr := reasoningTone(body.Model, effort)
 	if toneErr != nil {

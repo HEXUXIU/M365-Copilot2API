@@ -176,15 +176,23 @@ func TestConfiguredModelMappingsDriveCatalogAndRouting(t *testing.T) {
 func TestReasoningEffortRouting(t *testing.T) {
 	cases := []struct{ model, effort, want string }{
 		{"claude-sonnet", "none", "Claude_Sonnet"},
+		{"gpt-5.5", "fast", "Gpt_5_5_Chat"},
 		{"claude-sonnet", "high", "Claude_Sonnet_Reasoning"},
 		{"gpt-5.5", "low", "Gpt_5_5_Chat"},
 		{"gpt-5.5", "medium", "Gpt_5_5_Reasoning"},
+		{"gpt-5.5", "max", "Gpt_5_5_Reasoning"},
+		{"gpt-5.5", "ultra", "Gpt_5_5_Reasoning"},
 		{"gpt-5.6-reasoning", "none", "Gpt_5_6_Reasoning"},
 	}
 	for _, tc := range cases {
 		got, err := reasoningTone(tc.model, tc.effort)
 		if err != nil || got != tc.want {
 			t.Fatalf("%s/%s got=%q err=%v", tc.model, tc.effort, got, err)
+		}
+	}
+	for _, effort := range []string{"none", "minimal", "fast", "low", "medium", "high", "xhigh", "max", "ultra"} {
+		if got, err := normalizeReasoningEffort(effort); err != nil || got != effort {
+			t.Fatalf("normalize %q got=%q err=%v", effort, got, err)
 		}
 	}
 	if _, err := reasoningTone("gpt-5.6-reasoning", "extreme"); err == nil {
@@ -210,5 +218,27 @@ func TestResponsesReasoningConvertsToOpenAI(t *testing.T) {
 	}
 	if o.ReasoningEffort != "high" {
 		t.Fatalf("effort=%q", o.ReasoningEffort)
+	}
+}
+
+func TestResponsesFastReasoningAndServiceTierArePreserved(t *testing.T) {
+	r := responsesRequest{Model: "gpt-5.6-sol", Input: "hello", ServiceTier: "fast", Reasoning: &reasoningConfig{Effort: "fast"}}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.ReasoningEffort != "fast" || o.ServiceTier != "fast" {
+		t.Fatalf("request fields effort=%q service_tier=%q", o.ReasoningEffort, o.ServiceTier)
+	}
+}
+
+func TestResponsesFastServiceTierDefaultsReasoningEffort(t *testing.T) {
+	r := responsesRequest{Model: "gpt-5.6-sol", Input: "hello", ServiceTier: "fast"}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.ReasoningEffort != "fast" || o.ServiceTier != "fast" {
+		t.Fatalf("request fields effort=%q service_tier=%q", o.ReasoningEffort, o.ServiceTier)
 	}
 }

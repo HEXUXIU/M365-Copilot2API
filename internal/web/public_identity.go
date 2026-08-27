@@ -40,6 +40,7 @@ var publicProviderIdentityPattern = regexp.MustCompile(`(?i)` + publicProviderId
 var publicProviderSelfDescriptionPattern = regexp.MustCompile(`(?is)^\s*(?:you\s+are|this\s+is|the\s+(?:assistant|model)\s+is|` + publicProviderIdentityExpression + `\s*[,，:：-]).*(?:based\s+on|conversational\s+ai|ai\s+model|assistant|基于|对话式|模型)`)
 var publicLocalizedSelfIdentityPattern = regexp.MustCompile(`(?is)(?:私は|わたしは|저는|나는|soy|je\s+suis|ich\s+bin|sou|sono|я|أنا|ben|ik\s+ben|jestem|मैं|ฉัน|tôi\s+là)\s*(?:an?\s+|un(?:e)?\s+|ein(?:e)?\s+|uma?\s+|một\s+)?` + publicProviderIdentityExpression + `\b`)
 var publicReasoningLeakPattern = regexp.MustCompile(`(?is)(?:\byou\s+are\s+(?:an?\s+)?` + publicProviderIdentityExpression + `\b|\b(?:system|developer)\s+prompt\b|prompt\s+confidentiality|hidden\s+(?:instruction|prompt)|tool\s+protocol|(?:系统|开发者)提示(?:词)?|提示词保密|工具协议|` + publicProviderIdentityExpression + `\s+.*(?:based\s+on|conversational\s+ai|ai\s+model))`)
+var publicReasoningPlaceholderPattern = regexp.MustCompile(`(?i)^\s*(?:taking\s+a\s+look|give\s+me\s+a\s+moment|just\s+a\s+sec(?:ond)?|one\s+moment|digging\s+in|queuing\s+things\s+up|getting\s+things\s+ready|putting\s+it\s+together|pulling\s+things\s+together|wrapping\s+up|working\s+on\s+it|let\s+me\s+check|checking|thinking|analyzing|processing|preparing)\s*(?:\.{2,}|…)?\s*$`)
 var publicInternalCitationPattern = regexp.MustCompile(`(?i)(?:<cite>\s*turn\d+(?:search|news|image)\d+(?:\s*[,;]?\s*turn\d+(?:search|news|image)\d+)*\s*</cite>|cite(?:turn\d+(?:search|news|image)\d+)+)`)
 
 var publicSelfIdentityPattern = regexp.MustCompile(`(?i)(?:` +
@@ -234,7 +235,14 @@ func sanitizePublicReasoningText(text string) string {
 	if text == "" || publicReasoningLeakPattern.MatchString(text) || publicProviderSelfDescriptionPattern.MatchString(text) || publicLocalizedSelfIdentityPattern.MatchString(text) {
 		return ""
 	}
-	return sanitizePublicAssistantText(text)
+	lines := strings.Split(text, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if !publicReasoningPlaceholderPattern.MatchString(line) {
+			kept = append(kept, line)
+		}
+	}
+	return sanitizePublicAssistantText(strings.TrimSpace(strings.Join(kept, "\n")))
 }
 
 func sanitizePublicAssistantTextWithState(text string, identityWritten *bool) string {
@@ -601,11 +609,24 @@ var publicReasoningStreamMarkers = []string{
 	"tool protocol", "based on", "content policy", "priority instructions",
 }
 
+var publicReasoningPlaceholderPrefixes = []string{
+	"taking a look", "give me a moment", "just a sec", "just a second",
+	"digging in", "queuing things up", "getting things ready", "working on it",
+	"putting it together", "pulling things together", "wrapping up", "one moment",
+	"let me check", "checking", "thinking", "analyzing", "processing", "preparing",
+}
+
 func publicReasoningStreamMayNeedBuffer(value string) bool {
 	if publicIdentityStreamMayNeedBuffer(value) {
 		return true
 	}
 	lower := strings.ToLower(value)
+	trimmed := strings.TrimSpace(lower)
+	for _, placeholder := range publicReasoningPlaceholderPrefixes {
+		if strings.HasPrefix(placeholder, trimmed) || strings.HasPrefix(trimmed, placeholder) {
+			return true
+		}
+	}
 	for _, marker := range publicReasoningStreamMarkers {
 		if strings.Contains(lower, marker) {
 			return true

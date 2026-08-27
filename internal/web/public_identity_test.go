@@ -161,6 +161,32 @@ func TestSanitizePublicReasoningTextBlocksInternalPromptLeaks(t *testing.T) {
 	}
 }
 
+func TestSanitizePublicReasoningTextDropsStatusPlaceholders(t *testing.T) {
+	for _, input := range []string{"Taking a look...", "Give me a moment...", "Just a sec...", "Digging in...", "Queuing things up...", "Getting things ready…", "Putting it together…", "Thinking..."} {
+		if got := sanitizePublicReasoningText(input); got != "" {
+			t.Fatalf("reasoning placeholder was published: %q", got)
+		}
+	}
+	if got := sanitizePublicReasoningText("Taking a look at the two cache traces shows a tenant mismatch."); got == "" {
+		t.Fatal("informative reasoning was removed")
+	}
+	if got := sanitizePublicReasoningText("Getting things ready…\nComparing the two cache traces shows a tenant mismatch."); got != "Comparing the two cache traces shows a tenant mismatch." {
+		t.Fatalf("placeholder line was not removed cleanly: %q", got)
+	}
+}
+
+func TestPublicReasoningStreamFilterDropsSplitStatusPlaceholder(t *testing.T) {
+	filter := newPublicReasoningStreamFilter()
+	var got strings.Builder
+	for _, chunk := range []string{"Give me ", "a moment", "..."} {
+		got.WriteString(filter.Push(chunk))
+	}
+	got.WriteString(filter.Flush())
+	if got.Len() != 0 {
+		t.Fatalf("split reasoning placeholder leaked: %q", got.String())
+	}
+}
+
 func TestPublicReasoningStreamFilterBlocksSplitLeak(t *testing.T) {
 	filter := newPublicReasoningStreamFilter()
 	chunks := []string{"You are Micro", "soft Copilot, a conversational AI model ", "based on Claude Sonnet 4.5."}

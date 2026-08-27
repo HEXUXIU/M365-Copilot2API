@@ -2431,6 +2431,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
+		if part := identityFilter.Flush(); part != "" {
+			if err := emitDelta(map[string]any{"content": part}); err != nil {
+				log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
+				return
+			}
+		}
 		if part := reasoningFilter.Flush(); part != "" {
 			if err := emitDelta(map[string]any{"reasoning_content": part}); err != nil {
 				log.Printf("[req-trace] id=%s stage=reasoning_stream_write err=%v", requestID, err)
@@ -2440,9 +2446,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: text.String(), ReasoningContent: sanitizePublicReasoningText(reasoning.String())}, answerPrompt, startedAt, affinityState)
+		finalAnswerText := text.String()
+		if responsesAdapterFromContext(r.Context()) && strings.TrimSpace(res.Text) != "" {
+			finalAnswerText = res.Text
+		}
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: finalAnswerText, ReasoningContent: sanitizePublicReasoningText(reasoning.String())}, answerPrompt, startedAt, affinityState)
 		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 		finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": chatUsage(usage)}
+		if responsesAdapterFromContext(r.Context()) {
+			finishChunk["x_m365_final_text"] = sanitizePublicAssistantTextForModel(finalAnswerText, body.Model)
+		}
 		if res.Throttling != nil {
 			finishChunk["x_m365_throttling"] = res.Throttling
 		}

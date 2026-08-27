@@ -15,11 +15,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
 
 type explicitToolRequiredContextKey struct{}
+type responsesAdapterContextKey struct{}
+
+const responsesTextTailBytes = 512
 
 func carryExplicitToolRequirement(r *http.Request, required bool) *http.Request {
 	if !required {
@@ -31,6 +35,15 @@ func carryExplicitToolRequirement(r *http.Request, required bool) *http.Request 
 func explicitToolRequirementFromContext(ctx context.Context) bool {
 	required, _ := ctx.Value(explicitToolRequiredContextKey{}).(bool)
 	return required
+}
+
+func carryResponsesAdapter(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), responsesAdapterContextKey{}, true))
+}
+
+func responsesAdapterFromContext(ctx context.Context) bool {
+	enabled, _ := ctx.Value(responsesAdapterContextKey{}).(bool)
+	return enabled
 }
 
 // responseNamespace builds the dual isolation key tenant\x00session so a
@@ -137,6 +150,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 	b, _ := json.Marshal(o)
 	r2 := r.Clone(r.Context())
 	r2 = carryExplicitToolRequirement(r2, o.ExplicitToolRequired)
+	r2 = carryResponsesAdapter(r2)
 	r2.Method = http.MethodPost
 	r2.Body = io.NopCloser(bytes.NewReader(b))
 	r2.ContentLength = int64(len(b))
@@ -172,6 +186,10 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}})
 
 	var text strings.Builder
+	var textPending strings.Builder
+	var textEmitted strings.Builder
+	authoritativeText := ""
+	hasAuthoritativeText := false
 	messageID := "msg_" + uuid.NewString()
 	textStarted := false
 	textOutputIndex := -1
@@ -184,6 +202,40 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 		index := nextOutputIndex
 		nextOutputIndex++
 		return index
+	}
+	ensureTextStarted := func() {
+		if textStarted {
+			return
+		}
+		textStarted = true
+		textOutputIndex = allocateOutputIndex()
+		emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": textOutputIndex, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{}}})
+		emit("response.content_part.added", map[string]any{"type": "response.content_part.added", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
+	}
+	emitTextDelta := func(part string) error {
+		if part == "" {
+			return nil
+		}
+		ensureTextStarted()
+		textEmitted.WriteString(part)
+		return emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "delta": part})
+	}
+	flushStableText := func() error {
+		value := textPending.String()
+		if len(value) <= responsesTextTailBytes {
+			return nil
+		}
+		cut := len(value) - responsesTextTailBytes
+		for cut > 0 && !utf8.RuneStart(value[cut]) {
+			cut--
+		}
+		if cut == 0 {
+			return nil
+		}
+		prefix := value[:cut]
+		textPending.Reset()
+		textPending.WriteString(value[cut:])
+		return emitTextDelta(prefix)
 	}
 	type tcState struct {
 		ID, Name, Args, Type string
@@ -216,6 +268,10 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 		if usage, ok := chunk["usage"].(map[string]any); ok {
 			innerUsage = usage
 		}
+		if finalText, ok := chunk["x_m365_final_text"].(string); ok {
+			authoritativeText = finalText
+			hasAuthoritativeText = true
+		}
 		if inner, ok := chunk["error"].(map[string]any); ok {
 			innerError = strings.TrimSpace(fmt.Sprint(inner["message"]))
 			if innerError == "" {
@@ -243,13 +299,11 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 		}
 		if content, ok := delta["content"].(string); ok && content != "" {
 			text.WriteString(content)
-			if !textStarted {
-				textStarted = true
-				textOutputIndex = allocateOutputIndex()
-				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": textOutputIndex, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{}}})
-				emit("response.content_part.added", map[string]any{"type": "response.content_part.added", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
+			textPending.WriteString(content)
+			ensureTextStarted()
+			if err := flushStableText(); err != nil {
+				return false
 			}
-			emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "delta": content})
 		}
 		if rawCalls, ok := delta["tool_calls"].([]any); ok {
 			for _, raw := range rawCalls {
@@ -323,6 +377,26 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 		})
 		return false
 	}
+	finalText := text.String()
+	if hasAuthoritativeText {
+		finalText = authoritativeText
+	}
+	if !strings.HasPrefix(finalText, textEmitted.String()) {
+		emit("response.failed", map[string]any{
+			"type": "response.failed",
+			"response": map[string]any{
+				"id": id, "object": "response", "status": "failed", "model": model,
+				"error": map[string]any{"code": "stream_reconciliation_failed", "message": "upstream revised text that was already streamed"},
+			},
+		})
+		return false
+	}
+	text.Reset()
+	text.WriteString(finalText)
+	textPending.Reset()
+	if err := emitTextDelta(finalText[len(textEmitted.String()):]); err != nil {
+		return false
+	}
 	if len(calls) == 0 && strings.TrimSpace(text.String()) == "" && strings.TrimSpace(reasoning.String()) == "" {
 		// Never leave a Responses stream after response.created without a
 		// terminal event: clients otherwise render this as a successful blank
@@ -386,11 +460,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 	}
 	if text.Len() > 0 {
 		if !textStarted {
-			textStarted = true
-			textOutputIndex = allocateOutputIndex()
-			emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": textOutputIndex, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{}}})
-			emit("response.content_part.added", map[string]any{"type": "response.content_part.added", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
-			emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "delta": text.String()})
+			ensureTextStarted()
 		}
 		contentPart := map[string]any{"type": "output_text", "text": text.String(), "annotations": []any{}}
 		item := map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{contentPart}}

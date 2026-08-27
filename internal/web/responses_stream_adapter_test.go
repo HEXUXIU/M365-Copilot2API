@@ -63,6 +63,80 @@ func TestStreamResponsesAdapterCarriesExplicitToolRequirement(t *testing.T) {
 	}
 }
 
+func TestStreamResponsesAdapterMarksInnerResponsesRequest(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	seen := false
+	run := func(w http.ResponseWriter, r *http.Request) {
+		seen = responsesAdapterFromContext(r.Context())
+		responsesInnerStream(
+			`{"choices":[{"delta":{"content":"done"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}],"x_m365_final_text":"done"}`,
+			`[DONE]`,
+		)(w, r)
+	}
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_context", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	if !seen {
+		t.Fatal("inner request was not marked as a Responses adapter call")
+	}
+}
+
+func TestStreamResponsesAdapterUsesAuthoritativeFinalText(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	partial := "已成功创建文件。\n\n[下载"
+	final := "已成功创建文件。\n\n[下载文件](/tmp/outputs/probe.txt)"
+	run := responsesInnerStream(
+		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": partial}}}}),
+		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}}, "x_m365_final_text": final}),
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_authoritative", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `"delta":"`+partial+`"`) {
+		t.Fatalf("partial upstream text escaped the tail buffer: %s", body)
+	}
+	if !strings.Contains(body, mustJSON(final)) || !strings.Contains(body, "event: response.completed") {
+		t.Fatalf("authoritative final text missing: %s", body)
+	}
+	node := s.responseMessages["tenant"]["resp_authoritative"]
+	if node == nil {
+		t.Fatal("authoritative response was not stored")
+	}
+	if got := contentToString(node.Messages[len(node.Messages)-1].Content); got != final {
+		t.Fatalf("stored response text=%q, want %q", got, final)
+	}
+}
+
+func TestStreamResponsesAdapterFailsWhenRevisionPrecedesBufferedTail(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	partial := strings.Repeat("a", responsesTextTailBytes+64)
+	final := strings.Repeat("b", responsesTextTailBytes+64)
+	run := responsesInnerStream(
+		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": partial}}}}),
+		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}}, "x_m365_final_text": final}),
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_diverged", "session", "tenant", run); ok {
+		t.Fatalf("irreconcilable stream was accepted: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "stream_reconciliation_failed") || strings.Contains(body, "event: response.completed") {
+		t.Fatalf("irreconcilable stream terminal handling is wrong: %s", body)
+	}
+	if _, ok := s.responseMessages["tenant"]["resp_diverged"]; ok {
+		t.Fatal("irreconcilable response was stored for reuse")
+	}
+}
+
 func TestStreamResponsesAdapterCommitFailureSuppressesCompleted(t *testing.T) {
 	s := newResponsesAdapterTestServer()
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

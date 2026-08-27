@@ -22,6 +22,20 @@ func TestPublicIdentityPolicyDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestPublicReasoningFilterCanRunWithoutIdentityPolicy(t *testing.T) {
+	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "false")
+	t.Setenv("M365_PUBLIC_REASONING_FILTER", "true")
+	if got := sanitizePublicReasoningText("Taking a look…"); got != "" {
+		t.Fatalf("status reasoning was published: %q", got)
+	}
+	if got := sanitizePublicReasoningText("Comparing the two cache traces shows a mismatch."); got == "" {
+		t.Fatal("informative reasoning was removed")
+	}
+	if got := sanitizePublicAssistantText("I am Microsoft Copilot."); got != "I am Microsoft Copilot." {
+		t.Fatalf("identity text changed while identity policy was disabled: %q", got)
+	}
+}
+
 func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 	prompt := "[user]\nWhat model are you?"
 

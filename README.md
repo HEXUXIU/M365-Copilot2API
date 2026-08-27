@@ -188,6 +188,7 @@ python manage.py stop     # 停止服务
 | `M365_TOKEN_PRE_REFRESH_INTERVAL_SECONDS` | `60` | 后台检查令牌的周期（秒） |
 | `M365_TOKEN_PRE_REFRESH_CONCURRENCY` | `4` | 同时刷新账号的上限，避免 OAuth 突发请求 |
 | `M365_PUBLIC_IDENTITY_POLICY` | `false` | 公开身份策略总开关；仅在微软反代渠道显式设为 `true` 时启用身份预设及正文、推理、引用和流式清洗 |
+| `M365_PUBLIC_REASONING_FILTER` | `false` | 独立过滤公开推理中的状态占位语和内部提示泄漏，不改写助手正文或身份 |
 
 ### 自动清理
 

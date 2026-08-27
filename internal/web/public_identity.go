@@ -16,7 +16,15 @@ const (
 // publicIdentityPolicyEnabled is opt-in so ordinary upstream responses remain
 // untouched unless the Microsoft gateway channel explicitly enables it.
 func publicIdentityPolicyEnabled() bool {
-	raw, ok := os.LookupEnv("M365_PUBLIC_IDENTITY_POLICY")
+	return publicPolicyEnvEnabled("M365_PUBLIC_IDENTITY_POLICY")
+}
+
+func publicReasoningFilterEnabled() bool {
+	return publicIdentityPolicyEnabled() || publicPolicyEnvEnabled("M365_PUBLIC_REASONING_FILTER")
+}
+
+func publicPolicyEnvEnabled(name string) bool {
+	raw, ok := os.LookupEnv(name)
 	if !ok || strings.TrimSpace(raw) == "" {
 		return false
 	}
@@ -229,7 +237,7 @@ func sanitizePublicInternalText(text string) string {
 }
 
 func sanitizePublicReasoningText(text string) string {
-	if !publicIdentityPolicyEnabled() {
+	if !publicReasoningFilterEnabled() {
 		return text
 	}
 	if text == "" || publicReasoningLeakPattern.MatchString(text) || publicProviderSelfDescriptionPattern.MatchString(text) || publicLocalizedSelfIdentityPattern.MatchString(text) {
@@ -557,7 +565,7 @@ func (f *publicReasoningStreamFilter) Push(fragment string) string {
 	if f == nil {
 		return sanitizePublicReasoningText(fragment)
 	}
-	if !publicIdentityPolicyEnabled() {
+	if !publicReasoningFilterEnabled() {
 		return fragment
 	}
 	f.pending += fragment
@@ -568,7 +576,7 @@ func (f *publicReasoningStreamFilter) Flush() string {
 	if f == nil {
 		return ""
 	}
-	if !publicIdentityPolicyEnabled() {
+	if !publicReasoningFilterEnabled() {
 		out := f.pending
 		f.pending = ""
 		return out

@@ -57,10 +57,10 @@ func TestBuildAnswerRequestMCPForwardsTools(t *testing.T) {
 	}
 }
 
-func TestBuildAnswerRequestPiCompatRouterUsesSinglePlanner(t *testing.T) {
+func TestBuildAnswerRequestPiCompatRouterPreservesUpstreamToolContext(t *testing.T) {
 	req := buildAnswerRequest("[user]\nhello", "magic", answerRequestTestBody(), agentLedger{}, "router", "pi_compat", "http://127.0.0.1:4142/v1/mcp/sse", runtimeSettings{}, chathub.FeatureFlags{}, chathubLocale{}, false)
-	if len(req.Tools) != 0 || req.ToolChoice != nil || req.MCPServerURL != "" {
-		t.Fatalf("pi_compat router leaked second planner: tools=%d choice=%#v mcp=%q", len(req.Tools), req.ToolChoice, req.MCPServerURL)
+	if len(req.Tools) != 1 || req.ToolChoice != "auto" || req.MCPServerURL == "" {
+		t.Fatalf("pi_compat router lost upstream tool context: tools=%d choice=%#v mcp=%q", len(req.Tools), req.ToolChoice, req.MCPServerURL)
 	}
 }
 

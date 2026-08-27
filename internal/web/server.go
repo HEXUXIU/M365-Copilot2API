@@ -1673,7 +1673,7 @@ func normalizeLegacyTools(body *oaiReq) {
 	}
 }
 
-func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedger, planningMode, protocolMode, mcpServerURL string, cfg runtimeSettings, flags chathub.FeatureFlags, locale chathubLocale, disableMemory bool) chathub.Request {
+func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedger, planningMode, _ string, mcpServerURL string, cfg runtimeSettings, flags chathub.FeatureFlags, locale chathubLocale, disableMemory bool) chathub.Request {
 	if len(ledger.Completed) > 0 || len(ledger.Pending) > 0 {
 		answerPrompt += "\n" + ledger.RouterContext()
 	}
@@ -1685,7 +1685,7 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 		req.Tools = body.Tools
 		req.ToolChoice = body.ToolChoice
 	}
-	if mcpServerURL != "" && !(protocolMode == "pi_compat" && planningMode == "router") {
+	if mcpServerURL != "" {
 		req.Tools = body.Tools
 		if req.ToolChoice == nil {
 			req.ToolChoice = body.ToolChoice
@@ -1711,9 +1711,7 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 			mcp.GlobalToolRegistry.MergeTools(mcpTools)
 		}
 	}
-	if !(protocolMode == "pi_compat" && planningMode == "router") {
-		req.MCPServerURL = mcpServerURL
-	}
+	req.MCPServerURL = mcpServerURL
 	if cfg.CacheStrategy == "sticky" || len(req.Tools) > 0 || req.MCPServerURL != "" {
 		req.DisablePool = true
 	}
@@ -2085,6 +2083,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}()
 		var text strings.Builder
 		var reasoning strings.Builder
+		var pendingReasoning strings.Builder
 		var pending strings.Builder
 		var streamedTools []detectedToolCall
 		first := true
@@ -2124,16 +2123,31 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}
-		res, err := s.chatWithAccountEvents(ctx, acc.ID, account, answerReq, func(ev chathub.StreamEvent) error {
+		flushPendingReasoning := func() error {
+			if pendingReasoning.Len() == 0 {
+				return nil
+			}
+			part := pendingReasoning.String()
+			pendingReasoning.Reset()
+			return emitReasoning(part)
+		}
+		onStreamEvent := func(ev chathub.StreamEvent) error {
 			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
+				if err := flushPendingReasoning(); err != nil {
+					return err
+				}
 				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
 				return nil
 			}
 			if ev.Kind == "reasoning" && ev.Text != "" {
-				return emitReasoning(ev.Text)
+				pendingReasoning.WriteString(ev.Text)
+				return nil
 			}
 			if ev.Kind != "text" || ev.Text == "" {
 				return nil
+			}
+			if err := flushPendingReasoning(); err != nil {
+				return err
 			}
 			text.WriteString(ev.Text)
 			pending.WriteString(ev.Text)
@@ -2183,8 +2197,19 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				pending.WriteString(v[cut:])
 			}
 			return nil
-		})
-		if err != nil && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err)) {
+		}
+		res, err := s.chatWithAccountEvents(ctx, acc.ID, account, answerReq, onStreamEvent)
+		for attempt := 1; attempt <= 2 && IsEmptyCompletion(err) && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0; attempt++ {
+			log.Printf("[tone-fallback] tone=%q returned empty in stream, retrying same account with magic attempt=%d", tone, attempt)
+			pendingReasoning.Reset()
+			magicReq := answerReq
+			magicReq.Tone = "magic"
+			res, err = s.chatWithAccountEvents(ctx, acc.ID, account, magicReq, onStreamEvent)
+		}
+		if err != nil {
+			pendingReasoning.Reset()
+		}
+		if err != nil && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
 			originalErr := err
 			// A throttled stream may retry on the next healthy account: only the
 			// ": connected" preamble reached the client, so the retried stream is
@@ -2200,21 +2225,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				}
 				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 				defer cancel2()
-				res2, err2 := s.chatWithAccountEvents(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq, func(ev chathub.StreamEvent) error {
-					if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
-						streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
-						return nil
-					}
-					if ev.Kind == "reasoning" && ev.Text != "" {
-						return emitReasoning(ev.Text)
-					}
-					if ev.Kind != "text" || ev.Text == "" {
-						return nil
-					}
-					text.WriteString(ev.Text)
-					pending.WriteString(ev.Text)
-					return emitText(ev.Text)
-				})
+				res2, err2 := s.chatWithAccountEvents(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq, onStreamEvent)
 				if err2 == nil {
 					s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
 					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
@@ -2256,6 +2267,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			msg = sanitizePublicInternalText(msg)
 			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
+			return
+		}
+		if err := flushPendingReasoning(); err != nil {
 			return
 		}
 		s.accountPool.MarkSuccess(acc.ID)

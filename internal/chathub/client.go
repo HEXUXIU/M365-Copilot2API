@@ -67,6 +67,44 @@ func isUpstreamFallback(text string) bool {
 	return false
 }
 
+type streamFallbackGuard struct {
+	pending  strings.Builder
+	released bool
+}
+
+func (g *streamFallbackGuard) Push(text string) (string, error) {
+	if text == "" {
+		return "", nil
+	}
+	if g.released {
+		return text, nil
+	}
+	g.pending.WriteString(text)
+	candidate := g.pending.String()
+	if isUpstreamFallback(candidate) {
+		return "", ErrEmptyCompletion
+	}
+	low := strings.ToLower(strings.TrimSpace(candidate))
+	for _, pattern := range upstreamFallbackPatterns {
+		if strings.HasPrefix(pattern, low) {
+			return "", nil
+		}
+	}
+	g.released = true
+	g.pending.Reset()
+	return candidate, nil
+}
+
+func (g *streamFallbackGuard) Flush() string {
+	if g.released || g.pending.Len() == 0 {
+		return ""
+	}
+	g.released = true
+	value := g.pending.String()
+	g.pending.Reset()
+	return value
+}
+
 func IsContentPolicyBlock(text string) bool {
 	if len(text) > 300 {
 		return false
@@ -544,12 +582,10 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 
 	var deltas []string
 	var streamed strings.Builder
-	emitDelta := func(d string) error {
+	var fallbackGuard streamFallbackGuard
+	deliverDelta := func(d string) error {
 		if d == "" {
 			return nil
-		}
-		if isUpstreamFallback(d) {
-			return ErrEmptyCompletion
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -568,6 +604,13 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			return onDelta(d)
 		}
 		return nil
+	}
+	emitDelta := func(d string) error {
+		guarded, err := fallbackGuard.Push(d)
+		if err != nil {
+			return err
+		}
+		return deliverDelta(guarded)
 	}
 	// ChatHub signals text either as a full snapshot or as cursor rewrites.
 	// Only the portion not already streamed may be emitted; naive prefix
@@ -1000,6 +1043,16 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 				if rateLimited(final) {
 					returnConn = false
 					return Result{}, ErrRateLimitNotice
+				}
+				if isUpstreamFallback(final) {
+					returnConn = false
+					return Result{}, ErrEmptyCompletion
+				}
+				if pending := fallbackGuard.Flush(); pending != "" {
+					if err := deliverDelta(pending); err != nil {
+						returnConn = false
+						return Result{}, err
+					}
 				}
 				text, ferr := finalizeText(streamed.String(), final, skippedSnapshots, emitDelta)
 				if ferr != nil {

@@ -85,6 +85,9 @@ func buildAgentLedger(messages []oaiMsg) agentLedger {
 		if m.Role == "tool" {
 			if e, ok := calls[m.ToolCallID]; ok {
 				e.Result = compactToolResult(contentToString(m.Content), 4000)
+				if isMissingToolResult(e.Result) {
+					e.Result = ""
+				}
 				e.Failed = failureSignal.MatchString(e.Result)
 				calls[m.ToolCallID] = e
 			}
@@ -123,6 +126,15 @@ func buildAgentLedger(messages []oaiMsg) agentLedger {
 		}
 	}
 	return l
+}
+
+func isMissingToolResult(result string) bool {
+	switch strings.TrimSpace(strings.ToLower(result)) {
+	case "", "(no tool output)", "tool execution did not return a result.", "(暂无结果)":
+		return true
+	default:
+		return false
+	}
 }
 func normalizeFailure(s string) string {
 	s = strings.ToLower(s)

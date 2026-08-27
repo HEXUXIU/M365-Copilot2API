@@ -42,6 +42,17 @@ func TestAgentLedgerEvidenceAndUniqueCallIDs(t *testing.T) {
 	}
 }
 
+func TestMissingToolResultRemainsPending(t *testing.T) {
+	msgs := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c1", "type": "function", "function": map[string]any{"name": "run", "arguments": "{}"}}}},
+		{Role: "tool", ToolCallID: "c1", Content: "(no tool output)"},
+	}
+	l := buildAgentLedger(msgs)
+	if len(l.Pending) != 1 || len(l.Completed) != 0 {
+		t.Fatalf("missing result was marked complete: %+v", l)
+	}
+}
+
 func TestAgentLedgerDetectsRepeatedCallAndRoundLimit(t *testing.T) {
 	var msgs []oaiMsg
 	for i := 0; i < 4; i++ {

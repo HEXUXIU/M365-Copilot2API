@@ -2,7 +2,7 @@ package web
 
 import "testing"
 
-func TestNormalizeEmptyToolResultsMarksCompletedOutput(t *testing.T) {
+func TestNormalizeEmptyToolResultsKeepsMissingOutputPending(t *testing.T) {
 	messages := []oaiMsg{
 		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_1"}}},
 		{Role: "tool", ToolCallID: "call_1", Content: ""},
@@ -12,7 +12,7 @@ func TestNormalizeEmptyToolResultsMarksCompletedOutput(t *testing.T) {
 		t.Fatalf("empty output=%#v", messages[1].Content)
 	}
 	ledger := buildAgentLedger(messages)
-	if len(ledger.Completed) != 1 || len(ledger.Pending) != 0 {
+	if len(ledger.Completed) != 0 || len(ledger.Pending) != 1 {
 		t.Fatalf("ledger=%#v", ledger)
 	}
 }

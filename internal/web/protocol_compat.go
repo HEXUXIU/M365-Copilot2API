@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"m365-copilot2api/internal/chathub"
@@ -27,6 +28,36 @@ type responsesRequest struct {
 	Temperature        *float64         `json:"temperature,omitempty"`
 	TopP               *float64         `json:"top_p,omitempty"`
 	MaxOutputTokens    *int             `json:"max_output_tokens,omitempty"`
+}
+
+const redundantProbeInstructionsMinBytes = 8 << 10
+
+var arithmeticHealthProbePattern = regexp.MustCompile(`(?s)^Calculate and respond with ONLY the number, nothing else\.\s+Q:\s*-?\d+\s*[+\-*/]\s*-?\d+\s*=\s*\?\s*A:\s*-?\d+\s+Q:\s*-?\d+\s*[+\-*/]\s*-?\d+\s*=\s*\?\s*A:\s*-?\d+\s+Q:\s*-?\d+\s*[+\-*/]\s*-?\d+\s*=\s*\?\s*A:\s*$`)
+
+// compactRedundantProbeInstructions removes the Codex client bootstrap from a
+// narrowly identified arithmetic health check. The probe already contains its
+// complete output contract, so forwarding a 20+ KiB coding-agent instruction
+// on every minute-long check only wastes context and obscures usage metrics.
+func compactRedundantProbeInstructions(r *responsesRequest) bool {
+	if r == nil || len(r.Instructions) < redundantProbeInstructionsMinBytes || len(r.Tools) != 0 ||
+		strings.TrimSpace(r.PreviousResponseID) != "" || strings.TrimSpace(r.Conversation) != "" ||
+		strings.TrimSpace(r.PromptCacheKey) != "" {
+		return false
+	}
+	items, ok := r.Input.([]any)
+	if !ok || len(items) != 1 {
+		return false
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok || !strings.EqualFold(strings.TrimSpace(fmt.Sprint(item["role"])), "user") {
+		return false
+	}
+	text, ok := item["content"].(string)
+	if !ok || !arithmeticHealthProbePattern.MatchString(strings.TrimSpace(text)) {
+		return false
+	}
+	r.Instructions = ""
+	return true
 }
 
 const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`

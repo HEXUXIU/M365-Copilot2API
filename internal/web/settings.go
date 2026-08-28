@@ -107,12 +107,12 @@ func defaultRuntimeSettings() runtimeSettings {
 		ToolProtocolMode:           toolProtocolMode(os.Getenv("M365_TOOL_PROTOCOL_MODE")),
 		CacheStrategy:              firstNonEmptySetting(os.Getenv("M365_CACHE_STRATEGY"), "balanced"),
 		StickyFullContext:          os.Getenv("M365_STICKY_FULL_CONTEXT") != "false",
-		StickyAccountConcurrency:   envInt("M365_STICKY_ACCOUNT_CONCURRENCY", 32),
+		StickyAccountConcurrency:   accountConcurrencyEnv("M365_STICKY_ACCOUNT_CONCURRENCY", defaultAccountConcurrency),
 		RateLimitCooldownSeconds:   envInt("M365_RATE_LIMIT_COOLDOWN_SECONDS", 30),
 		Scenario:                   firstNonEmptySetting(os.Getenv("M365_SCENARIO"), "OfficeWebIncludedCopilot"),
 		MaxConversationMessages:    envInt("M365_MAX_CONVERSATION_MESSAGES", 600),
 		LicenseType:                firstNonEmptySetting(os.Getenv("M365_LICENSE_TYPE"), "Starter"),
-		AccountConcurrencyLimit:    envInt("M365_ACCOUNT_CONCURRENCY_LIMIT", 8),
+		AccountConcurrencyLimit:    accountConcurrencyEnv("M365_ACCOUNT_CONCURRENCY_LIMIT", defaultAccountConcurrency),
 		EnableMemoryV2:             os.Getenv("M365_ENABLE_MEMORY_V2") == "true",
 		EnableDeepWork:             os.Getenv("M365_ENABLE_DEEP_WORK") == "true",
 		EnableComputerUse:          os.Getenv("M365_ENABLE_COMPUTER_USE") == "true",
@@ -138,6 +138,14 @@ var openSettingsStore = sync.OnceValue(func() *settingsStore {
 	s := &settingsStore{path: settingsPath(), v: defaultRuntimeSettings()}
 	if b, e := os.ReadFile(s.path); e == nil {
 		_ = json.Unmarshal(b, &s.v)
+	}
+	// Older settings files predate the concurrency controls. Preserve their
+	// existing values while filling only the newly added fields.
+	if s.v.AccountConcurrencyLimit < minAccountConcurrency || s.v.AccountConcurrencyLimit > maxAccountConcurrency {
+		s.v.AccountConcurrencyLimit = defaultAccountConcurrency
+	}
+	if s.v.StickyAccountConcurrency < minAccountConcurrency || s.v.StickyAccountConcurrency > maxAccountConcurrency {
+		s.v.StickyAccountConcurrency = defaultAccountConcurrency
 	}
 	if e := validateSettings(s.v); e != nil {
 		log.Printf("[settings] invalid persisted settings: %v", e)
@@ -225,8 +233,11 @@ func validateSettings(v runtimeSettings) error {
 	if !validScenarios[v.Scenario] {
 		return fmt.Errorf("scenario 必须为 OfficeWebIncludedCopilot、Bizchat、CopilotConsumer 或 Chathub")
 	}
-	if v.AccountConcurrencyLimit < 1 || v.AccountConcurrencyLimit > 64 {
-		return fmt.Errorf("账号并发上限必须为 1-64")
+	if v.AccountConcurrencyLimit < minAccountConcurrency || v.AccountConcurrencyLimit > maxAccountConcurrency {
+		return fmt.Errorf("账号并发上限必须为 %d-%d", minAccountConcurrency, maxAccountConcurrency)
+	}
+	if v.StickyAccountConcurrency < minAccountConcurrency || v.StickyAccountConcurrency > maxAccountConcurrency {
+		return fmt.Errorf("sticky 账号并发上限必须为 %d-%d", minAccountConcurrency, maxAccountConcurrency)
 	}
 	if strings.TrimSpace(v.Scenario) == "" {
 		return fmt.Errorf("场景标识不能为空")
@@ -281,6 +292,9 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 		if e := s.settings.save(v); e != nil {
 			writeOpenAIError(w, 400, "invalid_request_error", e.Error())
 			return
+		}
+		if s.accountConcurrency != nil {
+			s.accountConcurrency.SetLimit(v.AccountConcurrencyLimit)
 		}
 		if e := outbound.ConfigurePool(v.ProxyPool); e != nil {
 			writeOpenAIError(w, 400, "invalid_request_error", e.Error())

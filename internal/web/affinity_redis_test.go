@@ -99,3 +99,34 @@ func TestRedisAffinityLockChecksOwner(t *testing.T) {
 	}
 	secondRelease()
 }
+
+func TestRedisAffinityHistoryKeepsConcurrentEqualDigests(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store, err := newRedisAffinityStore("redis://"+mr.Addr()+"/0", 4, time.Hour, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	first := affinityBinding{ID: "binding-a", TenantHash: "tenant", AccountID: "account-a", ConversationID: "conv-a", HistoryDigest: "same", HistoryCount: 2, Generation: 1}
+	second := affinityBinding{ID: "binding-b", TenantHash: "tenant", AccountID: "account-b", ConversationID: "conv-b", HistoryDigest: "same", HistoryCount: 2, Generation: 1}
+	if err := store.PutBinding(ctx, first, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBinding(ctx, second, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, err := store.FindHistory(ctx, "tenant", []string{"same"}); err != nil || !ok {
+		t.Fatalf("shared history missing before migration: ok=%v err=%v", ok, err)
+	}
+	updated := first
+	updated.HistoryDigest = "new"
+	updated.Generation = 2
+	if ok, err := store.CompareAndSwapBinding(ctx, first.ID, 1, updated, time.Hour); err != nil || !ok {
+		t.Fatalf("CAS migration ok=%v err=%v", ok, err)
+	}
+	got, _, ok, err := store.FindHistory(ctx, "tenant", []string{"same"})
+	if err != nil || !ok || got.ID != second.ID {
+		t.Fatalf("sibling history was lost: got=%+v ok=%v err=%v", got, ok, err)
+	}
+}

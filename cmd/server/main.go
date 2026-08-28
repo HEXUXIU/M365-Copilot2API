@@ -31,7 +31,12 @@ func main() {
 	s.InitM365CloudClient()
 	s.StartAutoCleanup()
 	s.StartConvCacheGC()
-	s.RefreshExpiredTokens()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// Keep OAuth refreshes off the first-request path. The initial pass runs
+	// before the listener accepts traffic; subsequent passes follow the token
+	// expiry window in the background.
+	s.StartTokenPreRefresh(ctx)
 	go s.PreheatPool()
 	listen := "127.0.0.1:4141"
 	if v := os.Getenv("M365_LISTEN"); v != "" {
@@ -46,8 +51,6 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 		WriteTimeout:      0, // streaming endpoints need an open-ended write window.
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

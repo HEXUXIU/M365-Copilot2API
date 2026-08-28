@@ -629,6 +629,8 @@ if (response.output_text) {
         <div class="card"><div class="card-body">
           <div class="form-group"><label class="form-label">Listen address</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div>
           <div class="form-group"><label class="form-label">Chat timeout (seconds)</label><input class="form-input" id="setTimeout" type="number" placeholder="120"></div>
+          <div class="form-group"><label class="form-label">Per-account concurrency</label><input class="form-input" id="setAccountConcurrency" type="number" min="1" max="1024" placeholder="256"><p class="form-hint">Maximum simultaneous upstream requests per account (1-1024).</p></div>
+          <div class="form-group"><label class="form-label">Sticky concurrency</label><input class="form-input" id="setStickyConcurrency" type="number" min="1" max="1024" placeholder="256"><p class="form-hint">Additional cap for sticky cache routing (1-1024).</p></div>
           <div class="form-group">
             <label class="form-label">Cache strategy</label>
             <div class="cache-segment" role="group" aria-label="Cache strategy">
@@ -1643,6 +1645,8 @@ async function loadSettings(){
     const v=d.settings||{};
     $('setListen').value=v.listenAddress||'';
     $('setTimeout').value=v.chatTimeoutSeconds||120;
+    $('setAccountConcurrency').value=v.accountConcurrencyLimit||256;
+    $('setStickyConcurrency').value=v.stickyAccountConcurrency||256;
     $('setStickyFullContext').checked=v.stickyFullContext!==false;
     $('setToolProtocolMode').value=v.toolProtocolMode==='pi_compat'?'pi_compat':'legacy';
     setCacheStrategy(v.cacheStrategy);
@@ -1655,6 +1659,10 @@ async function saveSettings(){
     const body={};
     if(listen)body.listenAddress=listen;
     if(timeout)body.chatTimeoutSeconds=parseInt(timeout);
+    const accountConcurrency=parseInt($('setAccountConcurrency').value);
+    const stickyConcurrency=parseInt($('setStickyConcurrency').value);
+    if(Number.isFinite(accountConcurrency))body.accountConcurrencyLimit=accountConcurrency;
+    if(Number.isFinite(stickyConcurrency))body.stickyAccountConcurrency=stickyConcurrency;
     body.cacheStrategy=currentCacheStrategy;
     body.stickyFullContext=$('setStickyFullContext').checked;
     body.toolProtocolMode=$('setToolProtocolMode').value;

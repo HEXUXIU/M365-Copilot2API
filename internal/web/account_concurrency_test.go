@@ -3,6 +3,8 @@ package web
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 
 func TestAccountConcurrencyLimitsAndReleasesSlots(t *testing.T) {
 	t.Setenv("M365_ACCOUNT_DEFAULT_CONCURRENCY", "2")
+	t.Setenv("M365_ACCOUNT_CONCURRENCY_LIMIT", "")
 	limiter := newAccountConcurrency()
 	release1, err := limiter.Acquire(context.Background(), "account-a")
 	if err != nil {
@@ -36,6 +39,7 @@ func TestAccountConcurrencyLimitsAndReleasesSlots(t *testing.T) {
 
 func TestAccountConcurrencyWaitHonorsCancellation(t *testing.T) {
 	t.Setenv("M365_ACCOUNT_DEFAULT_CONCURRENCY", "1")
+	t.Setenv("M365_ACCOUNT_CONCURRENCY_LIMIT", "")
 	limiter := newAccountConcurrency()
 	release, err := limiter.Acquire(context.Background(), "account-a")
 	if err != nil {
@@ -52,9 +56,82 @@ func TestAccountConcurrencyWaitHonorsCancellation(t *testing.T) {
 
 func TestAccountConcurrencyUsesDocumentedDefault(t *testing.T) {
 	t.Setenv("M365_ACCOUNT_DEFAULT_CONCURRENCY", "")
+	t.Setenv("M365_ACCOUNT_CONCURRENCY_LIMIT", "")
 	limiter := newAccountConcurrency()
 	if limiter.limit != defaultAccountConcurrency {
 		t.Fatalf("limit = %d, want %d", limiter.limit, defaultAccountConcurrency)
+	}
+}
+
+func TestAccountConcurrencySupports128ConcurrentCalls(t *testing.T) {
+	const concurrency = 128
+	t.Setenv("M365_ACCOUNT_CONCURRENCY_LIMIT", "128")
+	limiter := newAccountConcurrency()
+	if limiter.Limit() != concurrency {
+		t.Fatalf("limit = %d, want %d", limiter.Limit(), concurrency)
+	}
+
+	var active, maximum int64
+	acquired := make(chan func(), concurrency)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release, err := limiter.Acquire(context.Background(), "account-a")
+			if err != nil {
+				t.Errorf("acquire: %v", err)
+				return
+			}
+			current := atomic.AddInt64(&active, 1)
+			for {
+				old := atomic.LoadInt64(&maximum)
+				if current <= old || atomic.CompareAndSwapInt64(&maximum, old, current) {
+					break
+				}
+			}
+			acquired <- release
+		}()
+	}
+	deadlines := time.After(2 * time.Second)
+	leases := make([]func(), 0, concurrency)
+	for i := 0; i < concurrency; i++ {
+		select {
+		case release := <-acquired:
+			leases = append(leases, release)
+		case <-deadlines:
+			t.Fatalf("only %d of %d calls acquired a slot", i, concurrency)
+		}
+	}
+	if got := limiter.Inflight("account-a"); got != concurrency {
+		t.Fatalf("inflight = %d, want %d", got, concurrency)
+	}
+	if limiter.Available("account-a") {
+		t.Fatalf("account should be full at %d concurrent calls", concurrency)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := limiter.Acquire(ctx, "account-a"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("%dst acquire error = %v, want deadline exceeded", concurrency+1, err)
+	}
+	for i := 0; i < concurrency; i++ {
+		leases[i]()
+		atomic.AddInt64(&active, -1)
+	}
+	wg.Wait()
+	if got := limiter.Inflight("account-a"); got != 0 || maximum != concurrency {
+		t.Fatalf("final inflight=%d maximum=%d, want 0 and %d", got, maximum, concurrency)
+	}
+}
+
+func TestAccountConcurrencyRejectsInvalidConfiguredValues(t *testing.T) {
+	for _, raw := range []string{"0", "-1", "1025", "9999", "not-a-number"} {
+		t.Setenv("M365_ACCOUNT_CONCURRENCY_LIMIT", raw)
+		t.Setenv("M365_ACCOUNT_DEFAULT_CONCURRENCY", "")
+		if got := configuredAccountConcurrencyLimit(); got != defaultAccountConcurrency {
+			t.Fatalf("configured limit for %q = %d, want default %d", raw, got, defaultAccountConcurrency)
+		}
 	}
 }
 

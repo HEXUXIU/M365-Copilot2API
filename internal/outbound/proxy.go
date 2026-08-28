@@ -37,7 +37,8 @@ func directClients() *Clients {
 	t := &http.Transport{
 		Proxy:                 nil,
 		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		MaxIdleConns:          100,
+		MaxIdleConns:          256,
+		MaxIdleConnsPerHost:   128,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
@@ -47,11 +48,11 @@ func directClients() *Clients {
 	return &Clients{
 		HTTP: &http.Client{Transport: t},
 		WebSocket: &websocket.Dialer{
-			HandshakeTimeout:  20 * time.Second,
-			ReadBufferSize:    256 * 1024,
-			WriteBufferSize:   16 * 1024,
-			NetDialContext:    t.DialContext,
-			TLSClientConfig:   wsTLSConf,
+			HandshakeTimeout: 20 * time.Second,
+			ReadBufferSize:   256 * 1024,
+			WriteBufferSize:  16 * 1024,
+			NetDialContext:   t.DialContext,
+			TLSClientConfig:  wsTLSConf,
 		},
 	}
 }

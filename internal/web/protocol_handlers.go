@@ -597,6 +597,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		writeResponsesError(w, 400, "invalid_request_error", "bad json")
 		return
 	}
+	if compactRedundantProbeInstructions(&body) {
+		w.Header().Set("X-M365-Probe-Instructions-Compacted", "1")
+	}
 	o, err := body.openAI()
 	if err != nil {
 		writeResponsesError(w, 400, "invalid_request_error", err.Error())

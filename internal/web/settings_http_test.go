@@ -69,6 +69,36 @@ func TestAdminSettingsCacheStrategyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestAdminSettingsConcurrencyLimitHotReloadsLimiter(t *testing.T) {
+	st := &settingsStore{path: filepath.Join(t.TempDir(), "settings.json"), v: defaultRuntimeSettings()}
+	st.v.AccountConcurrencyLimit = 2
+	limiter := &accountConcurrency{limit: 2, inflight: map[string]int{}, changed: make(chan struct{})}
+	s := &Server{settings: st, accountConcurrency: limiter}
+
+	r := httptest.NewRequest(http.MethodPut, "/api/admin/settings", bytes.NewBufferString(`{"accountConcurrencyLimit":512}`))
+	w := httptest.NewRecorder()
+	s.adminSettings(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT=%d %s", w.Code, w.Body.String())
+	}
+	if got := limiter.Limit(); got != 512 {
+		t.Fatalf("limiter limit=%d, want 512 after hot reload", got)
+	}
+}
+
+func TestAdminSettingsConcurrencyLimitAccepts100PlusRange(t *testing.T) {
+	v := defaultRuntimeSettings()
+	v.AccountConcurrencyLimit = 1024
+	v.StickyAccountConcurrency = 1024
+	if err := validateSettings(v); err != nil {
+		t.Fatalf("maximum supported concurrency rejected: %v", err)
+	}
+	v.AccountConcurrencyLimit = 1025
+	if err := validateSettings(v); err == nil {
+		t.Fatal("concurrency above the hard limit was accepted")
+	}
+}
+
 func TestAdminSettingsDuplicateKeysDoNotPanic(t *testing.T) {
 	// JSON 重复键是前端不该产生但可能出现的输入（如日志里错拼的字段）。
 	// 修复的 bug 是部分 PUT 零值覆盖，这里只验证这类脏输入不 panic。

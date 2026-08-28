@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -16,28 +18,63 @@ type pooledConn struct {
 	handshook bool
 }
 
-const maxPoolPerKey = 2
+const (
+	defaultMaxPoolPerKey = 4
+	defaultPoolConnTTL   = 2 * time.Minute
+	maxPoolPerKeyLimit   = 16
+)
 
 type ConnPool struct {
-	mu     sync.Mutex
-	conns  map[string][]*pooledConn // key = oid|tid, up to maxPoolPerKey connections
-	dialer *websocket.Dialer
-	header http.Header
-	stop   chan struct{}
+	mu        sync.Mutex
+	conns     map[string][]*pooledConn // key = oid|tid, up to maxPoolPerKey connections
+	dialer    *websocket.Dialer
+	header    http.Header
+	stop      chan struct{}
+	maxPerKey int
+	connTTL   time.Duration
+	warming   map[string]int
 }
 
 func NewConnPool(dialer *websocket.Dialer, header http.Header) *ConnPool {
+	maxPerKey := defaultMaxPoolPerKey
+	if raw := os.Getenv("M365_WS_POOL_SIZE"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			if parsed > maxPoolPerKeyLimit {
+				parsed = maxPoolPerKeyLimit
+			}
+			maxPerKey = parsed
+		}
+	}
+	connTTL := defaultPoolConnTTL
+	if raw := os.Getenv("M365_WS_POOL_TTL_SECONDS"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 30 {
+			connTTL = time.Duration(parsed) * time.Second
+		}
+	}
 	p := &ConnPool{
-		conns:  make(map[string][]*pooledConn),
-		dialer: dialer,
-		header: header,
-		stop:   make(chan struct{}),
+		conns:     make(map[string][]*pooledConn),
+		dialer:    dialer,
+		header:    header,
+		stop:      make(chan struct{}),
+		maxPerKey: maxPerKey,
+		connTTL:   connTTL,
+		warming:   make(map[string]int),
 	}
 	go p.gcLoop()
 	return p
 }
 
 func (p *ConnPool) key(oid, tid string) string { return oid + "|" + tid }
+
+// Capacity reports the configured number of standby connections per account.
+// It lets startup preheating match the runtime pool size without duplicating
+// configuration parsing in the web package.
+func (p *ConnPool) Capacity() int {
+	if p == nil || p.maxPerKey <= 0 {
+		return defaultMaxPoolPerKey
+	}
+	return p.maxPerKey
+}
 
 func (p *ConnPool) Take(ctx context.Context, oid, tid string, wsURL string) (*websocket.Conn, bool, error) {
 	_ = wsURL
@@ -46,7 +83,7 @@ func (p *ConnPool) Take(ctx context.Context, oid, tid string, wsURL string) (*we
 	conns := p.conns[key]
 	for i := len(conns) - 1; i >= 0; i-- {
 		pc := conns[i]
-		if time.Since(pc.created) < 2*time.Minute && pc.handshook {
+		if time.Since(pc.created) < p.connTTL && pc.handshook {
 			p.conns[key] = append(conns[:i], conns[i+1:]...)
 			p.mu.Unlock()
 			return pc.conn, true, nil
@@ -74,17 +111,23 @@ func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) {
 	key := p.key(acc.OID, acc.TID)
 
 	p.mu.Lock()
-	if len(p.conns[key]) >= maxPoolPerKey {
+	// Count in-flight dials as occupied slots. This prevents a startup burst
+	// or concurrent completions from over-dialing the same account.
+	if len(p.conns[key])+p.warming[key] >= p.maxPerKey {
 		p.mu.Unlock()
 		return
 	}
-	for _, pc := range p.conns[key] {
-		if time.Since(pc.created) < 30*time.Second {
-			p.mu.Unlock()
-			return
-		}
-	}
+	p.warming[key]++
 	p.mu.Unlock()
+	defer func() {
+		p.mu.Lock()
+		if p.warming[key] <= 1 {
+			delete(p.warming, key)
+		} else {
+			p.warming[key]--
+		}
+		p.mu.Unlock()
+	}()
 
 	conn, resp, err := p.dialer.DialContext(ctx, wsURL, p.header.Clone())
 	if err != nil {
@@ -111,7 +154,7 @@ func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) {
 	_ = conn.SetReadDeadline(time.Time{})
 
 	p.mu.Lock()
-	if len(p.conns[key]) >= maxPoolPerKey {
+	if len(p.conns[key]) >= p.maxPerKey {
 		conn.Close()
 		p.mu.Unlock()
 		return
@@ -141,7 +184,7 @@ func (p *ConnPool) GC() {
 	for k, conns := range p.conns {
 		kept := conns[:0]
 		for _, pc := range conns {
-			if now.Sub(pc.created) > 2*time.Minute {
+			if now.Sub(pc.created) > p.connTTL {
 				pc.conn.Close()
 			} else {
 				kept = append(kept, pc)
@@ -178,7 +221,7 @@ func (p *ConnPool) Stats() map[string]any {
 			details = append(details, map[string]any{"key": k, "age_ms": time.Since(pc.created).Milliseconds(), "handshook": pc.handshook})
 		}
 	}
-	return map[string]any{"mode": "connpool", "pooled_connections": total, "details": details}
+	return map[string]any{"mode": "connpool", "pooled_connections": total, "max_per_key": p.maxPerKey, "ttl_seconds": int(p.connTTL.Seconds()), "details": details}
 }
 
 func (p *ConnPool) gcLoop() {

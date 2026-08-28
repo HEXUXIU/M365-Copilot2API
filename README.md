@@ -182,7 +182,8 @@ python manage.py stop     # 停止服务
 | `M365_CONTEXT_TTL_MINUTES` | `120` | 上下文指纹复用窗口（分钟） |
 | `M365_CONTEXT_SIMILARITY` | `0.6` | 上下文相似度复用阈值（0~1，Jaccard 相似度） |
 | `M365_LOG_LEVEL` | `info` | 日志级别 |
-| `M365_ACCOUNT_DEFAULT_CONCURRENCY` | `8` | 每个账号同时进行的上游调用上限；其余账号仍可继续接收请求 |
+| `M365_ACCOUNT_DEFAULT_CONCURRENCY` | `256` | 每个账号同时进行的上游调用上限（兼容旧配置名）；其余账号仍可继续接收请求 |
+| `M365_ACCOUNT_CONCURRENCY_LIMIT` | `256` | 设置文件和管理面板使用的每账号并发上限，范围 `1-1024` |
 | `M365_TOKEN_PRE_REFRESH` | 开启 | 后台令牌预刷新；设为 `0` / `false` / `no` / `off` 关闭 |
 | `M365_TOKEN_PRE_REFRESH_MINUTES` | `5` | 访问令牌剩余多少分钟时提前刷新，避免请求同步等待 OAuth |
 | `M365_TOKEN_PRE_REFRESH_INTERVAL_SECONDS` | `60` | 后台检查令牌的周期（秒） |
@@ -214,8 +215,10 @@ python manage.py stop     # 停止服务
 | `M365_TOOL_PLANNING_MODE` | `router` | 工具规划模式：`router`（网关路由规划）/ `native`（云端原生规划） |
 | `M365_TOOL_PROTOCOL_MODE` | `legacy` | 工具协议兼容模式：`legacy` 保持原行为；`pi_compat` 启用单次路由规划及 Responses 工具历史修复 |
 | `M365_CACHE_STRATEGY` | `balanced` | 缓存策略：`balanced` 使用连接池；`sticky` 强化账号/会话粘性并为每轮新建连接 |
+| `M365_WS_POOL_SIZE` | `4` | 每个账号保留的已完成握手备用 WebSocket 数量（最多 16）；工具规划请求不使用备用连接 |
+| `M365_WS_POOL_TTL_SECONDS` | `120` | 备用 WebSocket 的最长空闲存活时间（至少 30 秒） |
 | `M365_STICKY_FULL_CONTEXT` | `true` | sticky 模式完整发送会话前缀，启用上游缓存读取 |
-| `M365_STICKY_ACCOUNT_CONCURRENCY` | `32` | sticky 模式单账号并发上限，避免高并发时绑定迁移 |
+| `M365_STICKY_ACCOUNT_CONCURRENCY` | `256` | sticky 模式单账号并发上限，避免高并发时绑定迁移 |
 | `M365_AFFINITY_REUSE_ROUTER_CONVERSATION` | `false` | 让 router 工具规划续接亲和会话；已绑定轮次只发送新增消息 |
 | `M365_MAX_TOOL_CALLS_PER_TURN` | `1` | 单轮最多并行工具调用数（有副作用操作自动降为串行） |
 | `M365_MAX_TOOL_ROUNDS` | `16` | 单次请求最大工具轮次 |

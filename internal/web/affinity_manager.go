@@ -50,7 +50,7 @@ func loadAffinityConfig() affinityConfig {
 	return affinityConfig{
 		Mode:                    mode,
 		RedisURL:                strings.TrimSpace(os.Getenv("M365_REDIS_URL")),
-		RedisPoolSize:           affinityEnvInt("M365_REDIS_POOL_SIZE", 32),
+		RedisPoolSize:           affinityEnvInt("M365_REDIS_POOL_SIZE", 256),
 		TTL:                     time.Duration(affinityEnvInt("M365_AFFINITY_TTL_MINUTES", 120)) * time.Minute,
 		MaxSessions:             affinityEnvInt("M365_AFFINITY_MAX_SESSIONS", 10000),
 		LockTTL:                 time.Duration(affinityEnvInt("M365_SESSION_LOCK_TTL_SECONDS", 180)) * time.Second,

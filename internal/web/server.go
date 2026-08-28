@@ -58,7 +58,18 @@ func (s *Server) featureFlags() chathub.FeatureFlags {
 	}
 }
 
-const maxAccountProbe = 16
+// accountProbeLimit prevents a large account pool from being truncated to a
+// small fixed prefix during failover. Each request scans at most one full
+// round through the current account list.
+func (s *Server) accountProbeLimit() int {
+	if s == nil || s.tokens == nil {
+		return 1
+	}
+	if n := len(s.tokens.List()); n > 0 {
+		return n
+	}
+	return 1
+}
 
 const rateLimitProbePrompt = "Reply with exactly: OK"
 
@@ -184,15 +195,16 @@ func (s *Server) clientForProxy(proxyURL string) *chathub.Client {
 		log.Printf("[bound-proxy] invalid proxy %q: %v", proxyURL, err)
 		return s.chat
 	}
+	header := make(http.Header)
+	header.Set("Origin", "https://m365.cloud.microsoft")
+	header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0")
 	c := &chathub.Client{
-		HTTPHeader: make(http.Header),
+		HTTPHeader: header,
 		HTTPClient: clients.HTTP,
 		Dialer:     clients.WebSocket,
-		Pool:       chathub.NewConnPool(clients.WebSocket, make(http.Header)),
+		Pool:       chathub.NewConnPool(clients.WebSocket, header),
 		Trace:      s.chat.Trace,
 	}
-	c.HTTPHeader.Set("Origin", "https://m365.cloud.microsoft")
-	c.HTTPHeader.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0")
 	actual, _ := s.proxyClients.LoadOrStore(proxyURL, c)
 	return actual.(*chathub.Client)
 }
@@ -247,7 +259,7 @@ func New() (*Server, error) {
 			sessionTTL = d
 		}
 	}
-	return &Server{
+	s := &Server{
 		tokens:             store,
 		accountPool:        newAccountHealth(),
 		accountConcurrency: newAccountConcurrency(),
@@ -274,7 +286,11 @@ func New() (*Server, error) {
 		generatedImages:      map[string]generatedImage{},
 		convCache:            newConversationCache(),
 		affinity:             openAffinityManager(loadAffinityConfig()),
-	}, nil
+	}
+	// The settings file is the source of truth after startup. Environment
+	// variables still seed the initial value for new deployments.
+	s.accountConcurrency.SetLimit(s.settings.get().AccountConcurrencyLimit)
+	return s, nil
 }
 
 func (s *Server) StartConvCacheGC() {
@@ -287,33 +303,49 @@ func (s *Server) StartConvCacheGC() {
 }
 
 func (s *Server) PreheatPool() {
-	if s.chat == nil || s.chat.Pool == nil {
+	if s == nil || s.chat == nil {
 		return
 	}
-	accounts := s.tokens.List()
+	for _, acc := range s.tokens.List() {
+		s.preheatAccount(acc)
+	}
+}
+
+// preheatAccount warms only the client's actual routing path. Keeping this
+// helper account-scoped lets token refreshes replace standby sockets without
+// redialing every account in the pool.
+func (s *Server) preheatAccount(acc auth.AccountToken) {
+	if s == nil || s.chat == nil {
+		return
+	}
 	cfg := s.settings.get()
-	for _, acc := range accounts {
-		if acc.OID == "" || acc.TID == "" {
-			oid, tid := extractOIDTID(acc.AccessToken)
-			acc.OID, acc.TID = oid, tid
-		}
-		if acc.OID == "" {
-			continue
-		}
-		for i := 0; i < 2; i++ {
-			go func(a auth.AccountToken) {
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-				reqID := uuid.NewString()
-				sid := uuid.NewString()
-				cid := uuid.NewString()
-				wsURL, err := chathub.BuildWSURL(chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, sid, cid, reqID, cfg.LicenseType, cfg.Scenario)
-				if err != nil {
-					return
-				}
-				s.chat.Pool.Warm(ctx, chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, wsURL)
-			}(acc)
-		}
+	if acc.OID == "" || acc.TID == "" {
+		oid, tid := extractOIDTID(acc.AccessToken)
+		acc.OID, acc.TID = oid, tid
+	}
+	if acc.OID == "" {
+		return
+	}
+	// Warm the same client that normal traffic will use. Accounts with a
+	// bound proxy have their own dialer and pool; warming the global client
+	// would leave those accounts cold on their first request.
+	client := s.accountClient(acc.ID)
+	if client == nil || client.Pool == nil {
+		return
+	}
+	for i := 0; i < client.Pool.Capacity(); i++ {
+		go func(a auth.AccountToken, c *chathub.Client) {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			reqID := uuid.NewString()
+			sid := uuid.NewString()
+			cid := uuid.NewString()
+			wsURL, err := chathub.BuildWSURL(chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, sid, cid, reqID, cfg.LicenseType, cfg.Scenario)
+			if err != nil {
+				return
+			}
+			c.Pool.Warm(ctx, chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, wsURL)
+		}(acc, client)
 	}
 }
 
@@ -343,6 +375,9 @@ func (s *Server) logTokenRefreshResults(results []auth.TokenRefreshResult, start
 	for _, r := range results {
 		if r.Success {
 			log.Printf("[token-refresh] account=%s refreshed, expires=%s, remaining=%s", r.Email, r.ExpiresAt.Format(time.RFC3339), time.Until(r.ExpiresAt).Truncate(time.Second))
+			if acc, ok := s.tokens.Get(r.ID); ok {
+				go s.preheatAccount(acc)
+			}
 		} else {
 			log.Printf("[token-refresh] account=%s failed: %s", r.Email, r.Error)
 		}
@@ -1140,7 +1175,7 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
 		}
 		accountID = acc.ID
-		for i := 0; !s.accountAvailable(accountID) && i < maxAccountProbe; i++ {
+		for i := 0; !s.accountAvailable(accountID) && i < s.accountProbeLimit(); i++ {
 			acc, ok = s.tokens.Next()
 			if !ok {
 				break
@@ -1175,7 +1210,7 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 // healthy, skipping the given id first, and validates its token. Used by the
 // failover path after a rate-limited or auth-failed attempt.
 func (s *Server) nextHealthyAccount(avoidID string) (auth.AccountToken, error) {
-	for i := 0; i < maxAccountProbe; i++ {
+	for i := 0; i < s.accountProbeLimit(); i++ {
 		acc, ok := s.tokens.Next()
 		if !ok {
 			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
@@ -1864,10 +1899,15 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				if !s.tokens.ScheduleEnabled(id) {
 					return false
 				}
-				if stickyLimit <= 0 {
-					return s.accountConcurrency.Available(id)
+				// The affinity selector and request semaphore must agree on the
+				// effective capacity. A separate sticky cap may further restrict
+				// traffic, but it must never advertise slots the semaphore cannot
+				// actually grant.
+				limit := s.accountConcurrency.Limit()
+				if stickyLimit > 0 && stickyLimit < limit {
+					limit = stickyLimit
 				}
-				return s.accountConcurrency.Inflight(id) < stickyLimit
+				return s.accountConcurrency.Inflight(id) < limit
 			}
 		}
 		affinityState, err = s.affinity.begin(r.Context(), s.affinityTenantIdentity(r), &body, r, s.tokens.List(), available)

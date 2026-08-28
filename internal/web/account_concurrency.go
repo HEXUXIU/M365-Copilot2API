@@ -14,7 +14,11 @@ import (
 	"m365-copilot2api/internal/chathub"
 )
 
-const defaultAccountConcurrency = 8
+const (
+	defaultAccountConcurrency = 256
+	minAccountConcurrency     = 1
+	maxAccountConcurrency     = 1024
+)
 
 const (
 	defaultTransientRetryAttempts = 2
@@ -30,13 +34,64 @@ type accountConcurrency struct {
 }
 
 func newAccountConcurrency() *accountConcurrency {
-	limit := defaultAccountConcurrency
-	if raw := strings.TrimSpace(os.Getenv("M365_ACCOUNT_DEFAULT_CONCURRENCY")); raw != "" {
-		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
-			limit = parsed
+	return &accountConcurrency{limit: configuredAccountConcurrencyLimit(), inflight: map[string]int{}, changed: make(chan struct{})}
+}
+
+// configuredAccountConcurrencyLimit reads the current setting and accepts the
+// legacy variable as a fallback. Invalid or out-of-range values never disable
+// throttling; they fall back to the documented default.
+func configuredAccountConcurrencyLimit() int {
+	for _, name := range []string{"M365_ACCOUNT_CONCURRENCY_LIMIT", "M365_ACCOUNT_DEFAULT_CONCURRENCY"} {
+		if raw := strings.TrimSpace(os.Getenv(name)); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err == nil && parsed >= minAccountConcurrency && parsed <= maxAccountConcurrency {
+				return parsed
+			}
 		}
 	}
-	return &accountConcurrency{limit: limit, inflight: map[string]int{}, changed: make(chan struct{})}
+	return defaultAccountConcurrency
+}
+
+func accountConcurrencyEnv(name string, fallback int) int {
+	raw, ok := os.LookupEnv(name)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || parsed < minAccountConcurrency || parsed > maxAccountConcurrency {
+		return fallback
+	}
+	return parsed
+}
+
+// SetLimit updates the shared per-account limit without interrupting active
+// calls. Waiters are notified when the limit changes so increases take effect
+// immediately and decreases drain naturally as in-flight calls finish.
+func (c *accountConcurrency) SetLimit(limit int) {
+	if c == nil || limit < minAccountConcurrency || limit > maxAccountConcurrency {
+		return
+	}
+	c.mu.Lock()
+	if c.changed == nil {
+		c.changed = make(chan struct{})
+	}
+	if c.limit == limit {
+		c.mu.Unlock()
+		return
+	}
+	c.limit = limit
+	close(c.changed)
+	c.changed = make(chan struct{})
+	c.mu.Unlock()
+}
+
+func (c *accountConcurrency) Limit() int {
+	if c == nil {
+		return defaultAccountConcurrency
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.limit
 }
 
 func (c *accountConcurrency) Available(accountID string) bool {

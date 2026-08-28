@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -73,7 +74,8 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "response_format must be url or b64_json")
 		return
 	}
-	acc, err := s.resolveAccount(firstNonEmpty(b.AccountID, b.User))
+	explicitAccount := firstNonEmpty(b.AccountID, b.User)
+	acc, err := s.resolveAccount(explicitAccount)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -101,21 +103,65 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		endpoint = "/v1/images/edits"
 		prompt = fmt.Sprintf("Edit the first attached image with GPT Image 2. Size: %s. Instructions: %s. Preserve everything not requested to change. Return the edited image URL directly.", size, b.Prompt)
 	}
-	res, err := s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, chathub.Request{Text: prompt, Tone: "magic", Attachments: b.Attachments, LicenseType: s.settings.get().LicenseType, Scenario: s.settings.get().Scenario, FeatureFlags: s.featureFlags()})
-	if err != nil {
-		writeUpstreamError(w, err)
+	request := chathub.Request{Text: prompt, Tone: "magic", Attachments: b.Attachments, LicenseType: s.settings.get().LicenseType, Scenario: s.settings.get().Scenario, FeatureFlags: s.featureFlags()}
+	var res chathub.Result
+	var lastErr error
+	maxAttempts := 1
+	if explicitAccount == "" {
+		// Image generation can be tenant/account scoped. A bounded failover
+		// keeps transient upstream failures from surfacing as avoidable 502s.
+		maxAttempts = 3
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			next, nextErr := s.nextHealthyAccount(acc.ID)
+			if nextErr != nil {
+				break
+			}
+			acc = next
+		}
+		res, err = s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, request)
+		if err != nil {
+			lastErr = err
+			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
+				s.accountPool.MarkImageLimited(acc.ID)
+			}
+			if attempt+1 >= maxAttempts || !(IsTransientUpstreamFailure(err) || IsRateLimited(err) || IsAuthFailure(err) || errors.Is(err, chathub.ErrImageLimit) || IsEmptyCompletion(err)) {
+				break
+			}
+			continue
+		}
+		log.Printf("[image-gen] account=%s attempt=%d conversation=%s images=%d text_len=%d events=%d raw_len=%d", acc.ID, attempt+1, res.ConversationID, len(res.Images), len(res.Text), len(res.Events), len(res.RawResult))
+		if len(res.Images) == 0 {
+			if urls := extractImageURLs(res.RawResult); len(urls) > 0 {
+				res.Images = urls
+			}
+		}
+		if len(res.Images) == 0 {
+			if urls := extractImageURLs(res.Text); len(urls) > 0 {
+				res.Images = urls
+			}
+		}
+		if len(res.Images) > 0 {
+			lastErr = nil
+			break
+		}
+		refusalText := strings.Join([]string{res.Text, res.RawResult}, "\n")
+		if isImageQuotaRefusal(refusalText) {
+			lastErr = chathub.ErrImageLimit
+			if s.accountPool != nil {
+				s.accountPool.MarkImageLimited(acc.ID)
+			}
+		} else {
+			lastErr = nil
+		}
+		if attempt+1 >= maxAttempts {
+			break
+		}
+	}
+	if lastErr != nil {
+		writeUpstreamError(w, lastErr)
 		return
-	}
-	log.Printf("[image-gen] conversation=%s images=%d text_len=%d events=%d raw_len=%d", res.ConversationID, len(res.Images), len(res.Text), len(res.Events), len(res.RawResult))
-	if len(res.Images) == 0 {
-		if urls := extractImageURLs(res.RawResult); len(urls) > 0 {
-			res.Images = urls
-		}
-	}
-	if len(res.Images) == 0 {
-		if urls := extractImageURLs(res.Text); len(urls) > 0 {
-			res.Images = urls
-		}
 	}
 	if len(res.Images) == 0 {
 		refusalText := strings.Join([]string{res.Text, res.RawResult}, "\n")
@@ -177,10 +223,28 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		imageData, contentType, err := downloadDesignerImage(ctx, sourceURL, designerToken)
-		if err != nil {
-			log.Printf("[image-gen-download] err=%v", err)
-			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", upstreamError(err))
+		var imageData []byte
+		var contentType string
+		var downloadErr error
+		for downloadAttempt := 0; downloadAttempt < 2; downloadAttempt++ {
+			imageData, contentType, downloadErr = downloadDesignerImage(ctx, sourceURL, designerToken)
+			if downloadErr == nil {
+				break
+			}
+			if downloadAttempt == 0 {
+				timer := time.NewTimer(150 * time.Millisecond)
+				select {
+				case <-ctx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
+				case <-timer.C:
+				}
+			}
+		}
+		if downloadErr != nil {
+			log.Printf("[image-gen-download] err=%v", downloadErr)
+			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", upstreamError(downloadErr))
 			return
 		}
 		if format == "b64_json" {

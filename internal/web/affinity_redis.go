@@ -181,6 +181,65 @@ func prepareBinding(binding affinityBinding) affinityBinding {
 	return binding
 }
 
+// PutBindingScript updates the binding, history index, and LRU score as one
+// Redis operation. This prevents concurrent conversations sharing a prefix
+// from overwriting each other's history index between separate commands.
+var redisPutBindingScript = redis.NewScript(`
+local binding_key = KEYS[1]
+local lru_key = KEYS[2]
+local raw = ARGV[1]
+local ttl = tonumber(ARGV[2])
+local history_prefix = ARGV[3]
+local score = ARGV[4]
+local old_raw = redis.call('GET', binding_key)
+if old_raw then
+  local old_ok, old = pcall(cjson.decode, old_raw)
+  if old_ok and old.history_digest and old.history_digest ~= '' then
+    local old_key = history_prefix .. old.tenant_hash .. ':' .. old.history_digest
+    local history_raw = redis.call('GET', old_key)
+    if history_raw then
+      local ids_ok, ids = pcall(cjson.decode, history_raw)
+      if ids_ok and type(ids) == 'table' then
+        local kept = {}
+        for _, id in ipairs(ids) do
+          if id ~= old.id then table.insert(kept, id) end
+        end
+        if #kept > 0 then
+          local pttl = redis.call('PTTL', old_key)
+          if pttl <= 0 then pttl = ttl end
+          redis.call('SET', old_key, cjson.encode(kept), 'PX', pttl)
+        else
+          redis.call('DEL', old_key)
+        end
+      elseif history_raw == old.id then
+        redis.call('DEL', old_key)
+      end
+    end
+  end
+end
+redis.call('SET', binding_key, raw, 'PX', ttl)
+local binding = cjson.decode(raw)
+if binding.history_digest and binding.history_digest ~= '' then
+  local new_key = history_prefix .. binding.tenant_hash .. ':' .. binding.history_digest
+  local history_raw = redis.call('GET', new_key)
+  local ids = {}
+  if history_raw then
+    local ids_ok, decoded = pcall(cjson.decode, history_raw)
+    if ids_ok and type(decoded) == 'table' then
+      ids = decoded
+    elseif history_raw ~= '' then
+      ids = {history_raw}
+    end
+  end
+  local found = false
+  for _, id in ipairs(ids) do if id == binding.id then found = true end end
+  if not found then table.insert(ids, binding.id) end
+  redis.call('SET', new_key, cjson.encode(ids), 'PX', ttl)
+end
+redis.call('ZADD', lru_key, score, binding.id)
+return 1
+`)
+
 func (s *redisAffinityStore) PutBinding(ctx context.Context, binding affinityBinding, ttl time.Duration) error {
 	if binding.ID == "" || binding.TenantHash == "" {
 		return errors.New("affinity binding id and tenant are required")
@@ -193,41 +252,7 @@ func (s *redisAffinityStore) PutBinding(ctx context.Context, binding affinityBin
 	if err != nil {
 		return err
 	}
-	old, found, err := s.GetBinding(ctx, binding.ID)
-	if err != nil {
-		return err
-	}
-	var historyIDs []string
-	if binding.HistoryDigest != "" {
-		if existing, getErr := s.client.Get(ctx, redisHistoryKey(binding.TenantHash, binding.HistoryDigest)).Result(); getErr == nil {
-			historyIDs = redisHistoryIDs(existing)
-		}
-		foundID := false
-		for _, id := range historyIDs {
-			if id == binding.ID {
-				foundID = true
-				break
-			}
-		}
-		if !foundID {
-			historyIDs = append(historyIDs, binding.ID)
-		}
-	}
-	_, err = s.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		if found && old.HistoryDigest != "" && old.HistoryDigest != binding.HistoryDigest {
-			pipe.Del(ctx, redisHistoryKey(old.TenantHash, old.HistoryDigest))
-		}
-		pipe.Set(ctx, redisBindingKey(binding.ID), raw, ttl)
-		if binding.HistoryDigest != "" {
-			historyRaw, marshalErr := json.Marshal(historyIDs)
-			if marshalErr != nil {
-				return marshalErr
-			}
-			pipe.Set(ctx, redisHistoryKey(binding.TenantHash, binding.HistoryDigest), historyRaw, ttl)
-		}
-		pipe.ZAdd(ctx, redisLRUKey, redis.Z{Score: float64(binding.LastUsedAt.UnixMilli()), Member: binding.ID})
-		return nil
-	})
+	_, err = redisPutBindingScript.Run(ctx, s.client, []string{redisBindingKey(binding.ID), redisLRUKey}, raw, ttl.Milliseconds(), redisHistoryPrefix, binding.LastUsedAt.UnixMilli()).Result()
 	if err != nil {
 		return err
 	}
@@ -243,7 +268,10 @@ if current.history_digest and current.history_digest ~= '' then
   local history_key = ARGV[4] .. current.tenant_hash .. ':' .. current.history_digest
   local history_raw = redis.call('GET', history_key)
   if history_raw then
-    local ids = cjson.decode(history_raw)
+    local ids_ok, ids = pcall(cjson.decode, history_raw)
+    if not ids_ok or type(ids) ~= 'table' then
+      ids = {history_raw}
+    end
     local kept = {}
     for _, id in ipairs(ids) do
       if id ~= current.id then table.insert(kept, id) end
@@ -261,13 +289,41 @@ if replacement.history_digest and replacement.history_digest ~= '' then
   local replacement_key = ARGV[4] .. replacement.tenant_hash .. ':' .. replacement.history_digest
   local replacement_raw = redis.call('GET', replacement_key)
   local ids = {}
-  if replacement_raw then ids = cjson.decode(replacement_raw) end
+  if replacement_raw then
+    local ids_ok, decoded = pcall(cjson.decode, replacement_raw)
+    if ids_ok and type(decoded) == 'table' then ids = decoded
+    elseif replacement_raw ~= '' then ids = {replacement_raw} end
+  end
   local found = false
   for _, id in ipairs(ids) do if id == replacement.id then found = true end end
   if not found then table.insert(ids, replacement.id) end
   redis.call('SET', replacement_key, cjson.encode(ids), 'PX', ARGV[3])
 end
 redis.call('ZADD', KEYS[2], ARGV[5], replacement.id)
+return 1
+`)
+
+// Remove one binding from a shared history index without deleting siblings.
+var redisRemoveHistoryIDScript = redis.NewScript(`
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ok, ids = pcall(cjson.decode, raw)
+if not ok or type(ids) ~= 'table' then
+  if raw == ARGV[1] then redis.call('DEL', KEYS[1]); return 1 end
+  return 0
+end
+local kept, removed = {}, 0
+for _, id in ipairs(ids) do
+  if id == ARGV[1] then removed = 1 else table.insert(kept, id) end
+end
+if removed == 0 then return 0 end
+if #kept == 0 then
+  redis.call('DEL', KEYS[1])
+else
+  local pttl = redis.call('PTTL', KEYS[1])
+  if pttl <= 0 then pttl = tonumber(ARGV[2]) end
+  redis.call('SET', KEYS[1], cjson.encode(kept), 'PX', pttl)
+end
 return 1
 `)
 
@@ -303,15 +359,17 @@ func (s *redisAffinityStore) evict(ctx context.Context) error {
 	}
 	for _, item := range items {
 		id := fmt.Sprint(item.Member)
-		binding, ok, getErr := s.GetBinding(ctx, id)
+		binding, found, getErr := s.GetBinding(ctx, id)
 		if getErr != nil {
 			return getErr
 		}
+		if found && binding.HistoryDigest != "" {
+			if _, err := redisRemoveHistoryIDScript.Run(ctx, s.client, []string{redisHistoryKey(binding.TenantHash, binding.HistoryDigest)}, id, s.ttl.Milliseconds()).Result(); err != nil {
+				return err
+			}
+		}
 		pipe := s.client.Pipeline()
 		pipe.Del(ctx, redisBindingKey(id))
-		if ok && binding.HistoryDigest != "" {
-			pipe.Del(ctx, redisHistoryKey(binding.TenantHash, binding.HistoryDigest))
-		}
 		if _, err := pipe.Exec(ctx); err != nil {
 			return err
 		}

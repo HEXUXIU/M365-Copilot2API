@@ -1,10 +1,22 @@
 package web
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
+
+	"m365-copilot2api/internal/chathub"
 )
+
+func workspaceTestTools(names ...string) []chathub.Tool {
+	tools := make([]chathub.Tool, 0, len(names))
+	for _, name := range names {
+		definition, _ := json.Marshal(map[string]any{"name": name, "description": "test tool", "parameters": map[string]any{"type": "object"}})
+		tools = append(tools, chathub.Tool{Type: "function", Function: definition})
+	}
+	return tools
+}
 
 func TestExplicitToolRequestOnlyChecksLatestUserMessage(t *testing.T) {
 	if !explicitToolRequest([]oaiMsg{{Role: "user", Content: "请使用终端工具读取 go.mod，必须实际调用工具。"}}) {
@@ -18,6 +30,68 @@ func TestExplicitToolRequestOnlyChecksLatestUserMessage(t *testing.T) {
 	}
 	if explicitToolRequest([]oaiMsg{{Role: "user", Content: "必须调用工具"}, {Role: "assistant", ToolCalls: []map[string]any{{"id": "call_1"}}}, {Role: "tool", ToolCallID: "call_1", Content: "done"}}) {
 		t.Fatal("completed tool result reactivated the original tool request")
+	}
+	if !explicitToolRequest([]oaiMsg{{Role: "user", Content: "必须调用工具"}, {Role: "user", Content: "You have 100 weighted tokens left"}}) {
+		t.Fatal("Codex token notice hid the explicit tool request")
+	}
+}
+
+func TestWorkspaceToolRequestPromotesDirectExecution(t *testing.T) {
+	tools := workspaceTestTools("shell_command")
+	for _, request := range []string{
+		"在当前目录创建一个 1.txt 文件，里面写 123214324",
+		"你倒是创建啊",
+		"Read config.json and check its contents.",
+		"現在、config.jsonファイルを作成してください",
+	} {
+		if !workspaceToolRequest([]oaiMsg{{Role: "user", Content: request}}, tools) {
+			t.Fatalf("direct workspace request was not detected: %q", request)
+		}
+	}
+}
+
+func TestWorkspaceToolRequestAvoidsQuestionsAndNegation(t *testing.T) {
+	tools := workspaceTestTools("apply_patch")
+	for _, request := range []string{
+		"请解释如何创建一个 1.txt 文件",
+		"不要创建 1.txt，只告诉我它是否存在",
+		"What does create file mean?",
+		"How to write a file in Go?",
+		"I already know the file exists.",
+	} {
+		if workspaceToolRequest([]oaiMsg{{Role: "user", Content: request}}, tools) {
+			t.Fatalf("non-execution request was promoted: %q", request)
+		}
+	}
+	if workspaceToolRequest([]oaiMsg{{Role: "user", Content: "创建 1.txt 并写入内容"}}, workspaceTestTools("get_weather")) {
+		t.Fatal("request was promoted without a workspace-capable tool")
+	}
+	if workspaceToolRequest([]oaiMsg{{Role: "user", Content: "创建 1.txt 并写入内容"}}, workspaceTestTools("get_profile")) {
+		t.Fatal("profile tool was mistaken for a file tool")
+	}
+}
+
+func TestWorkspaceToolRequestOnlyChecksLatestTurn(t *testing.T) {
+	tools := workspaceTestTools("exec")
+	if !workspaceToolRequest([]oaiMsg{
+		{Role: "user", Content: "创建 1.txt"},
+		{Role: "user", Content: "You have 100 weighted tokens left"},
+	}, tools) {
+		t.Fatal("Codex token notice hid the workspace action")
+	}
+	if workspaceToolRequest([]oaiMsg{
+		{Role: "user", Content: "创建 1.txt"},
+		{Role: "assistant", Content: "done"},
+		{Role: "user", Content: "解释一下刚才的结果"},
+	}, tools) {
+		t.Fatal("stale workspace action affected a later question")
+	}
+	if workspaceToolRequest([]oaiMsg{
+		{Role: "user", Content: "创建 1.txt"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_1"}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "ok"},
+	}, tools) {
+		t.Fatal("completed workspace action was promoted again")
 	}
 }
 

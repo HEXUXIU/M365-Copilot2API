@@ -60,7 +60,7 @@ func compactRedundantProbeInstructions(r *responsesRequest) bool {
 	return true
 }
 
-const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`
+const customExecWorkspaceInstruction = `You are operating through the caller's local execution bridge. Never use, request, or mention remote native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor starts in the project workspace selected by the caller. Use relative paths only; never guess, cd to, or write under /root, /workspace, /mnt/data, /tmp, or any other absolute project path. Use custom exec to inspect the actual working directory before changes. Do not create files outside that directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every change, use custom exec to verify the result.`
 
 const (
 	emptyToolOutputPlaceholder   = "(no tool output)"
@@ -307,19 +307,19 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	if hasCustomExec {
 		o.Messages = append([]oaiMsg{{Role: "system", Content: customExecWorkspaceInstruction}}, o.Messages...)
 	}
-	o.ExplicitToolRequired = explicitToolRequestInResponses(o.Messages)
+	o.ExplicitToolRequired = explicitToolRequestInResponses(o.Messages, o.Tools)
 	return o, nil
 }
 
 // Responses clients may append internal user items after the application task.
 // Preserve an explicit tool requirement until the task is completed or a tool
 // result starts the continuation turn.
-func explicitToolRequestInResponses(messages []oaiMsg) bool {
+func explicitToolRequestInResponses(messages []oaiMsg, tools []chathub.Tool) bool {
 	required := false
 	for _, message := range messages {
 		switch strings.ToLower(strings.TrimSpace(message.Role)) {
 		case "user":
-			if explicitToolRequest([]oaiMsg{message}) {
+			if explicitToolRequest([]oaiMsg{message}) || workspaceToolRequest([]oaiMsg{message}, tools) {
 				required = true
 			}
 		case "tool":

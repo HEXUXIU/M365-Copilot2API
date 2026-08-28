@@ -3,7 +3,18 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
+
+	"m365-copilot2api/internal/chathub"
+)
+
+var (
+	workspaceFilenamePattern       = regexp.MustCompile(`(?i)\b[[:alnum:]_.-]+\.[a-z0-9]{1,12}\b`)
+	workspaceToolDescriptorPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:exec(?:ute)?|shell|terminal|command|powershell|bash|files?|filesystem|workspace|apply[_ -]?patch|editor|directory)(?:$|[^a-z0-9])`)
+	workspaceEnglishActionPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:create|write|save|modify|edit|update|delete|remove|move|rename|copy|read|inspect|list|search|find|open|execute|run)(?:s|d|ing)?(?:$|[^a-z])`)
+	workspaceEnglishTargetPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:files?|director(?:y|ies)|folders?|code|projects?|repositories|repos?|commands?|scripts?|workspace)(?:$|[^a-z])`)
+	weightedTokenNoticePattern     = regexp.MustCompile(`(?i)^\s*you have [0-9]+ weighted tokens left\.?\s*$`)
 )
 
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
@@ -47,7 +58,11 @@ func explicitToolRequest(messages []oaiMsg) bool {
 		if role != "user" {
 			continue
 		}
-		text := strings.ToLower(strings.TrimSpace(contentToString(messages[i].Content)))
+		rawText := contentToString(messages[i].Content)
+		if weightedTokenNoticePattern.MatchString(rawText) {
+			continue
+		}
+		text := strings.ToLower(strings.TrimSpace(rawText))
 		patterns := []string{
 			"必须实际调用工具", "必须调用工具", "务必调用工具", "必须使用工具",
 			"使用终端工具", "调用终端工具", "实际调用终端", "实际使用终端",
@@ -60,6 +75,124 @@ func explicitToolRequest(messages []oaiMsg) bool {
 			}
 		}
 		return false
+	}
+	return false
+}
+
+// workspaceToolRequest catches direct execution requests from clients that
+// leave tool_choice on auto. Some Codex clients phrase these as plain tasks
+// (for example, "create 1.txt") without explicitly saying "use a tool".
+// Only promote the request when the client actually declared a workspace tool.
+func workspaceToolRequest(messages []oaiMsg, tools []chathub.Tool) bool {
+	if !hasWorkspaceTool(tools) {
+		return false
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		role := strings.ToLower(strings.TrimSpace(messages[i].Role))
+		if role == "tool" || role == "assistant" {
+			return false
+		}
+		if role == "user" {
+			text := contentToString(messages[i].Content)
+			if weightedTokenNoticePattern.MatchString(text) {
+				continue
+			}
+			return workspaceActionRequestText(text)
+		}
+	}
+	return false
+}
+
+func hasWorkspaceTool(tools []chathub.Tool) bool {
+	for _, tool := range tools {
+		var definition struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+		}
+		if json.Unmarshal(tool.Function, &definition) != nil {
+			continue
+		}
+		descriptor := definition.Name + " " + definition.Description
+		if workspaceToolDescriptorPattern.MatchString(descriptor) {
+			return true
+		}
+	}
+	return false
+}
+
+func workspaceActionRequestText(raw string) bool {
+	text := strings.ToLower(strings.TrimSpace(raw))
+	if text == "" {
+		return false
+	}
+
+	// Exclude questions, quotations, and explicit negative requests. Keep the
+	// exclusions tied to the action so phrases such as "不要只解释，直接创建"
+	// remain executable.
+	for _, phrase := range []string{
+		"不要创建", "不要新建", "不要写入", "不要修改", "不要删除", "不要执行", "不要运行",
+		"别创建", "别新建", "别写入", "别修改", "别删除", "别执行", "别运行",
+		"无需创建", "无需写入", "无需修改", "无需执行", "不必创建", "不必写入", "不必执行",
+		"do not create", "do not write", "do not edit", "do not modify", "do not delete", "do not run", "do not execute",
+		"don't create", "don't write", "don't edit", "don't delete", "don't run", "don't execute",
+	} {
+		if strings.Contains(text, phrase) {
+			return false
+		}
+	}
+	for _, phrase := range []string{
+		"如何创建", "怎么创建", "怎样创建", "如何写入", "怎么写入", "如何修改", "怎么修改", "如何执行", "怎么执行",
+		"是什么意思", "请解释", "解释一下", "举例", "示例", "教程",
+		"how to create", "how to write", "how to edit", "how to modify", "how to run", "how to execute",
+		"explain how", "what does", "example of", "tutorial",
+	} {
+		if strings.Contains(text, phrase) {
+			return false
+		}
+	}
+
+	for _, phrase := range []string{
+		"直接创建", "立即创建", "马上创建", "现在创建", "倒是创建", "赶紧创建",
+		"直接写", "立即写", "马上写", "现在写", "倒是写", "赶紧写",
+		"直接执行", "立即执行", "马上执行", "现在执行", "倒是执行", "赶紧执行",
+		"do it now", "create it now", "write it now", "run it now", "execute it now",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+
+	actions := []string{
+		"创建", "新建", "写入", "写到", "保存", "修改", "编辑", "更新", "删除", "移除", "移动", "重命名", "复制",
+		"读取", "查看", "检查", "列出", "搜索", "查找", "打开", "执行", "运行",
+		"作成", "書き込", "編集", "削除", "読み取", "実行",
+		"생성", "작성", "수정", "삭제", "읽기", "실행",
+	}
+	targets := []string{
+		"文件", "目录", "文件夹", "代码", "项目", "仓库", "命令", "脚本", "当前目录", "工作区",
+		"ファイル", "ディレクトリ", "フォルダ", "コード", "コマンド",
+		"파일", "디렉터리", "폴더", "코드", "명령",
+	}
+	hasAction := workspaceEnglishActionPattern.MatchString(text)
+	for _, action := range actions {
+		if strings.Contains(text, action) {
+			hasAction = true
+			break
+		}
+	}
+	if !hasAction {
+		return false
+	}
+	if workspaceFilenamePattern.MatchString(text) {
+		return true
+	}
+	if workspaceEnglishTargetPattern.MatchString(text) {
+		return true
+	}
+	for _, target := range targets {
+		if strings.Contains(text, target) {
+			return true
+		}
 	}
 	return false
 }

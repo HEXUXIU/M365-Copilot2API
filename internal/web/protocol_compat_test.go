@@ -63,6 +63,20 @@ func TestResponsesPreservesExplicitToolRequestBeforeInternalUserItem(t *testing.
 	}
 }
 
+func TestResponsesPromotesDirectWorkspaceRequestBeforeInternalUserItem(t *testing.T) {
+	r := responsesRequest{Tools: []map[string]any{{"type": "custom", "name": "exec", "description": "run a command"}}, Input: []any{
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "在当前目录创建 1.txt 并写入 123214324"}}},
+		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "You have 100 weighted tokens left"}}},
+	}}
+	o, err := r.openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !o.ExplicitToolRequired {
+		t.Fatal("direct workspace request was lost after an internal user item")
+	}
+}
+
 func TestResponsesClearsExplicitToolRequestAfterToolOutput(t *testing.T) {
 	r := responsesRequest{Input: []any{
 		map[string]any{"role": "user", "content": "必须实际调用工具"},

@@ -160,6 +160,14 @@ func TestZaiExtractNoTools(t *testing.T) {
 	}
 }
 
+func TestTextToolExtractionRequiresDeclaredTools(t *testing.T) {
+	text := `{"name":"How to Start a Capstone Without Overworking","arguments":{}}`
+	calls, ok := extractTextToolCalls(text, nil, nil)
+	if ok || len(calls) != 0 {
+		t.Fatalf("tool-like prose must be ignored without declared tools, got %+v ok=%v", calls, ok)
+	}
+}
+
 func TestZaiExtractFencedXML(t *testing.T) {
 	text := "```xml\n<tool_calls>\n<tool_call>\n<name>bash</name>\n<arguments><![CDATA[{\"command\":\"ls\"}]]></arguments>\n</tool_call>\n</tool_calls>\n```"
 	calls, ok := extractTextToolCalls(text, textTestTools(), nil)

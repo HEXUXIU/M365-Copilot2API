@@ -119,7 +119,7 @@ func extractAllTextToolCalls(text string) []textToolCall {
 
 func textToolAllowed(name string, tools []map[string]any, choice any) bool {
 	if len(tools) == 0 {
-		return true
+		return false
 	}
 	if !allowedToolNames(tools)[name] {
 		return false

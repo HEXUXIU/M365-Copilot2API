@@ -242,6 +242,10 @@ func IsTransientUpstreamFailure(err error) bool {
 	return false
 }
 
+func isRetryableAccountFailure(err error) bool {
+	return IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err) || IsTransientUpstreamFailure(err)
+}
+
 func IsEmptyCompletion(err error) bool {
 	return errors.Is(err, chathub.ErrEmptyCompletion)
 }

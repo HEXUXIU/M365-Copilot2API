@@ -96,6 +96,9 @@ func TestCacheUsageProtocolMappings(t *testing.T) {
 		if err := writeToolResponse(rr, "chatcmpl-test", "gpt-test", true, true, calls, chathub.Result{}, chatUsage(u)); err != nil {
 			t.Fatal(err)
 		}
+		if got := rr.Header().Get("X-Accel-Buffering"); got != "no" {
+			t.Fatalf("X-Accel-Buffering=%q want no", got)
+		}
 		frames := strings.Split(rr.Body.String(), "\n\n")
 		found := false
 		for _, frame := range frames {

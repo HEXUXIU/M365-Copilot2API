@@ -25,6 +25,7 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsag
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
 		flusher, _ := w.(http.Flusher)
 		emit := func(v any) {
 			if err := sseDataRaw(w, flusher, mustJSON(v)); err != nil {

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -206,6 +207,16 @@ func TestChatRejectsInvalidReasoningBeforeUpstream(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.openaiChat(w, r)
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "unsupported reasoning effort") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestChatRejectsEmptyMessagesBeforeUpstream(t *testing.T) {
+	s := &Server{}
+	r := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gpt-5.6-sol","messages":[]}`))
+	w := httptest.NewRecorder()
+	s.openaiChat(w, r)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "messages must contain at least one item") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }

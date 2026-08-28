@@ -68,6 +68,22 @@ func TestTransientUpstreamFailureClassification(t *testing.T) {
 	}
 }
 
+func TestRetryableAccountFailureIncludesTransportErrors(t *testing.T) {
+	for _, err := range []error{
+		chathub.ErrRateLimitNotice,
+		&UpstreamHTTPError{Status: http.StatusUnauthorized},
+		chathub.ErrEmptyCompletion,
+		fmt.Errorf("ws read before completion: i/o timeout"),
+	} {
+		if !isRetryableAccountFailure(err) {
+			t.Fatalf("expected retryable account failure: %v", err)
+		}
+	}
+	if isRetryableAccountFailure(chathub.ErrOffensiveContent) {
+		t.Fatal("content-policy failure must not be retried as an account transport failure")
+	}
+}
+
 func TestAccountHealthLifecycle(t *testing.T) {
 	h := newAccountHealth()
 	const id = "acct-1"

@@ -1786,6 +1786,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad json")
 		return
 	}
+	if len(body.Messages) == 0 {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "messages must contain at least one item")
+		return
+	}
 	responseFormat := body.ResponseFormat
 	effort := body.ReasoningEffort
 	if body.Reasoning != nil && strings.TrimSpace(body.Reasoning.Effort) != "" {
@@ -2049,7 +2053,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		res, routeErr := s.chatWithAccount(ctx, acc.ID, account, request(text, attachments))
 		coldReplay := false
-		for attempt := 0; routeErr != nil && attempt < 3 && (IsEmptyCompletion(routeErr) || IsRateLimited(routeErr) || IsAuthFailure(routeErr) || IsTransientUpstreamFailure(routeErr)); attempt++ {
+		for attempt := 0; routeErr != nil && attempt < 3 && isRetryableAccountFailure(routeErr); attempt++ {
 			next, nextErr := s.nextHealthyAccount(acc.ID)
 			if nextErr != nil {
 				break
@@ -2173,6 +2177,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			writeOpenAIError(w, http.StatusInternalServerError, "server_error", "stream unsupported")
@@ -2328,7 +2333,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			pendingReasoning.Reset()
 		}
-		if err != nil && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
+		if err != nil && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
 			originalErr := err
 			// A throttled stream may retry on the next healthy account: only the
 			// ": connected" preamble reached the client, so the retried stream is
@@ -2683,7 +2688,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			return onReasoning(reasoning)
 		}
 		res, err = s.chatWithAccountReasoning(ctx, acc.ID, account, answerReq, onDeltaWrapped, onReasoningWrapped)
-		if err != nil && streamedReasoningLen == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
+		if err != nil && streamedReasoningLen == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
 			for attempt := 0; attempt < 3 && err != nil; attempt++ {
 				originalErr := err
 				next, nerr := s.nextHealthyAccount(acc.ID)
@@ -2714,7 +2719,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					s.accountPool.MarkImageLimited(next.ID)
 				}
 				err = err2
-				if streamedReasoningLen > 0 || !(IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
+				if streamedReasoningLen > 0 || !isRetryableAccountFailure(err) {
 					break
 				}
 			}
@@ -2802,7 +2807,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				err = nil
 			}
 		}
-		if err != nil && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && (IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
+		if err != nil && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
 			// A host fallback is an HTTP 200 with unusable text. Retry a bounded
 			// number of healthy accounts so transient tenant/account failures do
 			// not surface as an immediate 502, while avoiding retry storms.
@@ -2836,7 +2841,7 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 					s.accountPool.MarkImageLimited(next.ID)
 				}
 				err = err2
-				if !(IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err)) {
+				if !isRetryableAccountFailure(err) {
 					break
 				}
 			}

@@ -69,15 +69,21 @@ func TestToolChoiceRequiresCall(t *testing.T) {
 	}
 }
 
-func TestToolRouterAttemptTimeoutStaysBelowDownstreamDeadline(t *testing.T) {
-	if got := toolRouterAttemptTimeout(120); got != 18*time.Second {
-		t.Fatalf("default router timeout=%s want 18s", got)
+func TestToolRouterTimeoutsStayBelowDownstreamDeadline(t *testing.T) {
+	if got := toolRouterTotalTimeout(120); got != 55*time.Second {
+		t.Fatalf("default router budget=%s want 55s", got)
 	}
-	if got := toolRouterAttemptTimeout(9); got != 9*time.Second {
-		t.Fatalf("configured short router timeout=%s want 9s", got)
+	if got := toolRouterTotalTimeout(9); got != 9*time.Second {
+		t.Fatalf("configured short router budget=%s want 9s", got)
 	}
-	if total := time.Duration(maxToolRouterAccountAttempts) * toolRouterAttemptTimeout(120); total >= 60*time.Second {
-		t.Fatalf("router failover budget=%s must stay below downstream 60s deadline", total)
+	if got := requiredToolRouterAttemptTimeout(120); got != 18*time.Second {
+		t.Fatalf("required router attempt timeout=%s want 18s", got)
+	}
+	if maxToolRouterTotalTimeout >= 60*time.Second {
+		t.Fatalf("router failover budget=%s must stay below downstream 60s deadline", maxToolRouterTotalTimeout)
+	}
+	if total := time.Duration(maxToolRouterAccountAttempts) * requiredToolRouterAttemptTimeout(120); total > maxToolRouterTotalTimeout {
+		t.Fatalf("required account attempts=%s exceed router budget=%s", total, maxToolRouterTotalTimeout)
 	}
 }
 

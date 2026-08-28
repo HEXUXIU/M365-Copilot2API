@@ -1235,14 +1235,23 @@ func (s *Server) nextHealthyAccountExcluding(excluded map[string]struct{}) (auth
 }
 
 const (
-	maxToolRouterAccountAttempts = 3
-	maxToolRouterAttemptTimeout  = 18 * time.Second
+	maxToolRouterAccountAttempts        = 3
+	maxToolRouterTotalTimeout           = 55 * time.Second
+	maxRequiredToolRouterAttemptTimeout = 18 * time.Second
 )
 
-func toolRouterAttemptTimeout(chatTimeoutSeconds int) time.Duration {
+func toolRouterTotalTimeout(chatTimeoutSeconds int) time.Duration {
 	timeout := time.Duration(chatTimeoutSeconds) * time.Second
-	if timeout <= 0 || timeout > maxToolRouterAttemptTimeout {
-		return maxToolRouterAttemptTimeout
+	if timeout <= 0 || timeout > maxToolRouterTotalTimeout {
+		return maxToolRouterTotalTimeout
+	}
+	return timeout
+}
+
+func requiredToolRouterAttemptTimeout(chatTimeoutSeconds int) time.Duration {
+	timeout := toolRouterTotalTimeout(chatTimeoutSeconds)
+	if timeout > maxRequiredToolRouterAttemptTimeout {
+		return maxRequiredToolRouterAttemptTimeout
 	}
 	return timeout
 }
@@ -2065,6 +2074,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	routerInput, routerAttachments := routerPlanningInput(answerPrompt, body.Attachments, explicitAttachments, body.Messages, affinityState, reuseRouterConversation)
 	requiredDecisionErr := errors.New("required tool decision was invalid")
 	runRouter := func(text string, attachments []chathub.Attachment, coldText string, coldAttachments []chathub.Attachment, requireValidCall bool) (chathub.Result, error) {
+		routerCtx, routerCancel := context.WithTimeout(r.Context(), toolRouterTotalTimeout(s.settings.get().ChatTimeoutSeconds))
+		defer routerCancel()
 		request := func(prompt string, requestAttachments []chathub.Attachment) chathub.Request {
 			req := chathub.Request{
 				Text: prompt, Tone: tone, Attachments: requestAttachments,
@@ -2086,15 +2097,25 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		callRouter := func(selected auth.AccountToken, selectedAccount chathub.Account, prompt string, requestAttachments []chathub.Attachment) (chathub.Result, error) {
-			routerCtx, routerCancel := context.WithTimeout(r.Context(), toolRouterAttemptTimeout(s.settings.get().ChatTimeoutSeconds))
-			defer routerCancel()
-			return s.chatWithAccount(routerCtx, selected.ID, selectedAccount, request(prompt, requestAttachments))
+			callCtx := routerCtx
+			callCancel := func() {}
+			if requireValidCall {
+				callCtx, callCancel = context.WithTimeout(routerCtx, requiredToolRouterAttemptTimeout(s.settings.get().ChatTimeoutSeconds))
+			}
+			defer callCancel()
+			return s.chatWithAccount(callCtx, selected.ID, selectedAccount, request(prompt, requestAttachments))
+		}
+		retryableRouterFailure := func(routeErr error) bool {
+			if isRetryableAccountFailure(routeErr) || errors.Is(routeErr, requiredDecisionErr) {
+				return true
+			}
+			return errors.Is(routeErr, context.DeadlineExceeded) && routerCtx.Err() == nil && r.Context().Err() == nil
 		}
 		res, routeErr := callRouter(acc, account, text, attachments)
 		routeErr = validateRequiredDecision(res, routeErr)
 		coldReplay := false
 		attempted := map[string]struct{}{acc.ID: {}}
-		for attempt := 1; routeErr != nil && attempt < maxToolRouterAccountAttempts && (isRetryableAccountFailure(routeErr) || errors.Is(routeErr, requiredDecisionErr)); attempt++ {
+		for attempt := 1; routeErr != nil && attempt < maxToolRouterAccountAttempts && retryableRouterFailure(routeErr); attempt++ {
 			next, nextErr := s.nextHealthyAccountExcluding(attempted)
 			if nextErr != nil {
 				break

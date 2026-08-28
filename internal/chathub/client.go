@@ -33,6 +33,34 @@ var ErrImageLimit = errors.New("upstream image generation daily limit reached")
 
 var ErrOffensiveContent = errors.New("upstream content policy flagged as offensive")
 
+var ErrMeteringThrottled = errors.New("upstream metering throttle: capability access denied")
+
+func checkMeteringError(mi any) error {
+	arr, ok := mi.([]any)
+	if !ok {
+		return nil
+	}
+	for _, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		meterErr, _ := m["meterError"].(string)
+		hasAccess, _ := m["hasAccess"].(bool)
+		if meterErr != "" && !hasAccess {
+			switch meterErr {
+			case "ImageGenInsufficientTokensThrottled":
+				return ErrImageLimit
+			case "ImageGenSystemCapacityThrottled":
+				return ErrMeteringThrottled
+			default:
+				return ErrMeteringThrottled
+			}
+		}
+	}
+	return nil
+}
+
 var contentPolicyPatterns = []string{
 	"很抱歉，我无法响应",
 	"我很抱歉，我无法响应",
@@ -203,6 +231,19 @@ func IsRetriablePhase(p Phase) bool {
 }
 
 var chTrace = os.Getenv("M365_TRACE") == "1"
+
+func commonPrefixLen(a, b string) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return n
+}
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
@@ -450,9 +491,12 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	var reused bool
 	phase = PhaseDial
 
+	var connWriteMu *sync.Mutex
+	var poolFrames <-chan []byte
+	var poolErrs <-chan error
 	if c.Pool != nil && !req.DisablePool {
 		var poolErr error
-		conn, reused, poolErr = c.Pool.Take(ctx, acc.OID, acc.TID, wsURL)
+		conn, connWriteMu, poolFrames, poolErrs, reused, poolErr = c.Pool.Take(ctx, acc.OID, acc.TID, wsURL)
 		if poolErr != nil {
 			if errors.Is(poolErr, context.Canceled) {
 				return Result{}, &DialError{Status: 0, Kind: "CLIENT_CANCELED", cause: poolErr}
@@ -507,10 +551,11 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	}
 	phase = PhaseHandshake
 
-	var writeMu sync.Mutex
 	wsWrite := func(msgType int, data []byte) error {
-		writeMu.Lock()
-		defer writeMu.Unlock()
+		if connWriteMu != nil {
+			connWriteMu.Lock()
+			defer connWriteMu.Unlock()
+		}
 		return conn.WriteMessage(msgType, data)
 	}
 
@@ -626,11 +671,14 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			return false
 		}
 		t := strings.ToLower(text)
-		return strings.Contains(t, "temporarily unable to respond to this many requests") ||
+		return strings.Contains(t, "temporarily unable to respond to this volume of requests") ||
+			strings.Contains(t, "temporarily unable to respond to this many requests") ||
+			strings.Contains(t, "too many requests") ||
 			strings.Contains(t, "太多请求") ||
 			strings.Contains(t, "无法响应这么多请求") ||
-			strings.Contains(t, "too many requests") ||
-			strings.Contains(t, "please retry") && strings.Contains(t, "later")
+			strings.Contains(t, "请求量过大") ||
+			strings.Contains(t, "请稍后重试") && strings.Contains(t, "暂时无法") ||
+			(strings.Contains(t, "please retry") || strings.Contains(t, "please try again")) && strings.Contains(t, "later")
 	}
 	imageLimitDetected := func(text string) bool {
 		if streamed.Len() != 0 {
@@ -677,6 +725,10 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		if len(snapshot) <= len(cur) {
 			return nil
 		}
+		overlap := commonPrefixLen(cur, snapshot)
+		if overlap > 0 {
+			return emitDelta(snapshot[overlap:])
+		}
 		skippedSnapshots++
 		if chTrace {
 			log.Printf("[trace:emitSnapshot] skip: cur=%d snapshot=%d (non-prefix rewrite)", len(cur), len(snapshot))
@@ -710,6 +762,39 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	go func() {
 		defer close(readCh)
 		for {
+			if reused {
+				var msg []byte
+				var err error
+				select {
+				case m, ok := <-poolFrames:
+					if !ok {
+						select {
+						case err = <-poolErrs:
+						default:
+							err = io.ErrUnexpectedEOF
+						}
+					} else {
+						msg = m
+					}
+				case e := <-poolErrs:
+					err = e
+				case <-done:
+					return
+				case <-ctx.Done():
+					return
+				}
+				select {
+				case readCh <- wsRead{msg: msg, err: err}:
+				case <-done:
+					return
+				case <-ctx.Done():
+					return
+				}
+				if err != nil {
+					return
+				}
+				continue
+			}
 			_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 			_, msg, err := conn.ReadMessage()
 			select {
@@ -856,7 +941,19 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 						}
 					}
 					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame {
-						if err := emitSnapshot(w); err != nil {
+						// HAR report 05 §3: writeAtCursor is a pure append
+						// fragment (cursor p=-1, 12/12 samples). Once a text
+						// baseline exists, forward it as a delta immediately
+						// for token-level streaming granularity; the next
+						// cumulative snapshot prefix-matches and dedupes.
+						// Treating it as a snapshot (old behavior) collapsed
+						// 33-47 upstream frames into 2-3 giant SSE chunks.
+						if streamed.Len() > 0 {
+							if err := emitDelta(w); err != nil {
+								returnConn = false
+								return Result{}, err
+							}
+						} else if err := emitSnapshot(w); err != nil {
 							returnConn = false
 							return Result{}, err
 						}
@@ -1004,8 +1101,23 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					}
 					if res, ok := item["result"].(map[string]any); ok {
 						rawResult, _ = res["value"].(string)
+						if rawResult != "" && rawResult != "Success" {
+							log.Printf("[chathub] result.value=%q (non-Success)", rawResult)
+							low := strings.ToLower(rawResult)
+							if strings.Contains(low, "throttl") {
+								returnConn = false
+								return Result{}, ErrMeteringThrottled
+							}
+							returnConn = false
+							return Result{}, fmt.Errorf("upstream result error: %s", rawResult)
+						}
 						if mi, ok := res["meteringInformation"]; ok && mi != nil {
 							meteringInformation = mi
+							if meterErr := checkMeteringError(mi); meterErr != nil {
+								log.Printf("[chathub] meteringError in type:2 frame: %v", meterErr)
+								returnConn = false
+								return Result{}, meterErr
+							}
 						}
 						if msg, ok := res["message"].(string); ok {
 							final = msg
@@ -1031,7 +1143,19 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			if int(t) == 3 {
 				if errObj, ok := obj["error"].(map[string]any); ok {
 					returnConn = false
-					return Result{}, fmt.Errorf("chathub completion error: %v", errObj)
+					errCode, _ := errObj["code"].(string)
+					errMsg, _ := errObj["message"].(string)
+					switch errCode {
+					case "ErrorUserBanned":
+						return Result{}, fmt.Errorf("%w: account banned", ErrRateLimitNotice)
+					case "ErrorUserThrottled", "InsufficientTokens":
+						return Result{}, ErrRateLimitNotice
+					default:
+						if errMsg != "" {
+							return Result{}, fmt.Errorf("chathub completion error: code=%q message=%q", errCode, errMsg)
+						}
+						return Result{}, fmt.Errorf("chathub completion error: %v", errObj)
+					}
 				}
 				phase = PhaseCompleted
 				ts.LastTokenReceived = time.Now().UTC().Format(time.RFC3339Nano)
@@ -1106,17 +1230,6 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					Normalized:                NormalizeEvents(events),
 					Images:                    imageURLs(events),
 					Timestamps:                ts,
-				}
-				if c.Pool != nil {
-					go func() {
-						warmCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-						defer cancel()
-						warmReqID := uuid.NewString()
-						warmSID := uuid.NewString()
-						warmCID := uuid.NewString()
-						warmURL, _ := BuildWSURL(acc, warmSID, warmCID, warmReqID, req.LicenseType, req.Scenario)
-						c.Pool.Warm(warmCtx, acc, warmURL)
-					}()
 				}
 				return result, nil
 			}
@@ -1520,51 +1633,47 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 	if req.FeatureFlags.SydneyReconnect {
 		optionsSets = append(optionsSets, "enable_sydney_reconnect")
 	}
-	chat := map[string]any{
-		"arguments": []any{
-			map[string]any{
-				"source":              "officeweb",
-				"clientCorrelationId": requestID,
-				"sessionId":           req.SessionID,
-				"optionsSets":         optionsSets,
-				"options":             map[string]any{},
-				"allowedMessageTypes": []string{
-					"Chat", "Suggestion", "InternalSearchQuery", "Disengaged",
-					"InternalLoaderMessage", "Progress", "GeneratedCode",
-					"RenderCardRequest", "AdsQuery", "SemanticSerp",
-					"GenerateContentQuery", "GenerateGraphicArt", "SearchQuery",
-					"ConfirmationCard", "AuthError", "DeveloperLogs",
-					"TriggerPlugin", "HintInvocation", "MemoryUpdate",
-					"EndOfRequest", "TriggerConfirmation", "ResumeInvokeAction",
-					"ResumeUserInputRequest", "TriggerUserInputRequest",
-					"EscapeHatch", "TriggerPluginAuth", "ResumePluginAuth",
-					"SideBySide", "ReferencesListComplete", "SwitchRespondingEndpoint",
-				},
-				"sliceIds":         []any{},
-				"threadLevelGptId": map[string]any{},
-				// HAR evidence (report 01 F12): all 12 captured sessions send
-				// isStartOfSession=false even on the first turn; the WS URL
-				// already binds session/conversation identity.
-				"isStartOfSession": false,
-				"traceId":          requestID,
-				"clientInfo":       clientInfo,
-				"tone":             req.Tone,
-				"streamingMode":    "ConciseWithPadding",
-				"message":          message,
-
-				"plugins":                   clientPlugins(req.Tools, req.MCPServerURL),
-				"extraExtensionParameters":  map[string]any{},
-				"isSbsSupported":            true,
-				"renderReferencesBehindEOS": true,
-				"disconnectBehavior":        "continue",
-			},
+	arg0 := map[string]any{
+		"source":              "officeweb",
+		"clientCorrelationId": requestID,
+		"sessionId":           req.SessionID,
+		"optionsSets":         optionsSets,
+		"options":             map[string]any{},
+		"allowedMessageTypes": []string{
+			"Chat", "Suggestion", "InternalSearchQuery", "Disengaged",
+			"InternalLoaderMessage", "Progress", "GeneratedCode",
+			"RenderCardRequest", "AdsQuery", "SemanticSerp",
+			"GenerateContentQuery", "GenerateGraphicArt", "SearchQuery",
+			"ConfirmationCard", "AuthError", "DeveloperLogs",
+			"TriggerPlugin", "HintInvocation", "MemoryUpdate",
+			"EndOfRequest", "TriggerConfirmation", "ResumeInvokeAction",
+			"ResumeUserInputRequest", "TriggerUserInputRequest",
+			"EscapeHatch", "TriggerPluginAuth", "ResumePluginAuth",
+			"SideBySide", "ReferencesListComplete", "SwitchRespondingEndpoint",
 		},
+		"sliceIds":         []any{},
+		"threadLevelGptId": map[string]any{},
+		// HAR evidence (report 01 F12): all 12 captured sessions send
+		// isStartOfSession=false even on the first turn; the WS URL
+		// already binds session/conversation identity.
+		"isStartOfSession": false,
+		"traceId":          requestID,
+		"clientInfo":       clientInfo,
+		"tone":             req.Tone,
+		"streamingMode":    "ConciseWithPadding",
+		"message":          message,
+
+		"plugins":                   clientPlugins(req.Tools, req.MCPServerURL),
+		"extraExtensionParameters":  map[string]any{},
+		"isSbsSupported":            true,
+		"renderReferencesBehindEOS": true,
+		"disconnectBehavior":        "continue",
+	}
+	chat := map[string]any{
+		"arguments":    []any{arg0},
 		"invocationId": "0",
 		"target":       "chat",
 		"type":         4,
-	}
-	if req.ConversationSignature != "" {
-		chat["arguments"].([]any)[0].(map[string]any)["conversationSignature"] = req.ConversationSignature
 	}
 	if len(req.PreviousMessages) > 0 {
 		chat["arguments"].([]any)[0].(map[string]any)["previousMessages"] = req.PreviousMessages

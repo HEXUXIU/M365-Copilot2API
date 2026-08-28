@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,9 @@ func TestTransientUpstreamFailureClassification(t *testing.T) {
 	}
 	if IsTransientUpstreamFailure(&UpstreamHTTPError{Status: 429}) || IsTransientUpstreamFailure(&UpstreamHTTPError{Status: 401}) {
 		t.Fatal("rate-limit/auth failures should use their dedicated classifications")
+	}
+	if IsTransientUpstreamFailure(fmt.Errorf("request timeout setting is invalid")) {
+		t.Fatal("an unrelated timeout word must not trigger transport retry")
 	}
 }
 
@@ -381,5 +385,100 @@ func TestErrRateLimitNoticeTriggersMarkFailure(t *testing.T) {
 	h.MarkFailure(id, chathub.ErrRateLimitNotice, 15*time.Minute)
 	if h.Available(id) {
 		t.Fatal("ErrRateLimitNotice must put account in cooldown")
+	}
+}
+
+func TestGlobalCircuitOnlyRecordsInfrastructureFailures(t *testing.T) {
+	nonGlobal := []error{
+		&UpstreamHTTPError{Status: 401},
+		&UpstreamHTTPError{Status: 403},
+		&UpstreamHTTPError{Status: 429},
+		&UpstreamHTTPError{Status: 422},
+		&UpstreamHTTPError{ErrorCode: "ErrorUserBanned"},
+		&UpstreamHTTPError{ErrorCode: "InsufficientTokens"},
+		chathub.ErrEmptyCompletion,
+		chathub.ErrOffensiveContent,
+		chathub.ErrImageLimit,
+		context.Canceled,
+	}
+	for _, err := range nonGlobal {
+		ResetGlobalCircuit()
+		for i := 0; i < 10; i++ {
+			GlobalCircuitRecord(err)
+		}
+		if GlobalCircuitIsOpen() {
+			t.Fatalf("non-global error opened circuit: %v", err)
+		}
+	}
+
+	ResetGlobalCircuit()
+	for i := 0; i < 10; i++ {
+		GlobalCircuitRecord(fmt.Errorf("connection refused"))
+	}
+	if !GlobalCircuitIsOpen() {
+		t.Fatal("transport failures must open global circuit")
+	}
+	ResetGlobalCircuit()
+}
+
+func TestParseMeteringAggregatesDeniedItemsRegardlessOfOrder(t *testing.T) {
+	cases := []string{
+		`[{"meterError":"denied","hasAccess":false},{"hasAccess":true}]`,
+		`[{"hasAccess":true},{"meterError":"denied","hasAccess":false}]`,
+	}
+	for _, raw := range cases {
+		meterError, hasAccess := ParseMetering("account", json.RawMessage(raw))
+		if hasAccess || meterError != "denied" {
+			t.Fatalf("ParseMetering(%s) = (%q, %v)", raw, meterError, hasAccess)
+		}
+	}
+}
+
+func TestAccountHealthMeteringDefaultsDeepCopySnapshotAndReset(t *testing.T) {
+	h := newAccountHealth()
+	const id = "acct-metering"
+
+	if _, hasAccess, _ := h.GetMetering(id); !hasAccess {
+		t.Fatal("missing metering state must default hasAccess to true")
+	}
+
+	throttling := map[string]any{
+		"numUserMessagesInConversation":    float64(3),
+		"maxNumUserMessagesInConversation": float64(30),
+		"nested":                           map[string]any{"value": "original"},
+	}
+	remaining := map[string]int{"Chat": 17}
+	h.UpdateThrottling(id, throttling)
+	h.UpdateMetering(id, "meter-error", false, remaining)
+
+	throttling["nested"].(map[string]any)["value"] = "mutated"
+	remaining["Chat"] = 0
+
+	stored := h.GetThrottling(id).(map[string]any)
+	if stored["nested"].(map[string]any)["value"] != "original" {
+		t.Fatal("UpdateThrottling must deep-copy input")
+	}
+	meterError, hasAccess, gotRemaining := h.GetMetering(id)
+	if meterError != "meter-error" || hasAccess || gotRemaining["Chat"] != 17 {
+		t.Fatalf("unexpected metering state: error=%q access=%v remaining=%v", meterError, hasAccess, gotRemaining)
+	}
+
+	snapshot := h.Snapshot()
+	snapshot[id]["throttling"].(map[string]any)["nested"].(map[string]any)["value"] = "snapshot-mutated"
+	snapshot[id]["remainingAllowance"].(map[string]int)["Chat"] = 1
+	if h.GetThrottling(id).(map[string]any)["nested"].(map[string]any)["value"] != "original" {
+		t.Fatal("Snapshot must deep-copy throttling")
+	}
+	_, _, gotRemaining = h.GetMetering(id)
+	if gotRemaining["Chat"] != 17 {
+		t.Fatal("Snapshot must deep-copy remaining allowance")
+	}
+
+	h.ClearAllCooldowns()
+	if got := h.Snapshot(); len(got) != 0 {
+		t.Fatalf("reset left health state: %#v", got)
+	}
+	if meterError, hasAccess, remaining := h.GetMetering(id); meterError != "" || !hasAccess || len(remaining) != 0 {
+		t.Fatalf("reset left metering state: error=%q access=%v remaining=%v", meterError, hasAccess, remaining)
 	}
 }

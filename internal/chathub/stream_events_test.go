@@ -48,3 +48,24 @@ func TestExtractToolEventsNestedAndDeduped(t *testing.T) {
 		t.Fatalf("unexpected nested tools: %#v", got)
 	}
 }
+
+func TestParseSuggestedResponseMessageFields(t *testing.T) {
+	got := parseSuggestedResponse(map[string]any{
+		"commandText": "next",
+		"text":        "Next question",
+		"messageId":   "msg-1",
+		"author":      "bot",
+	})
+	if got.CommandText != "next" || got.Text != "Next question" || got.MessageID != "msg-1" || got.Author != "bot" {
+		t.Fatalf("unexpected suggested response: %#v", got)
+	}
+}
+
+func TestMessageReferenceMapDeduplicatesByKey(t *testing.T) {
+	references := map[string]Reference{}
+	references["ref-1"] = Reference{TargetLink: "https://example.com/old", Title: "Old"}
+	references["ref-1"] = Reference{TargetLink: "https://example.com/new", Title: "New"}
+	if len(references) != 1 || references["ref-1"].TargetLink != "https://example.com/new" {
+		t.Fatalf("references were not deduplicated by key: %#v", references)
+	}
+}

@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -337,6 +338,62 @@ func TestMemoryAffinityAcquireRegistersWaiterAndReleaseWakes(t *testing.T) {
 		release()
 	case <-time.After(time.Second):
 		t.Fatal("release did not wake blocked acquire")
+	}
+}
+
+func TestMemoryAffinityLockReleaseCancelRace(t *testing.T) {
+	for i := 0; i < 200; i++ {
+		store := newMemoryAffinityStore(time.Hour, 100)
+		firstRelease, err := store.Acquire(context.Background(), "tenant:race", time.Second, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		firstResult := make(chan error, 1)
+		go func() {
+			release, acquireErr := store.Acquire(ctx, "tenant:race", time.Second, time.Second)
+			if release != nil {
+				release()
+			}
+			firstResult <- acquireErr
+		}()
+		secondResult := make(chan error, 1)
+		go func() {
+			release, acquireErr := store.Acquire(context.Background(), "tenant:race", time.Second, time.Second)
+			if release != nil {
+				release()
+			}
+			secondResult <- acquireErr
+		}()
+		for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+			store.mu.Lock()
+			waiting := len(store.waiters["tenant:race"]) == 2
+			store.mu.Unlock()
+			if waiting {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		start := make(chan struct{})
+		var actions sync.WaitGroup
+		actions.Add(2)
+		go func() { defer actions.Done(); <-start; cancel() }()
+		go func() { defer actions.Done(); <-start; firstRelease() }()
+		close(start)
+		actions.Wait()
+		select {
+		case <-firstResult:
+		case <-time.After(time.Second):
+			t.Fatal("first lock waiter hung during release/cancel race")
+		}
+		select {
+		case err := <-secondResult:
+			if err != nil {
+				t.Fatalf("second lock waiter failed after release/cancel race: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("second lock waiter hung during release/cancel race")
+		}
 	}
 }
 

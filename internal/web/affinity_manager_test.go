@@ -21,6 +21,14 @@ func (s responseReadErrorStore) GetResponse(context.Context, string, string) (st
 	return "", false, errors.New("temporary response mapping read failure")
 }
 
+type accountHealthReadErrorStore struct {
+	affinityStore
+}
+
+func (s accountHealthReadErrorStore) GetAccountHealth(context.Context, string) (affinityAccountHealth, bool, error) {
+	return affinityAccountHealth{}, false, errors.New("temporary account health read failure")
+}
+
 func TestAffinityManagerConfirmsOnlySuccessfulExactContinuation(t *testing.T) {
 	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
 	defer manager.close()
@@ -440,6 +448,59 @@ func TestRequestCancellationDoesNotDegradePrimaryAffinityStore(t *testing.T) {
 	status := manager.status()
 	if status["degraded"] != true || status["store"] != "memory_fallback" {
 		t.Fatalf("real store error did not select memory fallback: %v", status)
+	}
+}
+
+func TestAffinityStoreDegradationClearsPrimaryBindingState(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	tenantHash := hashString("tenant")
+	history := []oaiMsg{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}}
+	primary := newMemoryAffinityStore(time.Hour, 100)
+	if err := primary.PutBinding(ctx, affinityBinding{
+		ID: "primary-binding", TenantHash: tenantHash, AccountID: "a", ConversationID: "primary-conversation",
+		SessionID: "primary-session", HistoryDigest: historyDigest(history), HistoryCount: len(history), Generation: 7,
+	}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	manager.primary = accountHealthReadErrorStore{affinityStore: primary}
+	manager.primaryName = "external"
+
+	body := &oaiReq{Messages: append(append([]oaiMsg(nil), history...), oaiMsg{Role: "user", Content: "continue"})}
+	state, err := manager.begin(ctx, "tenant", body, httptest.NewRequest("POST", "/", nil), []auth.AccountToken{{ID: "a"}}, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.close()
+	state.apply(body)
+	if state.store != manager.fallback || state.hasBinding || state.prefixCount != 0 || state.incremental {
+		t.Fatalf("primary binding survived store degradation: state=%s", state)
+	}
+	if body.ConversationID != "" || body.SessionID != "" {
+		t.Fatalf("stale primary conversation was applied after degradation: %+v", body)
+	}
+	assistant := oaiMsg{Role: "assistant", Content: "fallback answer"}
+	usage := state.complete(ctx, body, state.accountID, "fallback-conversation", "fallback-session", assistant, 20, 3)
+	if usage.Confirmed || usage.CachedTokens != 0 {
+		t.Fatalf("degraded cold request claimed a cache hit: %+v", usage)
+	}
+	if binding, _, ok, lookupErr := manager.fallback.FindHistory(ctx, tenantHash, []string{historyDigest(affinityBindingHistory(body.Messages, assistant))}); lookupErr != nil || !ok || binding.ConversationID != "fallback-conversation" {
+		t.Fatalf("degraded request was not persisted to fallback: binding=%+v ok=%t err=%v", binding, ok, lookupErr)
+	}
+}
+
+func TestContentSeedDoesNotAcquireConversationLock(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	body := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "same cold prompt"}}}
+	state, err := manager.begin(context.Background(), "tenant", body, httptest.NewRequest("POST", "/", nil), []auth.AccountToken{{ID: "a"}}, func(string) bool { return true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.close()
+	if state.key.Reason != "content_seed" || state.key.BindingID != "" || state.releaseLock != nil {
+		t.Fatalf("content seed acquired a conversation lock: state=%s", state)
 	}
 }
 

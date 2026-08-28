@@ -7,15 +7,17 @@ import (
 
 func TestStreamFinalResultFallbackIsNotEmpty(t *testing.T) {
 	var text strings.Builder
+	var pending strings.Builder
 	if text.Len() != 0 {
 		t.Fatal("test setup")
 	}
 	final := "最终回答"
-	if text.Len() == 0 && strings.TrimSpace(final) != "" {
-		text.WriteString(final)
-	}
+	bufferFinalStreamText(&text, &pending, final)
 	if text.String() != final {
 		t.Fatalf("expected final result fallback %q, got %q", final, text.String())
+	}
+	if pending.String() != final {
+		t.Fatalf("expected final result to be queued for streaming, got %q", pending.String())
 	}
 }
 

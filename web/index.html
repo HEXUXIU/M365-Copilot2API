@@ -415,6 +415,14 @@ if (response.output_text) {
           <div class="stat"><span class="stat-label">Hit rate</span><span class="stat-value" id="stat-rate">0</span><span class="stat-unit">%</span></div>
           <div class="stat"><span class="stat-label">Tokens saved</span><span class="stat-value" id="stat-saved">0</span><span class="stat-unit" style="font-size:12px">saved</span></div>
         </div>
+        <div class="card" id="quotaDashboard" style="display:none">
+          <div class="card-head"><span class="card-title">实时额度</span><span id="quotaSub" style="font-size:11px;color:var(--muted)"></span><button class="btn btn-sm" style="margin-left:auto" onclick="loadAccounts()">刷新</button></div>
+          <div class="card-body">
+            <div id="quotaTotals"></div>
+            <div id="quotaCooldowns" style="margin-top:16px"></div>
+            <div id="quotaAdvice" style="margin-top:12px;font-size:11px;color:var(--muted);padding:8px 10px;background:var(--bg);border-radius:8px;border:1px solid var(--line)"></div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Quick actions</span></div>
           <div class="card-body">
@@ -601,9 +609,9 @@ if (response.output_text) {
 
       <!-- Model Test -->
       <section id="page-modeltest" style="display:none">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-          <div><h2 style="font-size:18px;font-weight:700">Model test</h2><p style="font-size:12px;color:var(--muted);margin-top:2px">Send a minimal request to each model to verify availability</p></div>
-          <button class="btn primary" onclick="modelTestAll()"><i data-lucide="play" style="width:14px;height:14px"></i> Test all</button>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px;flex-wrap:wrap">
+          <div><h2 style="font-size:18px;font-weight:700">Model test</h2><p style="font-size:12px;color:var(--muted);margin-top:2px">支持单账号测试，自动或指定账号</p></div>
+          <div style="display:flex;gap:8px;align-items:center"><select id="modelTestAccount" class="form-input" style="width:200px"><option value="">自动选择账号</option></select><button class="btn primary" onclick="modelTestAll()"><i data-lucide="play" style="width:14px;height:14px"></i> Test all</button></div>
         </div>
         <div class="card">
           <table class="table"><thead><tr><th>Model</th><th>Status</th><th>Latency</th><th>Reply</th></tr></thead><tbody id="modelTestRows"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody></table>
@@ -960,7 +968,7 @@ function showPage(p){
     document.querySelector('[data-page="'+k+'"]')?.classList.toggle('active',k===p);
   });
   $('pageTitle').textContent=pages[p];
-  if(p==='dashboard'){loadStats();loadOnboarding();}
+  if(p==='dashboard'){loadStats();loadOnboarding();loadAccounts();}
   if(p==='usage')loadUsage();
   if(p==='accounts')loadAccounts();
   if(p==='apikeys')loadKeys();
@@ -1049,6 +1057,47 @@ async function loadStats(){
   }catch(e){}
 }
 
+const QUOTA_LABELS={LLMOnly:'对话',ImageGeneration:'生图',GraphicArt:'GraphicArt',VisualCreator:'Visual创作',ClaudeOpusQuery:'Claude Opus',ClaudeOpusQuery75:'Claude 75',ClaudeOpusQueryC1:'Claude C1',ClaudeOpusQueryC2:'Claude C2',ClaudeOpusQueryDaily:'Claude 日限',ClaudeOpusQueryDailyC1:'Claude 日C1',ClaudeOpusQueryDailyC2:'Claude 日C2',ClaudeOpusQueryDailyWord:'Claude 日Word',ClaudeOpusQueryDev:'Claude Dev',ClaudeOpusQueryHourlyDev:'Claude 小时Dev',ClaudeOpusQueryWeeklyWord:'Claude 周Word',ArtifactGeneration:'产物',WXPAgentMode:'Agent',FileReference:'文件引用',CodeInterpreter:'代码解释',ImageAnalysis:'图像分析',DeepResearch:'深度研究',DeepWork:'DeepWork',CopilotTuning:'调优',NotebookCowork:'Notebook',PersonalDataAccess:'个人数据',TenantDataAccess:'租户数据',ReasoningModelTurnUsage:'推理',CostQuota:'成本'};
+const QUOTA_ICONS={LLMOnly:'message-circle',ImageGeneration:'image',ClaudeOpusQuery:'sparkles',ClaudeOpusQueryDaily:'calendar',ArtifactGeneration:'box',WXPAgentMode:'bot',FileReference:'file-text',CodeInterpreter:'code-2',ReasoningModelTurnUsage:'brain'};
+function renderQuotaDashboard(){
+  const list=_accountsCache||[];
+  const card=$('quotaDashboard'); if(!card) return;
+  if(!list.length){ card.style.display='none'; return; }
+  card.style.display='';
+  const totals={}; let withData=0;
+  list.forEach(x=>{
+    const r=x.remainingAllowance||{};
+    if(Object.keys(r).length) withData++;
+    Object.entries(r).forEach(([k,v])=>{ totals[k]=(totals[k]||0)+(Number(v)||0); });
+  });
+  const preferred=['LLMOnly','ImageGeneration','ClaudeOpusQuery','ClaudeOpusQueryDaily','ClaudeOpusQuery75','ArtifactGeneration','WXPAgentMode','FileReference'];
+  let keys=[...preferred.filter(k=>k in totals),...Object.keys(totals).filter(k=>!preferred.includes(k)).sort()];
+  keys=keys.filter(k=> totals[k]!==0 || ['LLMOnly','ImageGeneration','ClaudeOpusQuery'].includes(k));
+  const totalBadges=keys.map(k=>{
+    const v=totals[k]; const label=QUOTA_LABELS[k]||k; const icon=QUOTA_ICONS[k]||'layers';
+    const hint=k==='ImageGeneration'?`可再生 ${v} 张图`:k==='LLMOnly'?`可对话约 ${v} 次`:k.includes('Claude')?`Claude 剩余 ${v} 次`:`剩余 ${v}`;
+    const low=v<=10&&v>0, zero=v===0;
+    return `<div style="min-width:148px;flex:1;padding:12px;border-radius:12px;border:1px solid ${zero?'#fecaca':low?'#fde68a':'var(--line)'};background:var(--surface);box-shadow:var(--shadow-sm);animation:slideUp .3s var(--ease-out) both"><div style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)"><i data-lucide="${icon}" style="width:12px;height:12px"></i>${esc(label)} · ${esc(k)}</div><div style="font-size:22px;font-weight:700;margin-top:6px;letter-spacing:-0.02em;color:${zero?'var(--danger)':''}">${v}</div><div style="font-size:11px;color:var(--muted);margin-top:2px">${hint}</div></div>`;
+  }).join('');
+  $('quotaTotals').innerHTML=totalBadges?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px">${totalBadges}</div>`:'<span style="font-size:12px;color:var(--muted)">暂无剩余额度数据，等待下一次请求回写</span>';
+  const cooldowns=list.filter(x=>x.cooldownUntil).sort((a,b)=>new Date(a.cooldownUntil)-new Date(b.cooldownUntil));
+  const now=Date.now();
+  const busy=list.filter(x=> (x.concurrency||0)>0).length;
+  const circuit=list.some(x=> x.globalCircuit==='open');
+  $('quotaCooldowns').innerHTML=cooldowns.length?cooldowns.map(x=>{
+    const until=new Date(x.cooldownUntil).getTime(); const left=Math.max(0,until-now); const mins=Math.ceil(left/60000);
+    const pct=Math.max(0,Math.min(100,Math.round((left/(15*60000))*100)));
+    const conc=x.concurrency?` · 并发 ${x.concurrency}`:''; const proxy=x.boundProxy?` · 代理 ${esc(x.boundProxy)}`:'';
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:10px;margin-top:8px;background:var(--surface)"><span style="font-size:12px;flex:1">${esc(x.email||x.displayName||x.id)} · 冷却中 · ${mins} 分钟后恢复${conc}${proxy}</span><span style="width:90px;height:6px;background:var(--border);border-radius:999px;overflow:hidden"><span style="display:block;height:100%;width:${pct}%;background:#d97706"></span></span></div>`;
+  }).join(''):`<div style="font-size:12px;color:var(--muted);margin-top:8px">无冷却账号 · 调度可用${busy?` · ${busy} 并发中`:''}${circuit?' · 全局熔断开启':''}</div>`;
+  const avail=list.filter(x=>x.status==='online').length;
+  const total=list.length;
+  const over=list.filter(x=>x.meterError).length;
+  $('quotaSub').textContent=`${withData}/${total} 已同步额度 · ${avail} 可调度${busy?` · ${busy} 并发`:''}` + (over?` · ${over} 限流`:'') + (circuit?' · 熔断':'');
+  $('quotaAdvice').textContent=avail===0?'全部账号冷却中，等待恢复或增加账号':'生图为 0 的账号仍可接纯文本请求';
+  try{ lucide.createIcons(); }catch(e){}
+}
+
 async function loadRecentRequests(){
   try{
     const d=await api('/api/usage/logs?limit=6&offset=0');
@@ -1065,6 +1114,32 @@ async function loadRecentRequests(){
 
 let _accountsCache=[],_accountFilter='all';
 function setAccountFilter(f){_accountFilter=f;document.querySelectorAll('#accountFilter button').forEach(b=>b.classList.toggle('active',b.dataset.f===f));renderAccounts();}
+function accountQuotaDetails(x){
+  const remaining=x.remainingAllowance||{};
+  const preferred=['LLMOnly','ImageGeneration','ClaudeOpusQuery','ClaudeOpusQueryDaily','ArtifactGeneration','WXPAgentMode'];
+  let order=[...preferred.filter(k=>k in remaining),...Object.keys(remaining).filter(k=>!preferred.includes(k)).sort()];
+  order=order.filter(k=> remaining[k]!==0 || ['LLMOnly','ImageGeneration','ClaudeOpusQuery'].includes(k));
+  const badges=order.map(k=>{
+    const v=remaining[k];
+    const low=v!==undefined&&v<=10;
+    const zero=v===0;
+    return `<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:999px;border:1px solid ${zero?'var(--danger)':low?'#d97706':'var(--border)'};background:${zero?'#fef2f2':low?'#fffbeb':'var(--card)'};font-size:11px;line-height:1"><b>${esc(k)}</b><span style="color:${zero?'var(--danger)':low?'#92400e':'var(--muted)'}">${v}</span></span>`;
+  }).join('');
+  const throttling=x.throttling||{};
+  const used=throttling.numUserMessagesInConversation;
+  const max=throttling.maxNumUserMessagesInConversation;
+  let conv='';
+  if(Number.isFinite(used)&&Number.isFinite(max)&&max>0){
+    const pct=Math.min(100,Math.round(used/max*100));
+    const barColor=pct>=90?'var(--danger)':pct>=70?'#d97706':'var(--primary)';
+    conv=`<div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="font-size:11px;color:var(--muted)">对话 ${used} / ${max}</span><span style="flex:1;max-width:120px;height:6px;background:var(--border);border-radius:999px;overflow:hidden"><span style="display:block;height:100%;width:${pct}%;background:${barColor}"></span></span><span style="font-size:11px;color:var(--muted)">${pct}%</span></div>`;
+  } else if (x.meterError||badges) {
+    conv=`<div style="font-size:11px;color:var(--muted);margin-top:6px">对话水位暂无数据（等待下一次请求回写）</div>`;
+  }
+  const meter=x.meterError?`<div style="margin-top:6px;padding:6px 8px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:11px">限流原因：${esc(x.meterError)}${x.meterHasAccess===false?' · 已拒绝访问':''}</div>`:'';
+  if(!badges&&!meter&&!conv) return `<div style="font-size:11px;color:var(--muted);margin-top:6px">额度数据等待下一次成功请求后展示</div>`;
+  return `<div style="margin-top:6px">${meter}${conv}${badges?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">${badges}</div>`:''}</div>`;
+}
 function renderAccounts(){
   const q=($('accountSearch').value||'').trim().toLowerCase();
   const list=_accountsCache.filter(x=>{
@@ -1074,22 +1149,52 @@ function renderAccounts(){
     if(q&&!((x.displayName||'')+' '+(x.email||'')).toLowerCase().includes(q))return false;
     return true;
   });
-  $('accountRows').innerHTML=list.length?list.map(x=>{
+  const rows=$('accountRows');
+  rows.replaceChildren();
+  if(!list.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=7;td.className='empty';td.textContent='No matching accounts';tr.append(td);rows.append(tr);return;}
+  list.forEach(x=>{
     const cooldown=x.cooldownUntil?`<div style="font-size:11px;color:var(--muted);margin-top:3px"><span>Cooldown until</span> ${new Date(x.cooldownUntil).toLocaleString()}</div>`:'';
     const status=x.status==='cooldown'?`<div><span class="status cooldown"><i></i>Cooldown</span>${cooldown}</div>`:x.status==='online'?'<span class="status online"><i></i>Online</span>':'<span class="status offline"><i></i>Offline</span>';
-    const calls=x.rateLimited?`Limited after ${x.callCount||0} calls`:`Called ${x.callCount||0} times`;
+    const calls=(x.rateLimited?`Limited after ${x.callCount||0} calls`:`Called ${x.callCount||0} times`)+accountQuotaDetails(x);
     const scheduleEnabled=x.scheduleEnabled!==false;
-    const proxyLabel=x.boundProxy?`<span style="font-size:11px;word-break:break-all">${esc(x.boundProxy)}</span>`:'<span style="color:var(--muted);font-size:11px">—</span>';
-    return `<tr><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div><b>${x.displayName||x.email}</b><div style="font-size:11px;color:var(--muted)">${x.email||''}</div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" onclick="toggleAccountSchedule('${x.id}',${!scheduleEnabled})">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td>${proxyLabel} <button class="btn-sm btn" style="margin-top:2px" onclick="bindAccountProxy('${x.id}','${esc(x.boundProxy||'')}')">Bind</button></td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`;
-  }).join(''):'<tr><td colspan="7" class="empty">No matching accounts</td></tr>';
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td><div class="account-cell"><div class="avatar"></div><div><b></b><div class="account-email" style="font-size:11px;color:var(--muted)"></div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}<div style="margin-top:6px"><button class="btn-sm btn" data-account-action="probe">刷新额度</button></div></td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" data-account-action="schedule">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td><span class="account-proxy" style="font-size:11px;word-break:break-all"></span> <button class="btn-sm btn" style="margin-top:2px" data-account-action="proxy">Bind</button></td><td><button class="btn-sm btn danger" data-account-action="delete">Delete</button></td>`;
+    tr.querySelector('.avatar').textContent=(x.displayName||x.email||'M')[0];
+    tr.querySelector('b').textContent=x.displayName||x.email||'';
+    tr.querySelector('.account-email').textContent=x.email||'';
+    const proxy=tr.querySelector('.account-proxy');proxy.textContent=x.boundProxy||'—';if(!x.boundProxy)proxy.style.color='var(--muted)';
+    tr.querySelector('[data-account-action="schedule"]').addEventListener('click',()=>toggleAccountSchedule(x.id,!scheduleEnabled));
+    tr.querySelector('[data-account-action="proxy"]').addEventListener('click',()=>bindAccountProxy(x.id,x.boundProxy||''));
+    tr.querySelector('[data-account-action="probe"]').addEventListener('click',()=>probeAccount(x.id, tr.querySelector('[data-account-action="probe"]')));
+    tr.querySelector('[data-account-action="delete"]').addEventListener('click',()=>deleteAccount(x.id));
+    rows.append(tr);
+  });
 }
+async function probeAccount(id, btn){
+  if(btn){ btn.disabled=true; btn.textContent='刷新中…'; }
+  try{ await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model:'m365-copilot', account_id:id})}); showNotice('额度已刷新','success'); await loadAccounts(); }catch(e){ showNotice(e.message,'error'); }finally{ if(btn){ btn.disabled=false; btn.textContent='刷新额度'; } }
+}
+async function testSingleModel(id, btn){
+  const model=prompt('输入要测试的模型名','m365-copilot')?.trim(); if(!model) return;
+  if(btn){ btn.disabled=true; btn.textContent='测试中…'; }
+  try{ const r=await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model, account_id:id})}); showNotice(`单测成功 ${r.latency_ms||''}ms`,'success'); }catch(e){ showNotice(e.message,'error'); }finally{ if(btn){ btn.disabled=false; btn.textContent='单测模型'; } }
+}
+let _accountsTimer=null;
 async function loadAccounts(){
   try{
     const d=await api('/api/accounts');
     _accountsCache=d.accounts||[];
     renderAccounts();
-  }catch(e){$('accountRows').innerHTML=`<tr><td colspan="7" class="empty">${e.message}</td></tr>`;}
+    renderQuotaDashboard();
+  }catch(e){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=7;td.className='empty';td.textContent=e.message;tr.append(td);$('accountRows').replaceChildren(tr);}
 }
+function startAccountsPolling(){
+  if(_accountsTimer) return;
+  _accountsTimer=setInterval(()=>{ if(document.visibilityState!=='visible') return; const a=document.getElementById('page-accounts')?.classList.contains('active'), d=document.getElementById('page-dashboard')?.classList.contains('active'); if(a||d) loadAccounts(); },15000);
+}
+function stopAccountsPolling(){ if(_accountsTimer){ clearInterval(_accountsTimer); _accountsTimer=null; } }
+document.addEventListener('DOMContentLoaded', startAccountsPolling);
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') loadAccounts(); });
 
 async function toggleAccountSchedule(id,enabled){
   try{
@@ -1149,13 +1254,23 @@ async function loadKeys(){
   try{
     const d=await api('/api/admin/keys');
     const k=d.keys||[];
-    $('keyRows').innerHTML=k.length?k.map(x=>`<tr><td><b>${x.name}</b></td><td><code>${x.prefix}</code></td><td style="font-size:12px;color:var(--muted)">${new Date(x.createdAt).toLocaleString()}</td><td>${x.revoked?'<span class="status offline"><i></i>Disabled</span>':'<span class="status online"><i></i>Active</span>'}</td><td style="font-size:12px;color:var(--muted)">${x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-'}</td><td style="text-align:right;white-space:nowrap">
-      <button class="btn-sm btn" onclick="openUseKey('${x.id}')">Use key</button>
-      <button class="btn-sm btn" onclick="editKey('${x.id}','${x.name.replace(/'/g,"\\'")}')">Edit</button>
-      <button class="btn-sm btn ${x.revoked?'success':'danger'}" onclick="toggleKey('${x.id}',${x.revoked})">${x.revoked?'Enable':'Disable'}</button>
-      <button class="btn-sm btn danger" onclick="revokeKey('${x.id}')">Delete</button>
-    </td></tr>`).join(''):'<tr><td colspan="6" class="empty">No API keys</td></tr>';
-  }catch(e){$('keyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
+    const rows=$('keyRows');
+    rows.replaceChildren();
+    if(!k.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.className='empty';td.textContent='No API keys';tr.append(td);rows.append(tr);return;}
+    k.forEach(x=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML=`<td><b></b></td><td><code></code></td><td class="key-created" style="font-size:12px;color:var(--muted)"></td><td><span class="status ${x.revoked?'offline':'online'}"><i></i>${x.revoked?'Disabled':'Active'}</span></td><td class="key-last-used" style="font-size:12px;color:var(--muted)"></td><td style="text-align:right;white-space:nowrap"><button class="btn-sm btn" data-key-action="use">Use key</button><button class="btn-sm btn" data-key-action="edit">Edit</button><button class="btn-sm btn ${x.revoked?'success':'danger'}" data-key-action="toggle">${x.revoked?'Enable':'Disable'}</button><button class="btn-sm btn danger" data-key-action="delete">Delete</button></td>`;
+      tr.querySelector('b').textContent=x.name||'';
+      tr.querySelector('code').textContent=x.prefix||'';
+      tr.querySelector('.key-created').textContent=new Date(x.createdAt).toLocaleString();
+      tr.querySelector('.key-last-used').textContent=x.lastUsedAt?new Date(x.lastUsedAt).toLocaleString():'-';
+      tr.querySelector('[data-key-action="use"]').addEventListener('click',()=>openUseKey(x.id));
+      tr.querySelector('[data-key-action="edit"]').addEventListener('click',()=>editKey(x.id,x.name));
+      tr.querySelector('[data-key-action="toggle"]').addEventListener('click',()=>toggleKey(x.id,x.revoked));
+      tr.querySelector('[data-key-action="delete"]').addEventListener('click',()=>revokeKey(x.id));
+      rows.append(tr);
+    });
+  }catch(e){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.className='empty';td.textContent=e.message;tr.append(td);$('keyRows').replaceChildren(tr);}
 }
 
 let editKeyId=null;
@@ -1224,7 +1339,7 @@ async function loadUsage(){
     renderBars('ugKeys',(d.stats||{}).keys||[],m=>m.api_key_prefix,'requests');
     loadUsageLogs();
   }catch(e){
-    $('ugLogRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;
+    const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.className='empty';td.textContent=e.message;tr.append(td);$('ugLogRows').replaceChildren(tr);
   }
 }
 
@@ -1302,7 +1417,7 @@ async function loadUsageLogs(){
     $('ugPrev').disabled=ugPageNo<=0;
     $('ugNext').disabled=ugPageNo>=totalPages-1;
   }catch(e){
-    $('ugLogRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;
+    const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.className='empty';td.textContent=e.message;tr.append(td);$('ugLogRows').replaceChildren(tr);
   }
 }
 
@@ -1499,7 +1614,7 @@ async function loadProxies(){
     const d=await api('/api/admin/proxy-pool');
     const p=d.proxies||[];
     $('proxyRows').innerHTML=p.length?p.map(proxyRow).join(''):'<tr><td colspan="6" class="empty">No proxies; requests will connect directly</td></tr>';
-  }catch(e){$('proxyRows').innerHTML=`<tr><td colspan="6" class="empty">${e.message}</td></tr>`;}
+  }catch(e){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=6;td.className='empty';td.textContent=e.message;tr.append(td);$('proxyRows').replaceChildren(tr);}
 }
 async function proxyAdd(){
   const raw=$('proxyInput').value.trim();
@@ -1545,11 +1660,12 @@ async function proxyTest(){
 async function loadModelTest(){
   $('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">Loading...</td></tr>';
   try{
-    const d=await api('/api/admin/models');
-    const models=d.data||[];
+    const [md, ac]=await Promise.all([api('/api/admin/models'), api('/api/accounts').catch(()=>({accounts:[]}))]);
+    const models=md.data||[];
+    const sel=$('modelTestAccount'); sel.innerHTML='<option value="">自动选择账号</option>'+(ac.accounts||[]).map(a=>`<option value="${esc(a.id)}">${esc(a.email||a.id)} ${a.status==='cooldown'?'(冷却)':''}</option>`).join('');
     if(!models.length){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">No models available</td></tr>';return;}
-    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">点击"测试全部"</td></tr>`).join('');
-  }catch(e){$('modelTestRows').innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`;}
+    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)"><button class="btn-sm btn" onclick="modelTestOne('${esc(m.id)}', this.closest('tr'))">测试</button></td></tr>`).join('');
+  }catch(e){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;td.className='empty';td.textContent=e.message;tr.append(td);$('modelTestRows').replaceChildren(tr);}
 }
 async function modelTestOne(id,row){
   const badge=row.querySelector('td:nth-child(2)');
@@ -1558,8 +1674,9 @@ async function modelTestOne(id,row){
   badge.innerHTML='<span class="status"><i></i>Testing…</span>';
   lat.textContent='-';reply.textContent='';
   const start=performance.now();
+  const accountId=$('modelTestAccount')?.value||'';
   try{
-    const d=await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model:id})});
+    const d=await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model:id, account_id:accountId})});
     const ms=Math.round(performance.now()-start);
     const content=d.reply||'（空回复）';
     badge.innerHTML='<span class="status online"><i></i>Healthy</span>';

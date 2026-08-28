@@ -19,3 +19,11 @@ func consumeStreamText(pending *strings.Builder, chunk string, emit func(string)
 	pending.Reset()
 	return emit(v)
 }
+
+func bufferFinalStreamText(text, pending *strings.Builder, final string) {
+	if text.Len() != 0 || strings.TrimSpace(final) == "" {
+		return
+	}
+	text.WriteString(final)
+	pending.WriteString(final)
+}

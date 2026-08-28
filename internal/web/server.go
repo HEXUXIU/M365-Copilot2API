@@ -116,6 +116,26 @@ func (s *Server) markAccountSuccess(accountID string) {
 	}
 }
 
+func (s *Server) recordAccountChatResult(accountID string, result chathub.Result, err error) {
+	s.markAccountResult(accountID, err)
+	if err != nil || s == nil || s.accountPool == nil || accountID == "" {
+		return
+	}
+	if result.Throttling != nil {
+		s.accountPool.UpdateThrottling(accountID, result.Throttling)
+		s.logThrottlingWarning(accountID, result.Throttling)
+	}
+	meterError := ""
+	hasAccess := true
+	if result.MeteringInformation != nil {
+		if raw, marshalErr := json.Marshal(result.MeteringInformation); marshalErr == nil {
+			meterError, hasAccess = ParseMetering(accountID, json.RawMessage(raw))
+			applyMeteringCooldown(s.accountPool, accountID, meterError)
+		}
+	}
+	s.accountPool.UpdateMetering(accountID, meterError, hasAccess, remainingAllowances(result.Throttling))
+}
+
 // confirmRateLimitNotice verifies a text-channel rate-limit notice with a
 // separate, fresh ChatHub conversation. A single notice is not enough to cool
 // down an account because the upstream can occasionally emit a false positive.
@@ -602,6 +622,7 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Password string `json:"password"`
+		Remember bool   `json:"remember"`
 	}
 	decodeErr := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body)
 	s.mu.Lock()
@@ -635,9 +656,15 @@ func (s *Server) adminLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(s.adminSessions, oldest)
 	}
-	s.adminSessions[token] = now.Add(24 * time.Hour)
+	ttl := 24 * time.Hour
+	maxAge := 86400
+	if body.Remember {
+		ttl = 30 * 24 * time.Hour
+		maxAge = 30 * 86400
+	}
+	s.adminSessions[token] = now.Add(ttl)
 	s.mu.Unlock()
-	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Value: token, Path: "/", HttpOnly: true, Secure: secureAdminCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: 86400})
+	http.SetCookie(w, &http.Cookie{Name: "m365_admin_session", Value: token, Path: "/", HttpOnly: true, Secure: secureAdminCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: maxAge})
 	jsonOut(w, map[string]any{"status": "authenticated", "must_change_password": mustChange})
 }
 func (s *Server) adminLogout(w http.ResponseWriter, r *http.Request) {
@@ -772,24 +799,27 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 	}
 	list := s.tokens.List()
 	type view struct {
-		ID              string     `json:"id"`
-		Email           string     `json:"email"`
-		DisplayName     string     `json:"displayName,omitempty"`
-		Status          string     `json:"status"`
-		ScheduleEnabled bool       `json:"scheduleEnabled"`
-		CallCount       uint64     `json:"callCount"`
-		RateLimited     bool       `json:"rateLimited"`
-		ImageLimited    bool       `json:"imageLimited"`
-		AuthFailed      bool       `json:"authFailed"`
-		AuthFailReason  string     `json:"authFailReason,omitempty"`
-		CooldownUntil   *time.Time `json:"cooldownUntil,omitempty"`
-		Throttling      any        `json:"throttling,omitempty"`
-		Concurrency     int        `json:"concurrency"`
-		OID             string     `json:"oid,omitempty"`
-		TID             string     `json:"tid,omitempty"`
-		ExpiresAt       time.Time  `json:"expiresAt,omitempty"`
-		UpdatedAt       time.Time  `json:"updatedAt,omitempty"`
-		BoundProxy      string     `json:"boundProxy,omitempty"`
+		ID                 string         `json:"id"`
+		Email              string         `json:"email"`
+		DisplayName        string         `json:"displayName,omitempty"`
+		Status             string         `json:"status"`
+		ScheduleEnabled    bool           `json:"scheduleEnabled"`
+		CallCount          uint64         `json:"callCount"`
+		RateLimited        bool           `json:"rateLimited"`
+		ImageLimited       bool           `json:"imageLimited"`
+		AuthFailed         bool           `json:"authFailed"`
+		AuthFailReason     string         `json:"authFailReason,omitempty"`
+		CooldownUntil      *time.Time     `json:"cooldownUntil,omitempty"`
+		Throttling         any            `json:"throttling,omitempty"`
+		MeterError         string         `json:"meterError,omitempty"`
+		MeterHasAccess     bool           `json:"meterHasAccess"`
+		RemainingAllowance map[string]int `json:"remainingAllowance,omitempty"`
+		Concurrency        int            `json:"concurrency"`
+		OID                string         `json:"oid,omitempty"`
+		TID                string         `json:"tid,omitempty"`
+		ExpiresAt          time.Time      `json:"expiresAt,omitempty"`
+		UpdatedAt          time.Time      `json:"updatedAt,omitempty"`
+		BoundProxy         string         `json:"boundProxy,omitempty"`
 	}
 	out := make([]view, 0, len(list))
 	for _, a := range list {
@@ -798,6 +828,9 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 		var callCount uint64
 		var rateLimited bool
 		var throttling any
+		var meterError string
+		var meterHasAccess = true
+		var remainingAllowance map[string]int
 		var authFailReason string
 		var imageLimited bool
 		if s.accountPool != nil {
@@ -808,6 +841,7 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 			callCount = s.accountPool.CallCount(a.ID)
 			rateLimited = s.accountPool.RateLimited(a.ID)
 			throttling = s.accountPool.GetThrottling(a.ID)
+			meterError, meterHasAccess, remainingAllowance = s.accountPool.GetMetering(a.ID)
 			authFailReason = s.accountPool.AuthFailReason(a.ID)
 			imageLimited = s.accountPool.ImageLimited(a.ID)
 		}
@@ -818,8 +852,10 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 			ImageLimited:   imageLimited,
 			AuthFailed:     s.accountPool != nil && !s.accountPool.Available(a.ID) && authFailReason != "",
 			AuthFailReason: authFailReason,
-			CooldownUntil:  cooldownUntil, Throttling: throttling, Concurrency: concurrency,
-			OID: a.OID, TID: a.TID,
+			CooldownUntil:  cooldownUntil, Throttling: throttling,
+			MeterError: meterError, MeterHasAccess: meterHasAccess, RemainingAllowance: remainingAllowance,
+			Concurrency: concurrency,
+			OID:         a.OID, TID: a.TID,
 			ExpiresAt: a.ExpiresAt, UpdatedAt: a.UpdatedAt, BoundProxy: a.BoundProxy,
 		})
 	}
@@ -1414,16 +1450,13 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 					FeatureFlags:          s.featureFlags(),
 				})
 				if err2 == nil {
-					s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
 					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
 						s.accountPool.MarkImageLimited(acc.ID)
 					}
-					s.accountPool.MarkSuccess(next.ID)
 					acc = next
 					res = res2
 					err = nil
 				} else {
-					s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
 					if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
 						s.accountPool.MarkImageLimited(next.ID)
 					}
@@ -1432,7 +1465,6 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err != nil {
-			s.accountPool.MarkFailure(acc.ID, err, s.getRateLimitCooldown())
 			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
 				s.accountPool.MarkImageLimited(acc.ID)
 			}
@@ -1440,7 +1472,6 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	s.accountPool.MarkSuccess(acc.ID)
 	if res.Throttling != nil && s.accountPool != nil {
 		s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
 		s.logThrottlingWarning(acc.ID, res.Throttling)
@@ -1521,13 +1552,14 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		Model string `json:"model"`
+		Model     string `json:"model"`
+		AccountID string `json:"account_id"`
 	}
 	if json.NewDecoder(r.Body).Decode(&b) != nil || strings.TrimSpace(b.Model) == "" {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad json: model required")
 		return
 	}
-	acc, err := s.resolveAccount("")
+	acc, err := s.resolveAccount(b.AccountID)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -2192,8 +2224,30 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments, toolChoiceRequiresCall(body.ToolChoice))
 		log.Printf("[req-trace] id=%s stage=router_return elapsed_ms=%d err=%t", requestID, time.Since(startedAt).Milliseconds(), routeErr != nil)
 		if routeErr != nil {
-			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "tool router: "+routeErr.Error())
-			return
+			if IsRateLimited(routeErr) && body.AccountID == "" {
+				if next, nerr := s.nextHealthyAccount(acc.ID); nerr == nil {
+					s.accountPool.MarkFailure(acc.ID, routeErr, s.getRateLimitCooldown())
+					routeRes2, routeErr2 := s.chatWithAccount(ctx, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+					if routeErr2 == nil {
+						routeRes = routeRes2
+						acc = next
+						account = chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
+						routeErr = nil
+					} else {
+						s.accountPool.MarkFailure(next.ID, routeErr2, s.getRateLimitCooldown())
+						writeUpstreamErrorWithAccount(w, routeErr2, next.ID)
+						return
+					}
+				}
+			}
+			if routeErr != nil {
+				if IsRateLimited(routeErr) {
+					writeUpstreamErrorWithAccount(w, routeErr, acc.ID)
+				} else {
+					writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "tool router: "+routeErr.Error())
+				}
+				return
+			}
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
@@ -2324,7 +2378,20 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				if err := flushPendingReasoning(); err != nil {
 					return err
 				}
-				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
+				toolKnown := false
+				for _, tm := range toolMaps {
+					if fn, ok := tm["function"].(map[string]any); ok {
+						if fn["name"] == ev.ToolName {
+							toolKnown = true
+							break
+						}
+					}
+				}
+				if toolKnown {
+					streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
+				} else {
+					log.Printf("[tool-event] id=%s skipping unknown native tool %q (not in client-declared tools)", requestID, ev.ToolName)
+				}
 				return nil
 			}
 			if ev.Kind == "reasoning" && ev.Text != "" {
@@ -2415,20 +2482,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				defer cancel2()
 				res2, err2 := s.chatWithAccountEvents(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq, onStreamEvent)
 				if err2 == nil {
-					s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
 					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
 						s.accountPool.MarkImageLimited(acc.ID)
 					}
-					s.accountPool.MarkSuccess(next.ID)
 					res = res2
 					acc = next
 					err = nil
 				} else {
-					s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
 					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
 						s.accountPool.MarkImageLimited(acc.ID)
 					}
-					s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
 					if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
 						s.accountPool.MarkImageLimited(next.ID)
 					}
@@ -2438,7 +2501,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			s.accountPool.MarkFailure(acc.ID, err, s.getRateLimitCooldown())
 			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
 				s.accountPool.MarkImageLimited(acc.ID)
 			}
@@ -2460,14 +2522,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if err := flushPendingReasoning(); err != nil {
 			return
 		}
-		s.accountPool.MarkSuccess(acc.ID)
+		s.markAccountSuccess(acc.ID)
 		if res.Throttling != nil && s.accountPool != nil {
 			s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
 			s.logThrottlingWarning(acc.ID, res.Throttling)
 		}
 		if isContentPolicyBlock(res.Text) {
 			log.Printf("[content-policy] M365 blocked the request (streaming), sending error")
-			s.accountPool.MarkFailure(acc.ID, chathub.ErrOffensiveContent, s.getRateLimitCooldown())
 			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": "M365 content policy blocked this request; try again or switch account", "code": "upstream_content_blocked"}})+"\n\n")
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 			return
@@ -2477,10 +2538,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				s.accountPool.MarkImageLimited(acc.ID)
 			}
 		}
-		if text.Len() == 0 && strings.TrimSpace(res.Text) != "" {
-			text.WriteString(res.Text)
-			pending.WriteString(res.Text)
-		}
+		bufferFinalStreamText(&text, &pending, res.Text)
 		rawCalls := streamedTools
 		if len(rawCalls) == 0 {
 			rawCalls = fencedToolCalls(text.String(), toolMaps, body.ToolChoice)
@@ -2767,14 +2825,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
 			res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
-			s.accountPool.MarkSuccess(acc.ID)
 			if res.Throttling != nil && s.accountPool != nil {
 				s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
 				s.logThrottlingWarning(acc.ID, res.Throttling)
 			}
 			if isContentPolicyBlock(res.Text) {
 				log.Printf("[content-policy] M365 blocked the request (reasoning stream), sending error")
-				s.accountPool.MarkFailure(acc.ID, chathub.ErrOffensiveContent, s.getRateLimitCooldown())
 				_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": "M365 content policy blocked this request; try again or switch account", "code": "upstream_content_blocked"}})+"\n\n")
 				_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 				return
@@ -2786,7 +2842,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			s.accountPool.MarkFailure(acc.ID, err, s.getRateLimitCooldown())
 			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
 				s.accountPool.MarkImageLimited(acc.ID)
 			}
@@ -2878,7 +2933,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		s.accountPool.MarkFailure(acc.ID, err, s.getRateLimitCooldown())
 		if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
 			s.accountPool.MarkImageLimited(acc.ID)
 		}
@@ -2889,7 +2943,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeUpstreamErrorWithAccount(w, err, acc.ID)
 		return
 	}
-	s.accountPool.MarkSuccess(acc.ID)
 	if res.Throttling != nil && s.accountPool != nil {
 		s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
 		s.logThrottlingWarning(acc.ID, res.Throttling)

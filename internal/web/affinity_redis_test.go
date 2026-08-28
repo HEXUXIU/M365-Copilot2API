@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -128,5 +129,23 @@ func TestRedisAffinityHistoryKeepsConcurrentEqualDigests(t *testing.T) {
 	got, _, ok, err := store.FindHistory(ctx, "tenant", []string{"same"})
 	if err != nil || !ok || got.ID != second.ID {
 		t.Fatalf("sibling history was lost: got=%+v ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestRedisAffinityEvictionIsBatchedAndBounded(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store, err := newRedisAffinityStore("redis://"+mr.Addr()+"/0", 4, time.Hour, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	for i := 0; i < 4; i++ {
+		binding := affinityBinding{ID: fmt.Sprintf("binding-%d", i), TenantHash: "tenant", AccountID: "account", ConversationID: fmt.Sprintf("conv-%d", i), Generation: 1}
+		if err := store.PutBinding(context.Background(), binding, time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if count, err := store.client.ZCard(context.Background(), redisLRUKey).Result(); err != nil || count > 2 {
+		t.Fatalf("batched eviction left %d bindings: %v", count, err)
 	}
 }

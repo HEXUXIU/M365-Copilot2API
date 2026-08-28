@@ -1,6 +1,7 @@
 package web
 
 import (
+	"container/heap"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -9,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -368,6 +368,22 @@ type memoryBinding struct {
 	ExpiresAt time.Time
 }
 
+type memoryBindingHeap []memoryBinding
+
+func (h memoryBindingHeap) Len() int { return len(h) }
+func (h memoryBindingHeap) Less(i, j int) bool {
+	return h[i].Value.LastUsedAt.Before(h[j].Value.LastUsedAt)
+}
+func (h memoryBindingHeap) Swap(i, j int)   { h[i], h[j] = h[j], h[i] }
+func (h *memoryBindingHeap) Push(value any) { *h = append(*h, value.(memoryBinding)) }
+func (h *memoryBindingHeap) Pop() any {
+	old := *h
+	last := len(old) - 1
+	value := old[last]
+	*h = old[:last]
+	return value
+}
+
 type memoryLock struct {
 	Owner     string
 	ExpiresAt time.Time
@@ -466,12 +482,13 @@ func (s *memoryAffinityStore) cleanupLocked(now time.Time) {
 	if len(s.bindings) <= s.max {
 		return
 	}
-	list := make([]memoryBinding, 0, len(s.bindings))
+	list := make(memoryBindingHeap, 0, len(s.bindings))
 	for _, value := range s.bindings {
 		list = append(list, value)
 	}
-	sort.Slice(list, func(i, j int) bool { return list[i].Value.LastUsedAt.Before(list[j].Value.LastUsedAt) })
-	for _, value := range list[:len(list)-s.max] {
+	heap.Init(&list)
+	for overflow := len(s.bindings) - s.max; overflow > 0; overflow-- {
+		value := heap.Pop(&list).(memoryBinding)
 		delete(s.bindings, value.Value.ID)
 		s.removeHistoryBindingLocked(value.Value)
 	}
@@ -482,7 +499,10 @@ func (s *memoryAffinityStore) wakeWaiterLocked(key string) {
 	if len(waiters) == 0 {
 		return
 	}
-	close(waiters[0])
+	select {
+	case waiters[0] <- struct{}{}:
+	default:
+	}
 	if len(waiters) == 1 {
 		delete(s.waiters, key)
 		return
@@ -494,8 +514,10 @@ func (s *memoryAffinityStore) removeWaiter(key string, waiter chan struct{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	waiters := s.waiters[key]
+	found := false
 	for i, candidate := range waiters {
 		if candidate == waiter {
+			found = true
 			waiters = append(waiters[:i], waiters[i+1:]...)
 			if i == 0 && len(waiters) > 0 {
 				if _, locked := s.locks[key]; !locked {
@@ -506,6 +528,12 @@ func (s *memoryAffinityStore) removeWaiter(key string, waiter chan struct{}) {
 			}
 			break
 		}
+	}
+	if !found {
+		if _, locked := s.locks[key]; !locked {
+			s.wakeWaiterLocked(key)
+		}
+		return
 	}
 	if len(waiters) == 0 {
 		delete(s.waiters, key)
@@ -692,7 +720,7 @@ func (s *memoryAffinityStore) Acquire(ctx context.Context, key string, ttl, wait
 				s.mu.Unlock()
 			}, nil
 		}
-		waiter := make(chan struct{})
+		waiter := make(chan struct{}, 1)
 		s.waiters[key] = append(s.waiters[key], waiter)
 		s.mu.Unlock()
 		remaining := time.Until(deadline)

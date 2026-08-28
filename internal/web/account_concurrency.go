@@ -249,7 +249,7 @@ func (s *Server) chatWithAccount(ctx context.Context, accountID string, account 
 	result, err := callWithTransientRetry(ctx, accountID, nil, func() (chathub.Result, error) {
 		return client.Chat(ctx, account, request)
 	})
-	s.markAccountResult(accountID, err)
+	s.recordAccountChatResult(accountID, result, err)
 	return result, err
 }
 
@@ -271,7 +271,7 @@ func (s *Server) chatWithAccountEvents(ctx context.Context, accountID string, ac
 	result, err := callWithTransientRetry(ctx, accountID, observed.Load, func() (chathub.Result, error) {
 		return client.ChatWithEvents(ctx, account, request, wrappedEvent)
 	})
-	s.markAccountResult(accountID, err)
+	s.recordAccountChatResult(accountID, result, err)
 	return result, err
 }
 
@@ -301,6 +301,6 @@ func (s *Server) chatWithAccountReasoning(ctx context.Context, accountID string,
 	result, err := callWithTransientRetry(ctx, accountID, observed.Load, func() (chathub.Result, error) {
 		return client.ChatWithReasoning(ctx, account, request, wrappedDelta, wrappedReasoning)
 	})
-	s.markAccountResult(accountID, err)
+	s.recordAccountChatResult(accountID, result, err)
 	return result, err
 }

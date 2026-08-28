@@ -5,7 +5,7 @@ import sys, json, time, statistics, os, requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE = "http://127.0.0.1:4141"
-ADMIN_PW = "LNBuuAsbrS47XUM"
+ADMIN_PW = os.environ.get("M365_TEST_ADMIN_PASSWORD", "")
 API_KEY = os.environ.get("M365_TEST_API_KEY", "")
 
 all_results = []

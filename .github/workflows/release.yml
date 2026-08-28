@@ -35,32 +35,18 @@ jobs:
           - goos: linux
             goarch: arm
           - goos: linux
-            goarch: mipsle
-          - goos: linux
-            goarch: mips64le
-          - goos: linux
-            goarch: riscv64
-          - goos: linux
-            goarch: ppc64le
-          - goos: linux
-            goarch: ppc64
-          - goos: linux
             goarch: s390x
-          - goos: linux
-            goarch: loong64
-          - goos: linux
-            goarch: mips
-          - goos: linux
-            goarch: mips64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
           - goos: windows
             goarch: amd64
           - goos: windows
             goarch: arm64
           - goos: windows
             goarch: "386"
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
+          - goos: android
             goarch: arm64
           - goos: freebsd
             goarch: amd64
@@ -68,14 +54,6 @@ jobs:
             goarch: arm64
           - goos: freebsd
             goarch: riscv64
-          - goos: netbsd
-            goarch: amd64
-          - goos: netbsd
-            goarch: arm64
-          - goos: openbsd
-            goarch: amd64
-          - goos: openbsd
-            goarch: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -104,7 +82,7 @@ jobs:
           go build -trimpath -ldflags="${ldflags}" -o "${output}" ./cmd/server
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ env.BINARY_NAME }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
@@ -114,6 +92,8 @@ jobs:
     name: Publish Release
     needs: package
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -121,7 +101,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: ${{ env.BINARY_NAME }}-*
           path: dist
@@ -149,3 +129,50 @@ jobs:
           name: ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
           files: dist/*
+
+  update-readme:
+    name: Update README download links
+    needs: release
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update README version badge and download table
+        env:
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "Updating README for ${TAG} (version ${TAG#v})"
+
+          if grep -q "DOWNLOAD_TABLE_START" README.md; then
+            python3 << 'PYEOF'
+          import os, re
+          tag = os.environ.get("TAG", "").strip()
+          with open("README.md", "r", encoding="utf-8") as f:
+              content = f.read()
+          content = re.sub(r"/releases/download/v[0-9]+\.[0-9]+\.[0-9]+/", f"/releases/download/{tag}/", content)
+          content = re.sub(r"(releases/tag/)v[0-9]+\.[0-9]+\.[0-9]+", rf"\g<1>{tag}", content)
+          with open("README.md", "w", encoding="utf-8") as f:
+              f.write(content)
+          print(f"Patched README download URLs to {tag}")
+          PYEOF
+          else
+            echo "No DOWNLOAD_TABLE markers found, skipping table regeneration"
+          fi
+
+          if git diff --quiet README.md; then
+            echo "README already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update README download links for ${TAG}"
+          git push origin HEAD:main

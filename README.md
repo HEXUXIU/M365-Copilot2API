@@ -85,6 +85,126 @@ M365 Copilot2API 是一个用 Go 编写的自托管网关，把微软 365 Copilo
 
 ## 快速开始
 
+### 一行命令启动
+
+从 GitHub Releases 下载对应平台的二进制并直接运行（自动拉取最新版）。默认监听 `127.0.0.1:4141`，默认管理员密码 `admin123`（首次登录强制修改）。
+
+**Linux**
+
+```bash
+# x86_64
+curl -fL -o m365-copilot2api https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-linux-amd64 && chmod +x m365-copilot2api && ./m365-copilot2api
+```
+
+```bash
+# arm64
+curl -fL -o m365-copilot2api https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-linux-arm64 && chmod +x m365-copilot2api && ./m365-copilot2api
+```
+
+```bash
+# x86_32
+curl -fL -o m365-copilot2api https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-linux-386 && chmod +x m365-copilot2api && ./m365-copilot2api
+```
+
+```bash
+# arm32
+curl -fL -o m365-copilot2api https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-linux-arm && chmod +x m365-copilot2api && ./m365-copilot2api
+```
+
+**macOS**
+
+```bash
+# Apple Silicon (M 系列)
+curl -fL -o m365-copilot2api https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-darwin-arm64 && chmod +x m365-copilot2api && ./m365-copilot2api
+```
+
+```bash
+# Intel
+curl -fL -o m365-copilot2api https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-darwin-amd64 && chmod +x m365-copilot2api && ./m365-copilot2api
+```
+
+**Windows** (PowerShell)
+
+```powershell
+# x86_64
+irm -OutFile m365-copilot2api.exe https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-windows-amd64.exe; .\m365-copilot2api.exe
+```
+
+```powershell
+# arm64
+irm -OutFile m365-copilot2api.exe https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-windows-arm64.exe; .\m365-copilot2api.exe
+```
+
+```powershell
+# x86_32
+irm -OutFile m365-copilot2api.exe https://github.com/HEXUXIU/M365-Copilot2API/releases/latest/download/m365-copilot2api-windows-386.exe; .\m365-copilot2api.exe
+```
+
+> 首次运行 macOS 可能提示「无法验证开发者」：系统设置 → 隐私与安全性 → 仍要打开，或执行 `xattr -d com.apple.quarantine m365-copilot2api`。
+>
+> Windows SmartScreen 拦截时点「更多信息 → 仍要运行」。
+
+### 后台运行与开机自启（可选）
+
+需要持久化部署时再配置：
+
+<details>
+<summary><b>Linux — systemd</b></summary>
+
+```bash
+sudo tee /etc/systemd/system/m365-copilot2api.service <<'EOF'
+[Unit]
+Description=M365 Copilot2API Gateway
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/m365-copilot2api
+Environment=M365_LISTEN=0.0.0.0:4141
+Environment=M365_ADMIN_PASSWORD=你的密码
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+sudo systemctl daemon-reload && sudo systemctl enable --now m365-copilot2api
+journalctl -u m365-copilot2api -f   # 看日志
+EOF
+```
+
+</details>
+
+<details>
+<summary><b>Windows — 开机自启（任务计划）</b></summary>
+
+```powershell
+$pw = "你的密码"
+$action = New-ScheduledTaskAction -Execute "$PWD\m365-copilot2api.exe"
+Register-ScheduledTask M365Copilot2API -Action $action -Trigger (New-ScheduledTaskTrigger -AtLogOn) -RunLevel Highest -Settings (New-ScheduledTaskSettingsSet -RestartCount 3 -ExecutionTimeLimit 0)
+Start-ScheduledTask M365Copilot2API
+$env:M365_ADMIN_PASSWORD = $pw; $env:M365_LISTEN = "0.0.0.0:4141"  # 或写入系统环境变量后重启任务
+```
+
+</details>
+
+<details>
+<summary><b>macOS — launchd</b></summary>
+
+```bash
+cat > ~/Library/LaunchAgents/com.m365copilot2api.plist <<'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.m365copilot2api</string>
+  <key>ProgramArguments</key><array><string>/usr/local/bin/m365-copilot2api</string></array>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+</dict></plist>
+EOF
+launchctl load ~/Library/LaunchAgents/com.m365copilot2api.plist
+```
+
+</details>
+
 ### 环境要求
 
 - Go 1.23+（`go.mod` 声明的最低版本）
@@ -96,20 +216,11 @@ M365 Copilot2API 是一个用 Go 编写的自托管网关，把微软 365 Copilo
 
 | 平台 | 架构 | 文件 |
 |------|------|------|
-| Linux | x86_64 / arm64 / i386 | `m365-copilot2api-linux-{amd64,arm64,386}` |
-| Windows | x86_64 / arm64 / i386 | `m365-copilot2api-windows-{amd64,arm64,386}.exe` |
+| Linux | x86_64 / arm64 / i386 / arm32 | `m365-copilot2api-linux-{amd64,arm64,386,arm}` |
+| Windows | x86_64 / arm64 / i386 / arm32 | `m365-copilot2api-windows-{amd64,arm64,386,arm}.exe` |
 | macOS | x86_64 / arm64 | `m365-copilot2api-darwin-{amd64,arm64}` |
 
-```bash
-# Linux / macOS 示例
-chmod +x m365-copilot2api-linux-amd64
-./m365-copilot2api-linux-amd64
-```
-
-```powershell
-# Windows 示例
-.\m365-copilot2api-windows-amd64.exe
-```
+> 其余平台（FreeBSD、NetBSD、OpenBSD、Solaris/Illumos、AIX、Android、DragonFly BSD，及 MIPS/PPC/RISCV/S390x/LoongArch 等架构）同样提供预编译产物，见 [Releases](https://github.com/HEXUXIU/M365-Copilot2API/releases) 页面。
 
 ### 源码编译
 
@@ -422,6 +533,25 @@ curl http://127.0.0.1:4141/v1/messages \
 | `/api/usage` · `/usage/logs` | 用量统计仪表盘与明细 |
 | `/api/chat` · `/chat/stream` | 控制台内即时对话 |
 | `/api/health` · `/api/version` | 健康检查 / 版本 |
+
+## 错误码与故障转移
+
+所有 `/v1/*` 与 `/api/chat*` 失败均返回 OpenAI 兼容的 JSON 错误体 `{"error":{"message","type","code","param":null}}`（`code` 与 `type` 同值），并附带 `X-M365-*` 诊断头。`type/code` 取值即 OpenAI 标准错误类型，便于 `openai` / `anthropic` SDK 直接识别：
+
+| `error.type` / `error.code` | HTTP | 何时出现 | 客户端应如何处理 |
+|---|---|---|---|
+| `rate_limit_error` | 429 | 上游限流：HTTP 429、`result.value=Throttled`、`meteringInformation.hasAccess=false`、文本限流提示 | 遵守 `Retry-After` 退避；客户端重试时网关会自动切到下一个健康账号 |
+| `image_limit_error` | 429 | 图片配额当日耗尽 | 次日 UTC 0 点后重试；纯文本请求不受影响 |
+| `upstream_content_blocked` | 503 | 内容策略拦截 | 修改提示词或换号重试 |
+| `upstream_error` | 502 | 上游空回复或未知失败 | 换号重试或稍后重试 |
+
+额外响应头：`X-M365-Proxy-Error`（`QUOTA_429 / OVERLOAD_503 / FORBIDDEN_403 / AUTH_EXPIRED_401 / UPSTREAM_STRUCTURED / IMAGE_LIMIT` 等）、`X-M365-RateLimit-Remaining`、`Retry-After` / `X-M365-Retry-After` / `X-M365-RateLimit-Reset`、`X-M365-Global-Circuit`。多账号部署下，`429/401` 在未指定 `AccountID` 且未携带固定会话时会自动故障转移到下一个健康账号（OpenAI / Anthropic / Responses 均生效）。
+
+示例（429）：
+
+```json
+{"error":{"message":"upstream is rate limiting; try again shortly","type":"rate_limit_error","code":"rate_limit_error","param":null}}
+```
 
 ## 测试
 

@@ -34,3 +34,11 @@ func TestConnPoolConfigurationBoundsInvalidValues(t *testing.T) {
 		t.Fatalf("stats ttl_seconds = %v, want %d", got, int(defaultPoolConnTTL.Seconds()))
 	}
 }
+
+func TestNewClientInitializesConnectionPool(t *testing.T) {
+	c := NewClient()
+	if c.Pool == nil {
+		t.Fatal("NewClient connection pool is nil")
+	}
+	c.Pool.Close()
+}

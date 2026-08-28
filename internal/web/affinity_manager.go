@@ -264,8 +264,20 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 		}
 		return nil
 	}
+	switchStoreAfterError := func(storeErr error) affinityStore {
+		previous := state.store
+		next := m.markStoreError(storeErr)
+		state.store = next
+		if next != previous {
+			state.binding = affinityBinding{}
+			state.hasBinding = false
+			state.prefixCount = 0
+			state.incremental = false
+		}
+		return next
+	}
 	if err := resolve(state.store); err != nil {
-		state.store = m.markStoreError(err)
+		state.store = switchStoreAfterError(err)
 		if err := resolve(state.store); err != nil {
 			return nil, err
 		}
@@ -280,7 +292,7 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 		if err != nil && state.store == m.primary &&
 			!errors.Is(err, errAffinityLockTimeout) && !errors.Is(err, errAffinityOwnerGeneration) &&
 			!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-			state.store = m.markStoreError(err)
+			state.store = switchStoreAfterError(err)
 			release, err = state.store.Acquire(ctx, state.key.TenantHash+":"+lockID, m.config.LockTTL, m.config.LockWait)
 		}
 		if err != nil {
@@ -323,7 +335,7 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 		health, found, err := state.store.GetAccountHealth(ctx, accountID)
 		if err != nil {
 			if state.store == m.primary {
-				state.store = m.markStoreError(err)
+				state.store = switchStoreAfterError(err)
 			}
 			healthCache[accountID] = true
 			return true
@@ -346,7 +358,7 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 			state.proposedAccount = accountID
 		} else {
 			if err != nil && state.store == m.primary {
-				state.store = m.markStoreError(err)
+				state.store = switchStoreAfterError(err)
 			}
 			if selected, ok := selectRendezvousAccount(state.key.Hash, accounts, sharedAvailable); ok {
 				state.proposedAccount = selected.ID

@@ -139,7 +139,7 @@ func (c *Client) Connect(ctx context.Context) error {
 func (c *Client) readSSE(body io.ReadCloser) {
 	defer body.Close()
 	defer c.setConnected(false)
-	
+
 	scanner := bufio.NewScanner(body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -248,7 +248,7 @@ func (c *Client) sendRequest(ctx context.Context, method string, params any) (in
 	c.mu.Unlock()
 
 	messageURL := fmt.Sprintf("%s/message?sessionId=%s", strings.TrimRight(strings.Split(c.serverURL, "/sse")[0], "/"), c.sessionID)
-	
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, messageURL, strings.NewReader(string(body)))
 	if err != nil {
 		c.mu.Lock()
@@ -286,7 +286,7 @@ func (c *Client) sendNotification(method string, params any) error {
 	body, _ := json.Marshal(req)
 
 	messageURL := fmt.Sprintf("%s/message?sessionId=%s", strings.TrimRight(strings.Split(c.serverURL, "/sse")[0], "/"), c.sessionID)
-	
+
 	httpReq, err := http.NewRequest(http.MethodPost, messageURL, strings.NewReader(string(body)))
 	if err != nil {
 		return err

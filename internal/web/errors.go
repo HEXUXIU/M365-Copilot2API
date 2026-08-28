@@ -170,6 +170,7 @@ func ClassifyErrorCode(code string) ErrorCategory {
 		return CategoryUnknown
 	}
 }
+
 // writeUpstreamError renders a failed upstream call as an HTTP response,
 // surfacing the Retry-After hint for rate limits so clients can back off.
 func writeUpstreamError(w http.ResponseWriter, err error) {

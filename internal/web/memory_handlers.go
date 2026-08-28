@@ -22,7 +22,7 @@ var flagsCache = &struct {
 }{m: map[string]flagsCacheEntry{}}
 
 type flagsCacheEntry struct {
-	body     []byte
+	body      []byte
 	fetchedAt time.Time
 }
 

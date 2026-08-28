@@ -64,23 +64,8 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
 			s.accountPool.MarkImageLimited(acc.ID)
 		}
-		s.accountPool.MarkFailure(acc.ID, err, s.getRateLimitCooldown())
 		writeUpstreamError(w, err)
 		return
-	}
-	s.accountPool.MarkSuccess(acc.ID)
-	if res.Throttling != nil && s.accountPool != nil {
-		s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
-		s.logThrottlingWarning(acc.ID, res.Throttling)
-	}
-	if res.MeteringInformation != nil && s.accountPool != nil {
-		if miRaw, err := json.Marshal(res.MeteringInformation); err == nil {
-			mErr, _ := ParseMetering(acc.ID, json.RawMessage(miRaw))
-			applyMeteringCooldown(s.accountPool, acc.ID, mErr)
-		}
-		if remaining := remainingAllowances(res.Throttling); len(remaining) > 0 {
-			log.Printf("[metering] account=%s remainingAllowance=%v", acc.ID, remaining)
-		}
 	}
 	if body.SessionKey != "" {
 		s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: text})
@@ -193,10 +178,12 @@ func ParseMetering(accountID string, items json.RawMessage) (meterError string, 
 		return "", hasAccess
 	}
 	for _, mi := range parsed {
-		if mi.MeterError != "" {
-			meterError = mi.MeterError
+		if !mi.HasAccess {
+			hasAccess = false
+			if meterError == "" {
+				meterError = mi.MeterError
+			}
 		}
-		hasAccess = mi.HasAccess
 	}
 	if meterError != "" {
 		log.Printf("[metering] account=%s meterError=%q hasAccess=%v", accountID, meterError, hasAccess)

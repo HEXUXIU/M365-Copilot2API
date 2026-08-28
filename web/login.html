@@ -45,16 +45,18 @@ button.loading::after{content:"";position:absolute;inset:0;margin:auto;width:20p
     <h1>管理员登录</h1>
     <p>请输入管理员密码以访问仪表盘</p>
     <div class="warning">默认密码：<code>admin123</code><br>首次登录后请立即修改管理员密码</div>
-    <form id="loginForm">
-      <div class="field">
-        <label for="password">管理员密码</label>
-        <div class="password-wrap">
-          <input id="password" type="password" autocomplete="current-password" required autofocus>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见性"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+      <form id="loginForm">
+        <div class="field">
+          <label for="password">管理员密码</label>
+          <div class="password-wrap">
+            <input id="password" type="password" autocomplete="current-password" required autofocus>
+            <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见性"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          </div>
         </div>
-      </div>
-      <button id="loginBtn">登录</button>
-    </form>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--muted);cursor:pointer"><input id="remember" type="checkbox" style="width:16px;height:16px">记住密码（仅本机保存）</label>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:13px;color:var(--muted);cursor:pointer"><input id="keepLogin" type="checkbox" style="width:16px;height:16px" checked>保持登录 30 天</label>
+        <button id="loginBtn">登录</button>
+      </form>
     <div class="error" id="loginError"></div>
   </section>
   <section id="change" hidden>
@@ -94,9 +96,12 @@ function togglePassword(btn){const ico=btn.querySelector('[data-lucide]');const 
 function setLoading(btn,loading){if(loading){btn.disabled=true;btn.classList.add('loading')}else{btn.disabled=false;btn.classList.remove('loading')}}
 async function request(url,body){const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const raw=await r.text();let d={};try{d=JSON.parse(raw)}catch{}if(!r.ok){const e=new Error(d?.error?.message||raw||'Request failed');e.status=r.status;throw e}return d}
 function requireChange(current=''){$('login').hidden=true;$('change').hidden=false;if(current){$('current').value=current;}$('next').focus()}
-$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';const password=$('password').value;if(!password)return;setLoading($('loginBtn'),true);try{const d=await request('/api/admin/login',{password});if(d.must_change_password)requireChange(password);else location.replace('/')}catch(x){$('loginError').textContent=x.status===429?'登录失败次数过多，请稍后重试。':x.message}finally{setLoading($('loginBtn'),false)}});
+  $('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';const password=$('password').value;if(!password)return;setLoading($('loginBtn'),true);try{const d=await request('/api/admin/login',{password, remember:$('keepLogin').checked});if(d.must_change_password)requireChange(password);else location.replace('/')}catch(x){$('loginError').textContent=x.status===429?'登录失败次数过多，请稍后重试。':x.message}finally{setLoading($('loginBtn'),false)}});
 $('changeForm').addEventListener('submit',async e=>{e.preventDefault();$('changeError').textContent='';if($('next').value!==$('confirm').value){$('changeError').textContent='两次输入的新密码不一致';return}if($('next').value.length<6){$('changeError').textContent='新密码长度至少为 6 个字符';return}setLoading($('changeBtn'),true);try{await request('/api/admin/change-password',{current_password:$('current').value,new_password:$('next').value});alert('密码修改成功，所有之前的会话已失效，请用新密码重新登录。');location.replace('/')}catch(x){$('changeError').textContent=x.message}finally{setLoading($('changeBtn'),false)}});
-fetch('/api/admin/session',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{if(d.authenticated&&d.must_change_password){$('login').hidden=true;$('change').hidden=false;$('next').focus()}else if(d.authenticated)location.replace('/')}).catch(()=>{});
+  try{const saved=localStorage.getItem('m365_remember'); if(saved){ $('password').value=atob(saved); $('remember').checked=true; } const keep=localStorage.getItem('m365_keep'); if(keep!==null) $('keepLogin').checked=keep==='1'; }catch(e){}
+  $('loginForm').addEventListener('submit',()=>{ try{ if($('remember').checked) localStorage.setItem('m365_remember', btoa($('password').value)); else localStorage.removeItem('m365_remember'); localStorage.setItem('m365_keep', $('keepLogin').checked?'1':'0'); }catch(e){} }, true);
+  fetch('/api/admin/session',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{if(d.authenticated&&d.must_change_password){$('login').hidden=true;$('change').hidden=false;$('next').focus()}else if(d.authenticated)location.replace('/')}).catch(()=>{});
+
 </script>
 </body>
 </html>

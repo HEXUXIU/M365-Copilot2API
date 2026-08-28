@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -21,10 +22,13 @@ const (
 )
 
 type redisAffinityStore struct {
-	client *redis.Client
-	ttl    time.Duration
-	max    int64
+	client      *redis.Client
+	ttl         time.Duration
+	max         int64
+	evictWrites atomic.Uint64
 }
+
+const redisEvictionBatch = uint64(32)
 
 func newRedisAffinityStore(rawURL string, poolSize int, ttl time.Duration, max int) (*redisAffinityStore, error) {
 	options, err := redis.ParseURL(rawURL)
@@ -256,7 +260,7 @@ func (s *redisAffinityStore) PutBinding(ctx context.Context, binding affinityBin
 	if err != nil {
 		return err
 	}
-	return s.evict(ctx)
+	return s.maybeEvict(ctx)
 }
 
 var redisBindingCASScript = redis.NewScript(`
@@ -341,11 +345,23 @@ func (s *redisAffinityStore) CompareAndSwapBinding(ctx context.Context, id strin
 		return false, err
 	}
 	if value == 1 {
-		if err := s.evict(ctx); err != nil {
+		if err := s.maybeEvict(ctx); err != nil {
 			return false, err
 		}
 	}
 	return value == 1, nil
+}
+
+func (s *redisAffinityStore) maybeEvict(ctx context.Context) error {
+	step := redisEvictionBatch
+	if s.max > 0 && uint64(s.max) < step {
+		step = uint64(s.max)
+	}
+	count := s.evictWrites.Add(1)
+	if count != 1 && count%step != 0 {
+		return nil
+	}
+	return s.evict(ctx)
 }
 
 func (s *redisAffinityStore) evict(ctx context.Context) error {

@@ -1210,12 +1210,20 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 // healthy, skipping the given id first, and validates its token. Used by the
 // failover path after a rate-limited or auth-failed attempt.
 func (s *Server) nextHealthyAccount(avoidID string) (auth.AccountToken, error) {
+	excluded := make(map[string]struct{}, 1)
+	if avoidID != "" {
+		excluded[avoidID] = struct{}{}
+	}
+	return s.nextHealthyAccountExcluding(excluded)
+}
+
+func (s *Server) nextHealthyAccountExcluding(excluded map[string]struct{}) (auth.AccountToken, error) {
 	for i := 0; i < s.accountProbeLimit(); i++ {
 		acc, ok := s.tokens.Next()
 		if !ok {
 			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
 		}
-		if avoidID != "" && acc.ID == avoidID {
+		if _, skip := excluded[acc.ID]; skip {
 			continue
 		}
 		if !s.accountAvailable(acc.ID) {
@@ -1224,6 +1232,19 @@ func (s *Server) nextHealthyAccount(avoidID string) (auth.AccountToken, error) {
 		return s.tokens.EnsureValid(acc.ID)
 	}
 	return auth.AccountToken{}, fmt.Errorf("no healthy account available for failover")
+}
+
+const (
+	maxToolRouterAccountAttempts = 3
+	maxToolRouterAttemptTimeout  = 18 * time.Second
+)
+
+func toolRouterAttemptTimeout(chatTimeoutSeconds int) time.Duration {
+	timeout := time.Duration(chatTimeoutSeconds) * time.Second
+	if timeout <= 0 || timeout > maxToolRouterAttemptTimeout {
+		return maxToolRouterAttemptTimeout
+	}
+	return timeout
 }
 
 type chatBody struct {
@@ -2042,7 +2063,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	routerConversation := newRouterConversation(reuseRouterConversation, &body)
 	fullRouterAttachments := append([]chathub.Attachment(nil), body.Attachments...)
 	routerInput, routerAttachments := routerPlanningInput(answerPrompt, body.Attachments, explicitAttachments, body.Messages, affinityState, reuseRouterConversation)
-	runRouter := func(text string, attachments []chathub.Attachment, coldText string, coldAttachments []chathub.Attachment) (chathub.Result, error) {
+	requiredDecisionErr := errors.New("required tool decision was invalid")
+	runRouter := func(text string, attachments []chathub.Attachment, coldText string, coldAttachments []chathub.Attachment, requireValidCall bool) (chathub.Result, error) {
 		request := func(prompt string, requestAttachments []chathub.Attachment) chathub.Request {
 			req := chathub.Request{
 				Text: prompt, Tone: tone, Attachments: requestAttachments,
@@ -2051,13 +2073,33 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			routerConversation.apply(&req)
 			return req
 		}
-		res, routeErr := s.chatWithAccount(ctx, acc.ID, account, request(text, attachments))
+		validateRequiredDecision := func(result chathub.Result, routeErr error) error {
+			if routeErr != nil || !requireValidCall {
+				return routeErr
+			}
+			calls, parsed := parseModelToolDecision(result.Text, toolMaps, body.ToolChoice)
+			calls = filterCompletedCalls(calls, ledger)
+			calls, _ = validateCalls("router-required", calls)
+			if !parsed || len(calls) == 0 {
+				return requiredDecisionErr
+			}
+			return nil
+		}
+		callRouter := func(selected auth.AccountToken, selectedAccount chathub.Account, prompt string, requestAttachments []chathub.Attachment) (chathub.Result, error) {
+			routerCtx, routerCancel := context.WithTimeout(r.Context(), toolRouterAttemptTimeout(s.settings.get().ChatTimeoutSeconds))
+			defer routerCancel()
+			return s.chatWithAccount(routerCtx, selected.ID, selectedAccount, request(prompt, requestAttachments))
+		}
+		res, routeErr := callRouter(acc, account, text, attachments)
+		routeErr = validateRequiredDecision(res, routeErr)
 		coldReplay := false
-		for attempt := 0; routeErr != nil && attempt < 3 && isRetryableAccountFailure(routeErr); attempt++ {
-			next, nextErr := s.nextHealthyAccount(acc.ID)
+		attempted := map[string]struct{}{acc.ID: {}}
+		for attempt := 1; routeErr != nil && attempt < maxToolRouterAccountAttempts && (isRetryableAccountFailure(routeErr) || errors.Is(routeErr, requiredDecisionErr)); attempt++ {
+			next, nextErr := s.nextHealthyAccountExcluding(attempted)
 			if nextErr != nil {
 				break
 			}
+			attempted[next.ID] = struct{}{}
 			attemptText, attemptAttachments := text, attachments
 			if routerConversation.active() {
 				routerConversation.reset()
@@ -2067,9 +2109,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				attemptText, attemptAttachments = coldText, coldAttachments
 			}
 			nextAccount := chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
-			ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
-			res2, err2 := s.chatWithAccount(ctx2, next.ID, nextAccount, request(attemptText, attemptAttachments))
-			cancel2()
+			log.Printf("[tool-router] id=%s account_failover attempt=%d/%d from=%s to=%s reason=%v", requestID, attempt+1, maxToolRouterAccountAttempts, acc.ID, next.ID, routeErr)
+			res2, err2 := callRouter(next, nextAccount, attemptText, attemptAttachments)
+			err2 = validateRequiredDecision(res2, err2)
 			if err2 == nil {
 				affinityState.markMigration("router_account_failover")
 				affinityState.switchAccount(next.ID)
@@ -2078,6 +2120,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				res, routeErr = res2, nil
 				break
 			}
+			res = res2
 			routeErr = err2
 		}
 		if routeErr == nil {
@@ -2125,7 +2168,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
-		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments)
+		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments, toolChoiceRequiresCall(body.ToolChoice))
 		log.Printf("[req-trace] id=%s stage=router_return elapsed_ms=%d err=%t", requestID, time.Since(startedAt).Milliseconds(), routeErr != nil)
 		if routeErr != nil {
 			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "tool router: "+routeErr.Error())
@@ -2140,7 +2183,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
 			}
 			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments)
+			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -2521,7 +2564,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if planningMode == "router" && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
 		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments)
+		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments, toolChoiceRequiresCall(body.ToolChoice))
 		if routeErr != nil {
 			msg := upstreamError(routeErr)
 			if IsRateLimited(routeErr) {
@@ -2538,7 +2581,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
 			}
 			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments)
+			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				calls = filterCompletedCalls(calls, ledger)
@@ -2563,40 +2606,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			routeRes.Reasoning = ""
 			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
-			return
-		}
-		if toolChoiceRequiresCall(body.ToolChoice) {
-			defs, _ := json.Marshal(toolMaps)
-			retryText := `Select at least one required next tool call from FUNCTION_DEFINITIONS. Validate every argument against its schema. Return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.
-APPLICATION_REQUEST_AND_EVIDENCE:
-` + prompt + "\n" + ledger.RouterContext() + "\nFUNCTION_DEFINITIONS:\n" + string(defs)
-			if reuseRouterConversation && routerConversation.active() {
-				retryText = `The previous routing decision selected no call, but tool_choice requires at least one. Select a declared tool from the function definitions already provided and return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.`
-			}
-			coldRetryText := `Select at least one required next tool call from FUNCTION_DEFINITIONS. Validate every argument against its schema. Return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.
-APPLICATION_REQUEST_AND_EVIDENCE:
-` + prompt + "\n" + ledger.RouterContext() + "\nFUNCTION_DEFINITIONS:\n" + string(defs)
-			retryRes, retryErr := runRouter(retryText, nil, coldRetryText, fullRouterAttachments)
-			if retryErr == nil {
-				calls, parsed = parseModelToolDecision(retryRes.Text, toolMaps, body.ToolChoice)
-				calls = filterCompletedCalls(calls, ledger)
-				calls, _ = validateCalls("router", calls)
-				if parsed && len(calls) > 0 {
-					scope := fmt.Sprintf("%d:%v:required-retry", len(body.Messages), completedCallIDs(ledger))
-					for i := range calls {
-						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
-					}
-					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-					if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-						calls = calls[:1]
-					}
-					retryRes.Reasoning = ""
-					routerUsage := bindRouterCalls(retryRes, calls, retryText)
-					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, retryRes, chatUsage(routerUsage))
-					return
-				}
-			}
-			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "model did not select a required tool after constrained retry")
 			return
 		}
 		if reuseRouterConversation {

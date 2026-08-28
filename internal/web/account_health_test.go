@@ -291,6 +291,25 @@ func TestNextHealthyAccount(t *testing.T) {
 	}
 }
 
+func TestNextHealthyAccountExcludingDoesNotRepeatTriedAccounts(t *testing.T) {
+	store := testAccountFiles(t)
+	s := &Server{tokens: store, accountPool: newAccountHealth()}
+
+	excluded := map[string]struct{}{"u-1": {}, "u-2": {}}
+	acc, err := s.nextHealthyAccountExcluding(excluded)
+	if err != nil {
+		t.Fatalf("nextHealthyAccountExcluding: %v", err)
+	}
+	if acc.ID != "u-3" {
+		t.Fatalf("selected previously tried account %q, want u-3", acc.ID)
+	}
+
+	excluded["u-3"] = struct{}{}
+	if _, err := s.nextHealthyAccountExcluding(excluded); err == nil {
+		t.Fatal("expected failure after every account was tried")
+	}
+}
+
 func TestScheduleAccount(t *testing.T) {
 	store := testAccountFiles(t)
 	s := &Server{tokens: store}

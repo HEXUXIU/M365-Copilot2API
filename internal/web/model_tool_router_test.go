@@ -3,6 +3,7 @@ package web
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestExplicitToolRequestOnlyChecksLatestUserMessage(t *testing.T) {
@@ -65,5 +66,37 @@ func TestToolChoiceRequiresCall(t *testing.T) {
 				t.Fatalf("toolChoiceRequiresCall(%#v)=%v want %v", tt.choice, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestToolRouterAttemptTimeoutStaysBelowDownstreamDeadline(t *testing.T) {
+	if got := toolRouterAttemptTimeout(120); got != 18*time.Second {
+		t.Fatalf("default router timeout=%s want 18s", got)
+	}
+	if got := toolRouterAttemptTimeout(9); got != 9*time.Second {
+		t.Fatalf("configured short router timeout=%s want 9s", got)
+	}
+	if total := time.Duration(maxToolRouterAccountAttempts) * toolRouterAttemptTimeout(120); total >= 60*time.Second {
+		t.Fatalf("router failover budget=%s must stay below downstream 60s deadline", total)
+	}
+}
+
+func TestRequiredToolDecisionRejectsEmptyOrInvalidOutput(t *testing.T) {
+	for _, output := range []string{
+		"I will answer without a tool.",
+		`{"calls":[]}`,
+		`{"calls":[{"name":"missing_tool","arguments":{}}]}`,
+	} {
+		calls, parsed := parseModelToolDecision(output, testTools(), "required")
+		calls, _ = validateDetectedToolCalls(calls, testTools(), "required")
+		if parsed && len(calls) > 0 {
+			t.Fatalf("invalid required decision accepted: %q", output)
+		}
+	}
+
+	calls, parsed := parseModelToolDecision(`{"calls":[{"name":"get_weather","arguments":{"city":"Shanghai"}}]}`, testTools(), "required")
+	calls, _ = validateDetectedToolCalls(calls, testTools(), "required")
+	if !parsed || len(calls) != 1 || calls[0].Name != "get_weather" {
+		t.Fatalf("valid required decision rejected: parsed=%v calls=%+v", parsed, calls)
 	}
 }

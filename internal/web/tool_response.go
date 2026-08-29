@@ -46,7 +46,6 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsag
 			if typ == "" {
 				typ = "function"
 			}
-			isLast := i == len(calls)-1
 			emit(base(map[string]any{"tool_calls": []any{map[string]any{"index": i, "id": tc.ID, "type": typ, "function": map[string]any{"name": tc.Name, "arguments": ""}}}}, nil))
 			args := string(tc.Arguments)
 			for off := 0; off < len(args); off += chunkSize {
@@ -58,17 +57,13 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsag
 					end++
 				}
 				argChunk := args[off:end]
-				isLastArgChunk := off+chunkSize >= len(args)
-				var finish any
-				if isLast && isLastArgChunk {
-					finish = "tool_calls"
-				}
-				emit(base(map[string]any{"tool_calls": []any{map[string]any{"index": i, "function": map[string]any{"arguments": argChunk}}}}, finish))
-			}
-			if len(args) == 0 && isLast {
-				emit(base(map[string]any{}, "tool_calls"))
+				emit(base(map[string]any{"tool_calls": []any{map[string]any{"index": i, "function": map[string]any{"arguments": argChunk}}}}, nil))
 			}
 		}
+		// Keep the terminal marker in its own chunk. Some OpenAI-to-Anthropic
+		// relays finalize a tool block as soon as they see finish_reason and
+		// otherwise drop arguments carried in that same chunk.
+		emit(base(map[string]any{}, "tool_calls"))
 		if sendUsage || stream {
 			usage := usageOverride
 			if usage == nil {

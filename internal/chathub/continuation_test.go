@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestRunWithContinuationAppendsWithoutRepeatingOverlap(t *testing.T) {
@@ -70,13 +71,24 @@ func TestRunWithContinuationRequestsFinalAnswerAfterReasoningOnlyStall(t *testin
 		if calls == 1 {
 			return Result{Reasoning: "analysis in progress", ConversationID: "conv", SessionID: "sess", Incomplete: true, TerminalReason: "response_idle_with_content"}, nil
 		}
-		if strings.Contains(req.Text, "<answer_tail>") || !strings.Contains(req.Text, "Produce the final answer") {
+		if strings.Contains(req.Text, "<answer_tail>") || !strings.Contains(req.Text, "Produce the final answer") || !strings.Contains(req.Text, "original request") {
 			t.Fatalf("reasoning-only continuation prompt=%q", req.Text)
 		}
 		return Result{Text: "final answer", ConversationID: "conv", SessionID: "sess"}, nil
 	})
 	if err != nil || calls != 2 || result.Text != "final answer" || result.Incomplete {
 		t.Fatalf("result=%+v calls=%d err=%v", result, calls, err)
+	}
+}
+
+func TestBoundedContinuationContextKeepsUTF8HeadAndTail(t *testing.T) {
+	original := "HEAD-MARKER\n" + strings.Repeat("中间材料", 40000) + "\nTAIL-INSTRUCTION"
+	got := boundedContinuationContext(original, 4096)
+	if !utf8.ValidString(got) || !strings.Contains(got, "HEAD-MARKER") || !strings.Contains(got, "TAIL-INSTRUCTION") || !strings.Contains(got, "bytes omitted") {
+		t.Fatalf("invalid bounded context: bytes=%d valid=%t head=%t tail=%t", len(got), utf8.ValidString(got), strings.Contains(got, "HEAD-MARKER"), strings.Contains(got, "TAIL-INSTRUCTION"))
+	}
+	if len(got) > 4200 {
+		t.Fatalf("bounded context too large: %d", len(got))
 	}
 }
 

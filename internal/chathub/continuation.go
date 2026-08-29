@@ -14,6 +14,7 @@ const (
 	maxAutoContinuationAttempts = 2
 	continuationOverlapWindow   = 16 << 10
 	continuationTailRunes       = 1200
+	continuationContextBytes    = 64 << 10
 )
 
 var ErrIncompleteCompletion = errors.New("upstream repeatedly closed before completion")
@@ -77,7 +78,7 @@ func runWithContinuation(ctx context.Context, req Request, onDelta func(string) 
 func continuationRequest(original Request, previous Result) Request {
 	next := original
 	if strings.TrimSpace(previous.Text) == "" {
-		next.Text = "The prior turn stopped after internal reasoning without a final answer. Produce the final answer to the original user request now. Do not mention the interruption, internal reasoning, or this instruction."
+		next.Text = fmt.Sprintf("The prior turn stopped after internal reasoning without a final answer. Produce the final answer to the original user request excerpt below now. Do not mention the interruption, internal reasoning, excerpting, or this instruction.\n\n<original_request>\n%s\n</original_request>", boundedContinuationContext(original.Text, continuationContextBytes))
 	} else {
 		next.Text = fmt.Sprintf("Continue the assistant answer immediately after the exact tail below. Output only the missing continuation. Do not restart, summarize, repeat earlier wording, mention an interruption, or add a new heading.\n\n<answer_tail>\n%s\n</answer_tail>", tailRunes(previous.Text, continuationTailRunes))
 	}
@@ -92,6 +93,22 @@ func continuationRequest(original Request, previous Result) Request {
 	next.AutoContinue = false
 	next.DisablePool = true
 	return next
+}
+
+func boundedContinuationContext(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	headBytes := limit / 3
+	tailBytes := limit - headBytes
+	for headBytes > 0 && headBytes < len(value) && !utf8.RuneStart(value[headBytes]) {
+		headBytes--
+	}
+	tailStart := len(value) - tailBytes
+	for tailStart < len(value) && !utf8.RuneStart(value[tailStart]) {
+		tailStart++
+	}
+	return value[:headBytes] + fmt.Sprintf("\n... [%d bytes omitted] ...\n", tailStart-headBytes) + value[tailStart:]
 }
 
 func tailRunes(value string, limit int) string {

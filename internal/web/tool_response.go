@@ -69,7 +69,7 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsag
 			if usage == nil {
 				usage = map[string]any{"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
 			}
-			usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": nil}}, "usage": usage}
+			usageChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{}, "usage": usage}
 			_ = sseSafeRaw(w, flusher, "data: "+mustJSON(usageChunk)+"\n\n")
 		}
 		_ = sseSafeRaw(w, flusher, "data: [DONE]\n\n")

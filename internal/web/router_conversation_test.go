@@ -75,8 +75,30 @@ func TestRouterPlanningInputUsesIncrementalSuffix(t *testing.T) {
 	}
 
 	prompt, attachments = routerPlanningInput("FULL PROMPT", fullAttachments, explicitAttachments, messages, affinity, false)
-	if prompt != "FULL PROMPT" || len(attachments) != 1 || attachments[0].Name != "old.png" {
-		t.Fatalf("one-shot router did not preserve full input: prompt=%q attachments=%+v", prompt, attachments)
+	if !strings.Contains(prompt, "first request") || !strings.Contains(prompt, "fresh tool output") || strings.Contains(prompt, "large stable system prompt") {
+		t.Fatalf("one-shot router did not isolate the active turn: prompt=%q", prompt)
+	}
+	if len(attachments) != 1 || attachments[0].Name != "current.txt" {
+		t.Fatalf("one-shot router retained stale attachments: %+v", attachments)
+	}
+}
+
+func TestRouterPlanningInputDropsShortSystemAndDeveloperHistory(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "system", Content: strings.Repeat("irrelevant policy ", 100)},
+		{Role: "developer", Content: strings.Repeat("old integration notes ", 100)},
+		{Role: "user", Content: "old request"},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "Create probe.txt containing ACTIVE_MARKER."},
+	}
+	full, attachments := flattenPromptMessages(messages, []chathub.Attachment{{Type: "image", Name: "old.png"}})
+	prompt, gotAttachments := routerPlanningInput(full, attachments, nil, messages, nil, false)
+
+	if !strings.Contains(prompt, "ACTIVE_MARKER") || strings.Contains(prompt, "irrelevant policy") || strings.Contains(prompt, "old integration notes") || strings.Contains(prompt, "old request") {
+		t.Fatalf("short router prompt was not isolated to the active turn: %q", prompt)
+	}
+	if len(gotAttachments) != 0 {
+		t.Fatalf("short router prompt retained stale attachments: %+v", gotAttachments)
 	}
 }
 

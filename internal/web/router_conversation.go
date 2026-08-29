@@ -73,12 +73,11 @@ func routerPlanningInput(fullPrompt string, fullAttachments []chathub.Attachment
 			return compactToolResult(prompt, maxRouterPromptBytes), attachments
 		}
 	}
-	if len(fullPrompt) <= maxRouterPromptBytes {
-		return fullPrompt, fullAttachments
-	}
-	// Tool selection needs the active user turn and its tool evidence, not an
-	// unbounded replay of every previous turn. Keep head and tail when the
-	// current turn itself contains a large document.
+	// Tool selection needs the active user turn and its tool evidence, not the
+	// system/developer prompt or an unbounded replay of previous turns. Besides
+	// reducing latency, this prevents unrelated policy text from changing a
+	// straightforward tool decision. Keep head and tail when the active turn
+	// itself contains a large document.
 	prompt, attachments := flattenPromptMessages(activeMessages(messages), explicitAttachments)
 	if strings.TrimSpace(prompt) == "" {
 		return compactToolResult(fullPrompt, maxRouterPromptBytes), fullAttachments

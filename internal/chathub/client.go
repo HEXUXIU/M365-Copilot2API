@@ -230,6 +230,12 @@ func IsRetriablePhase(p Phase) bool {
 	return p == PhasePayloadSent
 }
 
+func canFinalizeNormalClose(err error, sawSuccessfulResult bool, final string, streamedLen int) bool {
+	return sawSuccessfulResult &&
+		(strings.TrimSpace(final) != "" || streamedLen > 0) &&
+		websocket.IsCloseError(err, websocket.CloseNormalClosure)
+}
+
 var chTrace = os.Getenv("M365_TRACE") == "1"
 
 func commonPrefixLen(a, b string) int {
@@ -750,6 +756,79 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	var storageMessageID string
 	references := make(map[string]Reference)
 	var firstServiceResponse bool
+	var sawSuccessfulResult bool
+	finishResult := func(terminal string) (Result, error) {
+		phase = PhaseCompleted
+		ts.LastTokenReceived = time.Now().UTC().Format(time.RFC3339Nano)
+		log.Printf("chathub timing terminal=%s elapsed_ms=%d streamed_text=%d events=%d skipped_snapshots=%d", terminal, time.Since(payloadSentAt).Milliseconds(), streamed.Len(), len(events), skippedSnapshots)
+		if rateLimited(final) {
+			returnConn = false
+			return Result{}, ErrRateLimitNotice
+		}
+		if isUpstreamFallback(final) {
+			returnConn = false
+			return Result{}, ErrEmptyCompletion
+		}
+		if pending := fallbackGuard.Flush(); pending != "" {
+			if err := deliverDelta(pending); err != nil {
+				returnConn = false
+				return Result{}, err
+			}
+		}
+		text, ferr := finalizeText(streamed.String(), final, skippedSnapshots, emitDelta)
+		if ferr != nil {
+			returnConn = false
+			return Result{}, ferr
+		}
+		if text == "" {
+			text = strings.Join(deltas, "")
+		}
+		if imageLimitDetected(text) {
+			returnConn = false
+			return Result{}, ErrImageLimit
+		}
+		if rateLimited(text) {
+			returnConn = false
+			return Result{}, ErrRateLimitNotice
+		}
+		if text == "" {
+			returnConn = false
+			return Result{}, ErrEmptyCompletion
+		}
+		if offense != "" {
+			returnConn = false
+			return Result{}, ErrOffensiveContent
+		}
+		if IsContentPolicyBlock(text) {
+			returnConn = false
+			return Result{}, ErrOffensiveContent
+		}
+		if isUpstreamFallback(text) {
+			returnConn = false
+			return Result{}, ErrEmptyCompletion
+		}
+		return Result{
+			Text:                      text,
+			Reasoning:                 reasoningBuf.String(),
+			ConversationID:            req.ConversationID,
+			SessionID:                 req.SessionID,
+			RequestID:                 requestID,
+			Throttling:                throttling,
+			SuggestedResponses:        suggestions,
+			Offense:                   offense,
+			Scores:                    scores,
+			ConversationTransferToken: conversationTransferToken,
+			MeteringInformation:       meteringInformation,
+			SpokenText:                spokenText,
+			StorageMessageID:          storageMessageID,
+			References:                references,
+			RawResult:                 rawResult,
+			Events:                    events,
+			Normalized:                NormalizeEvents(events),
+			Images:                    imageURLs(events),
+			Timestamps:                ts,
+		}, nil
+	}
 
 	deadline := time.Now().Add(5 * time.Minute)
 	type wsRead struct {
@@ -835,6 +914,9 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		}
 		if read.err != nil {
 			returnConn = false
+			if canFinalizeNormalClose(read.err, sawSuccessfulResult, final, streamed.Len()) {
+				return finishResult("normal_close_after_result")
+			}
 			if errors.Is(read.err, context.Canceled) {
 				return Result{}, &DialError{Status: 0, Kind: "CLIENT_CANCELED", cause: fmt.Errorf("ws read before completion: %w", read.err)}
 			}
@@ -1134,6 +1216,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 								return Result{}, ErrOffensiveContent
 							}
 						}
+						sawSuccessfulResult = true
 					}
 				}
 				// completion frame often follows; keep reading a bit but we already have content
@@ -1157,81 +1240,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 						return Result{}, fmt.Errorf("chathub completion error: %v", errObj)
 					}
 				}
-				phase = PhaseCompleted
-				ts.LastTokenReceived = time.Now().UTC().Format(time.RFC3339Nano)
-				log.Printf("chathub timing completion_frame_ms=%d streamed_text=%d events=%d skipped_snapshots=%d", time.Since(payloadSentAt).Milliseconds(), streamed.Len(), len(events), skippedSnapshots)
-				// Guard against streaming a rate-limit notice out as content
-				// before finalizeText delivers a missing tail. The type-2
-				// handler already rejects notice finals, so this only fires
-				// on frame-order anomalies.
-				if rateLimited(final) {
-					returnConn = false
-					return Result{}, ErrRateLimitNotice
-				}
-				if isUpstreamFallback(final) {
-					returnConn = false
-					return Result{}, ErrEmptyCompletion
-				}
-				if pending := fallbackGuard.Flush(); pending != "" {
-					if err := deliverDelta(pending); err != nil {
-						returnConn = false
-						return Result{}, err
-					}
-				}
-				text, ferr := finalizeText(streamed.String(), final, skippedSnapshots, emitDelta)
-				if ferr != nil {
-					returnConn = false
-					return Result{}, ferr
-				}
-				if text == "" {
-					text = strings.Join(deltas, "")
-				}
-				if imageLimitDetected(text) {
-					returnConn = false
-					return Result{}, ErrImageLimit
-				}
-				if rateLimited(text) {
-					returnConn = false
-					return Result{}, ErrRateLimitNotice
-				}
-				if text == "" {
-					returnConn = false
-					return Result{}, ErrEmptyCompletion
-				}
-				if offense != "" {
-					returnConn = false
-					return Result{}, ErrOffensiveContent
-				}
-				if IsContentPolicyBlock(text) {
-					returnConn = false
-					return Result{}, ErrOffensiveContent
-				}
-				if isUpstreamFallback(text) {
-					returnConn = false
-					return Result{}, ErrEmptyCompletion
-				}
-				result := Result{
-					Text:                      text,
-					Reasoning:                 reasoningBuf.String(),
-					ConversationID:            req.ConversationID,
-					SessionID:                 req.SessionID,
-					RequestID:                 requestID,
-					Throttling:                throttling,
-					SuggestedResponses:        suggestions,
-					Offense:                   offense,
-					Scores:                    scores,
-					ConversationTransferToken: conversationTransferToken,
-					MeteringInformation:       meteringInformation,
-					SpokenText:                spokenText,
-					StorageMessageID:          storageMessageID,
-					References:                references,
-					RawResult:                 rawResult,
-					Events:                    events,
-					Normalized:                NormalizeEvents(events),
-					Images:                    imageURLs(events),
-					Timestamps:                ts,
-				}
-				return result, nil
+				return finishResult("completion_frame")
 			}
 		}
 	}

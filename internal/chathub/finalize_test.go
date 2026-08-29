@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 // collectEmit returns an emit func appending every delta to out.
@@ -107,5 +109,32 @@ func TestFinalizeTextPropagatesEmitError(t *testing.T) {
 	_, err := finalizeText("prefix ", "prefix and tail", 0, func(string) error { return wantErr })
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("got err %v, want %v", err, wantErr)
+	}
+}
+
+func TestCanFinalizeNormalClose(t *testing.T) {
+	normalClose := &websocket.CloseError{Code: websocket.CloseNormalClosure, Text: "normal"}
+	abnormalClose := &websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}
+	tests := []struct {
+		name                string
+		err                 error
+		sawSuccessfulResult bool
+		final               string
+		streamedLen         int
+		want                bool
+	}{
+		{name: "successful result with final text", err: normalClose, sawSuccessfulResult: true, final: "done", want: true},
+		{name: "successful result with streamed text", err: normalClose, sawSuccessfulResult: true, streamedLen: 12, want: true},
+		{name: "missing result frame", err: normalClose, final: "done", want: false},
+		{name: "empty result", err: normalClose, sawSuccessfulResult: true, want: false},
+		{name: "abnormal close", err: abnormalClose, sawSuccessfulResult: true, final: "done", want: false},
+		{name: "network error", err: errors.New("i/o timeout"), sawSuccessfulResult: true, final: "done", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := canFinalizeNormalClose(tc.err, tc.sawSuccessfulResult, tc.final, tc.streamedLen); got != tc.want {
+				t.Fatalf("canFinalizeNormalClose()=%v, want %v", got, tc.want)
+			}
+		})
 	}
 }

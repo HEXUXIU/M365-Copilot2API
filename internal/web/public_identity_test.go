@@ -189,6 +189,107 @@ func TestSanitizePublicReasoningTextDropsStatusPlaceholders(t *testing.T) {
 	}
 }
 
+func TestSanitizePublicReasoningTextDropsAnswerMetaNarration(t *testing.T) {
+	for _, input := range []string{
+		"Analyzing steps for answer...",
+		"Analyzing judgment process",
+		"I will break down the process before answering.",
+		"I'm considering how to approach answering this classic puzzle.",
+		"The focus will be on providing a clear and structured response.",
+		"without revealing hidden or private thought processes",
+		"Let's explore how to approach this.",
+	} {
+		if got := sanitizePublicReasoningText(input); got != "" {
+			t.Fatalf("answer meta narration was published: input=%q got=%q", input, got)
+		}
+	}
+
+	block := "**Analyzing judgment process**\nI’m considering how to approach answering a classic puzzle without relying on web sources.\nThe focus will be on providing concise logic and clear reasoning, without revealing any hidden or private thought processes."
+	if got := sanitizePublicReasoningText(block); got != "" {
+		t.Fatalf("markdown answer meta block was published: %q", got)
+	}
+	screenshotBlock := "**Analyzing steps for answer**\nI will break down the process into steps to ensure a clear and structured response in Chinese, without using any tools. Let's explore how to approach this!"
+	if got := sanitizePublicReasoningText(screenshotBlock); got != "" {
+		t.Fatalf("screenshot answer meta block was published: %q", got)
+	}
+	for _, input := range []string{
+		"Verifying algebraic bounds",
+		"Comparing x=2 and x=3 eliminates the second branch.",
+		"The cache trace shows a tenant mismatch.",
+	} {
+		if got := sanitizePublicReasoningText(input); got != input {
+			t.Fatalf("task reasoning changed: want=%q got=%q", input, got)
+		}
+	}
+}
+
+func TestPublicReasoningGateEnforcesReasoningBeforeContent(t *testing.T) {
+	gate := newPublicReasoningGate()
+	if got := gate.PushReasoning("Verifying algebraic bounds. "); got != "" {
+		t.Fatalf("reasoning was emitted before the content boundary: %q", got)
+	}
+	if got := gate.PushReasoning("Comparing x=2 and x=3 eliminates a branch."); got != "" {
+		t.Fatalf("reasoning was emitted before the content boundary: %q", got)
+	}
+	want := "Verifying algebraic bounds. Comparing x=2 and x=3 eliminates a branch."
+	if got := gate.StartContent(); got != want {
+		t.Fatalf("buffered reasoning=%q want=%q", got, want)
+	}
+	if got := gate.PushReasoning("The cache trace shows a tenant mismatch."); got != "" {
+		t.Fatalf("late reasoning was emitted: %q", got)
+	}
+	if got := gate.Finish(); got != "" {
+		t.Fatalf("late reasoning was flushed at finish: %q", got)
+	}
+	if got := gate.Published(); got != want {
+		t.Fatalf("published reasoning=%q want=%q", got, want)
+	}
+	if gate.LateBytes() == 0 {
+		t.Fatal("late reasoning was not recorded for diagnostics")
+	}
+}
+
+func TestPublicReasoningGateDropsSplitScreenshotMetaBlock(t *testing.T) {
+	blocks := []string{
+		"**Analyzing judgment process**\nI’m considering how to approach answering a classic puzzle without relying on web sources.\nThe focus will be on providing concise logic and clear reasoning, without revealing any hidden or private thought processes.",
+		"**Analyzing steps for answer**\nI will break down the process into steps to ensure a clear and structured response in Chinese, without using any tools. Let's explore how to approach this!",
+	}
+	for _, block := range blocks {
+		for cut := 0; cut <= len(block); cut++ {
+			gate := newPublicReasoningGate()
+			gate.PushReasoning(block[:cut])
+			gate.PushReasoning(block[cut:])
+			if got := gate.StartContent(); got != "" {
+				t.Fatalf("split at %d leaked screenshot meta block: %q", cut, got)
+			}
+		}
+	}
+}
+
+func TestPublicReasoningGatePublishesValidReasoningWithoutContent(t *testing.T) {
+	gate := newPublicReasoningGate()
+	gate.PushReasoning("The cache trace shows a tenant mismatch.")
+	if got := gate.Finish(); got != "The cache trace shows a tenant mismatch." {
+		t.Fatalf("reasoning-only result=%q", got)
+	}
+}
+
+func TestPublicReasoningGatePreservesLegacyOrderWhenDisabled(t *testing.T) {
+	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "false")
+	t.Setenv("M365_PUBLIC_REASONING_FILTER", "false")
+	gate := newPublicReasoningGate()
+	if got := gate.PushReasoning("before"); got != "before" {
+		t.Fatalf("pre-content reasoning changed while disabled: %q", got)
+	}
+	gate.StartContent()
+	if got := gate.PushReasoning("after"); got != "after" {
+		t.Fatalf("late reasoning changed while disabled: %q", got)
+	}
+	if gate.Published() != "beforeafter" || gate.LateBytes() != 0 {
+		t.Fatalf("disabled gate state changed: published=%q late=%d", gate.Published(), gate.LateBytes())
+	}
+}
+
 func TestPublicReasoningStreamFilterDropsSplitStatusPlaceholder(t *testing.T) {
 	for _, chunks := range [][]string{
 		{"Give me ", "a moment", "..."},

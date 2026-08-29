@@ -103,6 +103,7 @@ func (s *Server) streamAnthropicAdapterWithRunner(w http.ResponseWriter, r *http
 	var text strings.Builder
 	var emittedText strings.Builder
 	var reasoning strings.Builder
+	reasoningGate := newPublicReasoningGate()
 	authoritativeText := ""
 	hasAuthoritativeText := false
 	tools := map[int]*anthropicToolStreamState{}
@@ -110,6 +111,23 @@ func (s *Server) streamAnthropicAdapterWithRunner(w http.ResponseWriter, r *http
 	innerFinishReason := ""
 	innerError := ""
 	sawInnerDone := false
+	emitReasoning := func(part string) error {
+		if part == "" {
+			return nil
+		}
+		if reasoningIndex < 0 {
+			reasoningIndex = nextBlock
+			nextBlock++
+			if err := startBlock(reasoningIndex, map[string]any{"type": "thinking", "thinking": "", "signature": ""}); err != nil {
+				return err
+			}
+		}
+		reasoning.WriteString(part)
+		return emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": reasoningIndex, "delta": map[string]any{"type": "thinking_delta", "thinking": part}})
+	}
+	startPublicContent := func() error {
+		return emitReasoning(reasoningGate.StartContent())
+	}
 
 	scanner := bufio.NewScanner(pr)
 	scanner.Buffer(make([]byte, 4096), 2<<20)
@@ -152,19 +170,14 @@ func (s *Server) streamAnthropicAdapterWithRunner(w http.ResponseWriter, r *http
 		}
 		delta, _ := choice["delta"].(map[string]any)
 		if part, ok := delta["reasoning_content"].(string); ok && part != "" {
-			if reasoningIndex < 0 {
-				reasoningIndex = nextBlock
-				nextBlock++
-				if err := startBlock(reasoningIndex, map[string]any{"type": "thinking", "thinking": "", "signature": ""}); err != nil {
-					return fallback, false
-				}
-			}
-			reasoning.WriteString(part)
-			if err := emit("content_block_delta", map[string]any{"type": "content_block_delta", "index": reasoningIndex, "delta": map[string]any{"type": "thinking_delta", "thinking": part}}); err != nil {
+			if err := emitReasoning(reasoningGate.PushReasoning(part)); err != nil {
 				return fallback, false
 			}
 		}
 		if part, ok := delta["content"].(string); ok && part != "" {
+			if err := startPublicContent(); err != nil {
+				return fallback, false
+			}
 			if textIndex < 0 {
 				textIndex = nextBlock
 				nextBlock++
@@ -179,6 +192,11 @@ func (s *Server) streamAnthropicAdapterWithRunner(w http.ResponseWriter, r *http
 			}
 		}
 		if rawCalls, ok := delta["tool_calls"].([]any); ok {
+			if len(rawCalls) > 0 {
+				if err := startPublicContent(); err != nil {
+					return fallback, false
+				}
+			}
 			for _, rawCall := range rawCalls {
 				call, ok := rawCall.(map[string]any)
 				if !ok {
@@ -240,6 +258,9 @@ func (s *Server) streamAnthropicAdapterWithRunner(w http.ResponseWriter, r *http
 		}
 		return fail(message)
 	}
+	if reasoningGate.LateBytes() > 0 {
+		log.Printf("[reasoning-order] protocol=anthropic dropped_late_bytes=%d", reasoningGate.LateBytes())
+	}
 	finalText := text.String()
 	if hasAuthoritativeText {
 		finalText = authoritativeText
@@ -248,6 +269,9 @@ func (s *Server) streamAnthropicAdapterWithRunner(w http.ResponseWriter, r *http
 		return fail("upstream revised text that was already streamed")
 	}
 	if suffix := finalText[len(emittedText.String()):]; suffix != "" {
+		if err := startPublicContent(); err != nil {
+			return fallback, false
+		}
 		if textIndex < 0 {
 			textIndex = nextBlock
 			nextBlock++
@@ -260,6 +284,9 @@ func (s *Server) streamAnthropicAdapterWithRunner(w http.ResponseWriter, r *http
 		}
 		text.WriteString(suffix)
 		emittedText.WriteString(suffix)
+	}
+	if err := emitReasoning(reasoningGate.Finish()); err != nil {
+		return fallback, false
 	}
 
 	blockIndexes := make([]int, 0, len(startedBlocks))

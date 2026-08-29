@@ -51,6 +51,16 @@ var publicReasoningLeakPattern = regexp.MustCompile(`(?is)(?:\byou\s+are\s+(?:an
 var publicReasoningPlaceholderPattern = regexp.MustCompile(`(?i)^\s*(?:taking\s+a\s+look|give\s+me\s+a\s+moment|just\s+a\s+sec(?:ond)?|one\s+moment|digging\s+in|queuing\s+things\s+up|getting\s+things\s+ready|putting\s+it\s+together|pulling\s+things\s+together|sorting\s+it\s+out|wrapping\s+up|working\s+on\s+it|in\s+progress|lining\s+things\s+up|looking\s+into\s+it|gathering\s+details|checking\s+into\s+it|making\s+it\s+happen|hang\s+on\s+a\s+sec(?:ond)?|checking\s+that\s+now|coding\s+and\s+executing|let\s+me\s+check|checking|thinking|analyzing|processing|preparing)\s*(?:\.{2,}|…)?\s*$`)
 var publicInternalCitationPattern = regexp.MustCompile(`(?i)(?:<cite>\s*turn\d+(?:search|news|image)\d+(?:\s*[,;]?\s*turn\d+(?:search|news|image)\d+)*\s*</cite>|cite(?:turn\d+(?:search|news|image)\d+)+)`)
 
+var publicReasoningMarkdownPrefixPattern = regexp.MustCompile(`^(?:(?:#{1,6}|[-+*>]|\d+[.)])\s*)+`)
+var publicReasoningMetaNarrationPattern = regexp.MustCompile(`(?i)^(?:` +
+	`analy[sz]ing\s+(?:the\s+)?(?:steps?\s+for\s+(?:the\s+)?answer|judg(?:e)?ment\s+process)` +
+	`|i\s+will\s+break\s+down\s+the\s+process\b.*` +
+	`|i(?:\s+am|['’]m)\s+considering\s+how\s+to\s+approach\s+answering\b.*` +
+	`|the\s+focus\s+will\s+be\s+on\s+providing\b.*` +
+	`|without\s+revealing\s+(?:any\s+)?hidden\s+or\s+private\s+thought\s+process(?:es)?\b.*` +
+	`|let['’]?s\s+explore\s+how\s+to\s+approach\s+this\b.*` +
+	`)[\s.!?…]*$`)
+
 var publicSelfIdentityPattern = regexp.MustCompile(`(?i)(?:` +
 	`\b(?:i(?:\s+am|['’]m)|my\s+(?:name|identity)\s+is|this\s+(?:assistant|model)\s+is)` +
 	`\s+(?:not\s+)?(?:(?:an?|the|your)\s+)?` + publicProviderIdentityExpression +
@@ -246,11 +256,91 @@ func sanitizePublicReasoningText(text string) string {
 	lines := strings.Split(text, "\n")
 	kept := lines[:0]
 	for _, line := range lines {
-		if !publicReasoningPlaceholderPattern.MatchString(line) {
+		classified := normalizePublicReasoningLine(line)
+		if !publicReasoningPlaceholderPattern.MatchString(classified) && !publicReasoningMetaNarrationPattern.MatchString(classified) {
 			kept = append(kept, line)
 		}
 	}
 	return sanitizePublicAssistantText(strings.TrimSpace(strings.Join(kept, "\n")))
+}
+
+func normalizePublicReasoningLine(line string) string {
+	line = strings.TrimSpace(line)
+	line = publicReasoningMarkdownPrefixPattern.ReplaceAllString(line, "")
+	line = strings.TrimSpace(line)
+	line = strings.Trim(line, "*_`")
+	return strings.TrimSpace(line)
+}
+
+// publicReasoningGate keeps filtered reasoning ahead of public content. In
+// strict mode it buffers raw fragments so classification does not depend on
+// upstream chunk boundaries and drops reasoning that arrives after content.
+type publicReasoningGate struct {
+	raw            strings.Builder
+	published      strings.Builder
+	contentStarted bool
+	lateBytes      int
+}
+
+func newPublicReasoningGate() *publicReasoningGate {
+	return &publicReasoningGate{}
+}
+
+func (g *publicReasoningGate) PushReasoning(fragment string) string {
+	if g == nil || fragment == "" {
+		return ""
+	}
+	if !publicReasoningFilterEnabled() {
+		g.published.WriteString(fragment)
+		return fragment
+	}
+	if g.contentStarted {
+		g.lateBytes += len(fragment)
+		return ""
+	}
+	g.raw.WriteString(fragment)
+	return ""
+}
+
+func (g *publicReasoningGate) StartContent() string {
+	if g == nil || g.contentStarted {
+		return ""
+	}
+	g.contentStarted = true
+	if !publicReasoningFilterEnabled() {
+		return ""
+	}
+	return g.publishPending()
+}
+
+func (g *publicReasoningGate) Finish() string {
+	if g == nil || !publicReasoningFilterEnabled() || g.contentStarted {
+		return ""
+	}
+	return g.publishPending()
+}
+
+func (g *publicReasoningGate) publishPending() string {
+	text := sanitizePublicReasoningText(g.raw.String())
+	g.raw.Reset()
+	if text != "" {
+		g.published.WriteString(text)
+	}
+	return text
+}
+
+func (g *publicReasoningGate) Published() string {
+	if g == nil {
+		return ""
+	}
+	return g.published.String()
+}
+
+func (g *publicReasoningGate) LateBytes() int {
+	if g == nil {
+		return 0
+	}
+	return g.lateBytes
 }
 
 func sanitizePublicAssistantTextWithState(text string, identityWritten *bool) string {

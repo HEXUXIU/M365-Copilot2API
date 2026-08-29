@@ -82,6 +82,71 @@ func TestStreamResponsesAdapterForwardsShortDeltaBeforeCompletion(t *testing.T) 
 	}
 }
 
+func TestStreamResponsesAdapterDropsReasoningAfterContent(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"content":"first "}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":"The cache trace shows a tenant mismatch."}}]}`,
+		`{"choices":[{"delta":{"content":"second"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_late_reasoning", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "response.reasoning_summary") || strings.Contains(body, "tenant mismatch") {
+		t.Fatalf("late reasoning was exposed: %s", body)
+	}
+	if !strings.Contains(body, `"text":"first second"`) {
+		t.Fatalf("content was damaged: %s", body)
+	}
+}
+
+func TestStreamResponsesAdapterEmitsReasoningBeforeContent(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"reasoning_content":"Verifying algebraic bounds. "}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":"Comparing x=2 and x=3 eliminates a branch."}}]}`,
+		`{"choices":[{"delta":{"content":"first "}}]}`,
+		`{"choices":[{"delta":{"content":"second"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_ordered_reasoning", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	reasoningAt := strings.Index(body, "event: response.reasoning_summary_text.delta")
+	contentAt := strings.Index(body, "event: response.output_text.delta")
+	if reasoningAt < 0 || contentAt <= reasoningAt {
+		t.Fatalf("reasoning/content order is invalid: %s", body)
+	}
+}
+
+func TestStreamResponsesAdapterOmitsFilteredReasoningItem(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"reasoning_content":"In pro"}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":"gress..."}}]}`,
+		`{"choices":[{"delta":{"content":"answer"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_empty_reasoning", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	if body := w.Body.String(); strings.Contains(body, `"type":"reasoning"`) || strings.Contains(body, "reasoning_summary") {
+		t.Fatalf("filtered reasoning created an empty item: %s", body)
+	}
+}
+
 func TestStreamResponsesAdapterHeartbeatsDuringUpstreamSilence(t *testing.T) {
 	s := newResponsesAdapterTestServer()
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

@@ -2367,13 +2367,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 		var text strings.Builder
-		var reasoning strings.Builder
-		var pendingReasoning strings.Builder
 		var pending strings.Builder
 		var streamedTools []detectedToolCall
+		reasoningBytes := 0
 		first := true
 		identityFilter := newPublicIdentityStreamFilter(model)
-		reasoningFilter := newPublicReasoningStreamFilter()
+		reasoningGate := newPublicReasoningGate()
 		emitDelta := func(delta map[string]any) error {
 			if len(delta) == 0 {
 				return nil
@@ -2402,23 +2401,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if part == "" {
 				return nil
 			}
-			reasoning.WriteString(part)
-			if part = reasoningFilter.Push(part); part != "" {
-				return emitDelta(map[string]any{"reasoning_content": part})
-			}
-			return nil
+			return emitDelta(map[string]any{"reasoning_content": part})
 		}
-		flushPendingReasoning := func() error {
-			if pendingReasoning.Len() == 0 {
-				return nil
-			}
-			part := pendingReasoning.String()
-			pendingReasoning.Reset()
-			return emitReasoning(part)
+		startPublicContent := func() error {
+			return emitReasoning(reasoningGate.StartContent())
 		}
 		onStreamEvent := func(ev chathub.StreamEvent) error {
 			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
-				if err := flushPendingReasoning(); err != nil {
+				if err := startPublicContent(); err != nil {
 					return err
 				}
 				toolKnown := false
@@ -2438,13 +2428,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			if ev.Kind == "reasoning" && ev.Text != "" {
-				pendingReasoning.WriteString(ev.Text)
-				return nil
+				reasoningBytes += len(ev.Text)
+				return emitReasoning(reasoningGate.PushReasoning(ev.Text))
 			}
 			if ev.Kind != "text" || ev.Text == "" {
 				return nil
 			}
-			if err := flushPendingReasoning(); err != nil {
+			if err := startPublicContent(); err != nil {
 				return err
 			}
 			text.WriteString(ev.Text)
@@ -2497,17 +2487,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		res, err := s.chatWithAccountEvents(ctx, acc.ID, account, answerReq, onStreamEvent)
-		for attempt := 1; attempt <= 2 && IsEmptyCompletion(err) && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0; attempt++ {
+		for attempt := 1; attempt <= 2 && IsEmptyCompletion(err) && text.Len() == 0 && reasoningBytes == 0 && len(streamedTools) == 0; attempt++ {
 			log.Printf("[tone-fallback] tone=%q returned empty in stream, retrying same account with magic attempt=%d", tone, attempt)
-			pendingReasoning.Reset()
 			magicReq := answerReq
 			magicReq.Tone = "magic"
 			res, err = s.chatWithAccountEvents(ctx, acc.ID, account, magicReq, onStreamEvent)
 		}
-		if err != nil {
-			pendingReasoning.Reset()
-		}
-		if err != nil && text.Len() == 0 && reasoning.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
+		if err != nil && text.Len() == 0 && reasoningBytes == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
 			originalErr := err
 			// A throttled stream may retry on the next healthy account: only the
 			// ": connected" preamble reached the client, so the retried stream is
@@ -2562,7 +2548,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 			return
 		}
-		if err := flushPendingReasoning(); err != nil {
+		if reasoningGate.LateBytes() > 0 {
+			log.Printf("[reasoning-order] id=%s protocol=chat dropped_late_bytes=%d", requestID, reasoningGate.LateBytes())
+		}
+		if err := emitReasoning(reasoningGate.Finish()); err != nil {
 			return
 		}
 		s.markAccountSuccess(acc.ID)
@@ -2649,12 +2638,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if part := reasoningFilter.Flush(); part != "" {
-			if err := emitDelta(map[string]any{"reasoning_content": part}); err != nil {
-				log.Printf("[req-trace] id=%s stage=reasoning_stream_write err=%v", requestID, err)
-				return
-			}
-		}
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
@@ -2662,7 +2645,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if responsesAdapterFromContext(r.Context()) && strings.TrimSpace(res.Text) != "" {
 			finalAnswerText = res.Text
 		}
-		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: finalAnswerText, ReasoningContent: sanitizePublicReasoningText(reasoning.String())}, answerPrompt, startedAt, affinityState)
+		res.Reasoning = reasoningGate.Published()
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", Content: finalAnswerText, ReasoningContent: res.Reasoning}, answerPrompt, startedAt, affinityState)
 		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 		finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}, "usage": chatUsage(usage)}
 		if responsesAdapterFromContext(r.Context()) {
@@ -2771,18 +2755,26 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			return sw2.data(mustJSON(chunk))
 		}
 		contentFilter := newPublicIdentityStreamFilter(firstNonEmpty(body.Model, defaultPublicModelName))
-		reasoningFilter := newPublicReasoningStreamFilter()
+		reasoningGate := newPublicReasoningGate()
+		writeReasoning := func(reasoning string) error {
+			if reasoning != "" {
+				return writeChunk(map[string]any{"reasoning_content": reasoning})
+			}
+			return nil
+		}
 		onDelta := func(content string) error {
+			if content != "" {
+				if err := writeReasoning(reasoningGate.StartContent()); err != nil {
+					return err
+				}
+			}
 			if content = contentFilter.Push(content); content != "" {
 				return writeChunk(map[string]any{"content": content})
 			}
 			return nil
 		}
 		onReasoning := func(reasoning string) error {
-			if reasoning = reasoningFilter.Push(reasoning); reasoning != "" {
-				return writeChunk(map[string]any{"reasoning_content": reasoning})
-			}
-			return nil
+			return writeReasoning(reasoningGate.PushReasoning(reasoning))
 		}
 		if err := sseRaw(r.Context(), w, flusher, ": connected\n\n"); err != nil {
 			return
@@ -2856,18 +2848,21 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err == nil {
+			if reasoningGate.LateBytes() > 0 {
+				log.Printf("[reasoning-order] id=%s protocol=chat dropped_late_bytes=%d", requestID, reasoningGate.LateBytes())
+			}
+			if reasoning := reasoningGate.Finish(); reasoning != "" {
+				if writeErr := writeReasoning(reasoning); writeErr != nil {
+					return
+				}
+			}
 			if content := contentFilter.Flush(); content != "" {
 				if writeErr := writeChunk(map[string]any{"content": content}); writeErr != nil {
 					return
 				}
 			}
-			if reasoning := reasoningFilter.Flush(); reasoning != "" {
-				if writeErr := writeChunk(map[string]any{"reasoning_content": reasoning}); writeErr != nil {
-					return
-				}
-			}
 			res.Text = sanitizePublicAssistantTextForModel(res.Text, body.Model)
-			res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
+			res.Reasoning = reasoningGate.Published()
 			if res.Throttling != nil && s.accountPool != nil {
 				s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
 				s.logThrottlingWarning(acc.ID, res.Throttling)

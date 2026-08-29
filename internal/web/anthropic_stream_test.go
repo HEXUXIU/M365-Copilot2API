@@ -65,3 +65,66 @@ func TestAnthropicStreamWaitsForCompleteToolIdentity(t *testing.T) {
 		t.Fatalf("invalid tool stream or usage=%+v: %s", usage, body)
 	}
 }
+
+func TestAnthropicStreamDropsReasoningAfterContent(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"content":"first "}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":"The cache trace shows a tenant mismatch."}}]}`,
+		`{"choices":[{"delta":{"content":"second"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+	if _, ok := s.streamAnthropicAdapterWithRunner(w, r, oaiReq{}, "claude-sonnet", reuseUsage{}, run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `"type":"thinking"`) || strings.Contains(body, "thinking_delta") || strings.Contains(body, "tenant mismatch") {
+		t.Fatalf("late reasoning was exposed: %s", body)
+	}
+	if !strings.Contains(body, `"text":"first "`) || !strings.Contains(body, `"text":"second"`) {
+		t.Fatalf("content was damaged: %s", body)
+	}
+}
+
+func TestAnthropicStreamEmitsReasoningBeforeContent(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"reasoning_content":"Verifying algebraic bounds."}}]}`,
+		`{"choices":[{"delta":{"content":"answer"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+	if _, ok := s.streamAnthropicAdapterWithRunner(w, r, oaiReq{}, "claude-sonnet", reuseUsage{}, run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	reasoningAt := strings.Index(body, `"type":"thinking_delta"`)
+	contentAt := strings.Index(body, `"type":"text_delta"`)
+	if reasoningAt < 0 || contentAt <= reasoningAt {
+		t.Fatalf("reasoning/content order is invalid: %s", body)
+	}
+}
+
+func TestAnthropicStreamOmitsFilteredThinkingBlock(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"reasoning_content":"In pro"}}]}`,
+		`{"choices":[{"delta":{"reasoning_content":"gress..."}}]}`,
+		`{"choices":[{"delta":{"content":"answer"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+	if _, ok := s.streamAnthropicAdapterWithRunner(w, r, oaiReq{}, "claude-sonnet", reuseUsage{}, run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	if body := w.Body.String(); strings.Contains(body, `"type":"thinking"`) || strings.Contains(body, "thinking_delta") {
+		t.Fatalf("filtered reasoning created an empty thinking block: %s", body)
+	}
+}

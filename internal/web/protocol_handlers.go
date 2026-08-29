@@ -231,6 +231,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 	textStarted := false
 	textOutputIndex := -1
 	var reasoning strings.Builder
+	reasoningGate := newPublicReasoningGate()
 	reasoningID := "rs_" + uuid.NewString()
 	reasoningStarted := false
 	reasoningOutputIndex := -1
@@ -239,6 +240,26 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 		index := nextOutputIndex
 		nextOutputIndex++
 		return index
+	}
+	emitReasoning := func(part string) error {
+		if part == "" {
+			return nil
+		}
+		if !reasoningStarted {
+			reasoningStarted = true
+			reasoningOutputIndex = allocateOutputIndex()
+			if err := emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": reasoningOutputIndex, "item": map[string]any{"type": "reasoning", "id": reasoningID, "summary": []any{}}}); err != nil {
+				return err
+			}
+			if err := emit("response.reasoning_summary_part.added", map[string]any{"type": "response.reasoning_summary_part.added", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "part": map[string]any{"type": "summary_text", "text": ""}}); err != nil {
+				return err
+			}
+		}
+		reasoning.WriteString(part)
+		return emit("response.reasoning_summary_text.delta", map[string]any{"type": "response.reasoning_summary_text.delta", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "delta": part})
+	}
+	startPublicContent := func() error {
+		return emitReasoning(reasoningGate.StartContent())
 	}
 	ensureTextStarted := func() error {
 		if textStarted {
@@ -313,22 +334,25 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 		}
 		delta, _ := choice["delta"].(map[string]any)
 		if part, ok := delta["reasoning_content"].(string); ok && part != "" {
-			if !reasoningStarted {
-				reasoningStarted = true
-				reasoningOutputIndex = allocateOutputIndex()
-				emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": reasoningOutputIndex, "item": map[string]any{"type": "reasoning", "id": reasoningID, "summary": []any{}}})
-				emit("response.reasoning_summary_part.added", map[string]any{"type": "response.reasoning_summary_part.added", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "part": map[string]any{"type": "summary_text", "text": ""}})
+			if err := emitReasoning(reasoningGate.PushReasoning(part)); err != nil {
+				return false
 			}
-			reasoning.WriteString(part)
-			emit("response.reasoning_summary_text.delta", map[string]any{"type": "response.reasoning_summary_text.delta", "output_index": reasoningOutputIndex, "summary_index": 0, "item_id": reasoningID, "delta": part})
 		}
 		if content, ok := delta["content"].(string); ok && content != "" {
+			if err := startPublicContent(); err != nil {
+				return false
+			}
 			text.WriteString(content)
 			if err := emitTextDelta(content); err != nil {
 				return false
 			}
 		}
 		if rawCalls, ok := delta["tool_calls"].([]any); ok {
+			if len(rawCalls) > 0 {
+				if err := startPublicContent(); err != nil {
+					return false
+				}
+			}
 			for _, raw := range rawCalls {
 				tc, ok := raw.(map[string]any)
 				if !ok {
@@ -411,6 +435,12 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 				"error": map[string]any{"code": status, "message": message},
 			},
 		})
+		return false
+	}
+	if reasoningGate.LateBytes() > 0 {
+		log.Printf("[reasoning-order] protocol=responses dropped_late_bytes=%d", reasoningGate.LateBytes())
+	}
+	if err := emitReasoning(reasoningGate.Finish()); err != nil {
 		return false
 	}
 	finalText := text.String()

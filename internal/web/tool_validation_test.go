@@ -49,6 +49,34 @@ func TestValidateDetectedToolCallsAcceptsDeclaredCall(t *testing.T) {
 	}
 }
 
+func TestValidateDetectedToolCallsRejectsEmptyCustomInput(t *testing.T) {
+	tools := []map[string]any{{
+		"type": "custom",
+		"function": map[string]any{
+			"name": "apply_patch",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"input": map[string]any{"type": "string"},
+				},
+				"required":             []any{"input"},
+				"additionalProperties": false,
+			},
+		},
+	}}
+
+	for _, arguments := range []string{`{"input":""}`, `{"input":"  \r\n"}`} {
+		valid, rejected := validateDetectedToolCalls([]detectedToolCall{{
+			Name:      "apply_patch",
+			Type:      "custom",
+			Arguments: json.RawMessage(arguments),
+		}}, tools, "required")
+		if len(valid) != 0 || len(rejected) != 1 {
+			t.Fatalf("arguments=%s valid=%#v rejected=%#v", arguments, valid, rejected)
+		}
+	}
+}
+
 func TestParseNaturalToolDecisionRejectsBadSchema(t *testing.T) {
 	calls, parsed := parseModelToolDecision(`CALL_TOOL: get_weather({"city":2})`, testTools(), "auto")
 	if parsed || len(calls) != 0 {

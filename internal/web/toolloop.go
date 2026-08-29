@@ -73,6 +73,13 @@ func validateDetectedToolCalls(calls []detectedToolCall, tools []map[string]any,
 			rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: err.Error()})
 			continue
 		}
+		if toolType(call.Name, tools) == "custom" {
+			input, ok := args["input"].(string)
+			if !ok || strings.TrimSpace(input) == "" {
+				rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: "custom tool input is empty"})
+				continue
+			}
+		}
 		if call.ID == "" {
 			call.ID = callID(call.Name, string(call.Arguments), len(valid))
 		}

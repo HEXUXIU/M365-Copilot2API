@@ -77,6 +77,40 @@ func TestValidateDetectedToolCallsRejectsEmptyCustomInput(t *testing.T) {
 	}
 }
 
+func TestValidateDetectedToolCallsChecksExecNestedToolName(t *testing.T) {
+	tools := []map[string]any{{
+		"type": "custom",
+		"function": map[string]any{
+			"name": "exec",
+			"description": `Run JavaScript.
+### apply_patch
+Apply a patch.
+### shell_command
+Run a shell command.`,
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"input": map[string]any{"type": "string"},
+				},
+				"required":             []any{"input"},
+				"additionalProperties": false,
+			},
+		},
+	}}
+
+	invalid := []detectedToolCall{{Name: "exec", Type: "custom", Arguments: json.RawMessage(`{"input":"const r = await tools.exec_command({command: 'pwd'}); text(r);"}`)}}
+	valid, rejected := validateDetectedToolCalls(invalid, tools, "required")
+	if len(valid) != 0 || len(rejected) != 1 || rejected[0].Reason != "exec input references an unavailable nested tool" {
+		t.Fatalf("unknown nested tool escaped: valid=%#v rejected=%#v", valid, rejected)
+	}
+
+	accepted := []detectedToolCall{{Name: "exec", Type: "custom", Arguments: json.RawMessage(`{"input":"const r = await tools.shell_command({command: 'pwd'}); text(r);"}`)}}
+	valid, rejected = validateDetectedToolCalls(accepted, tools, "required")
+	if len(valid) != 1 || len(rejected) != 0 {
+		t.Fatalf("declared nested tool was rejected: valid=%#v rejected=%#v", valid, rejected)
+	}
+}
+
 func TestParseNaturalToolDecisionRejectsBadSchema(t *testing.T) {
 	calls, parsed := parseModelToolDecision(`CALL_TOOL: get_weather({"city":2})`, testTools(), "auto")
 	if parsed || len(calls) != 0 {

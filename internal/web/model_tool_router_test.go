@@ -151,6 +151,35 @@ func TestCompactRouterToolsPreservesValidationShape(t *testing.T) {
 	}
 }
 
+func TestCompactRouterToolsKeepsExecNestedToolCatalog(t *testing.T) {
+	description := `Run JavaScript code to orchestrate tool calls.
+- Example from another runtime: await tools.exec_command(...)
+### apply_patch
+Apply a patch to workspace files.
+### shell_command
+Run a PowerShell command in the workspace.`
+	tools := []map[string]any{{
+		"type": "custom",
+		"function": map[string]any{
+			"name":        "exec",
+			"description": description,
+			"parameters":  map[string]any{"type": "object"},
+		},
+	}}
+
+	compact := compactRouterTools(tools)
+	got := compact[0]["function"].(map[string]any)["description"].(string)
+	if !strings.Contains(got, "tools.apply_patch") || !strings.Contains(got, "tools.shell_command") {
+		t.Fatalf("exec catalog was lost: %q", got)
+	}
+	if strings.Contains(got, "tools.exec_command") {
+		t.Fatalf("stale undeclared example survived compaction: %q", got)
+	}
+	if len(got) > 2048 {
+		t.Fatalf("exec description is unbounded: %d", len(got))
+	}
+}
+
 func TestParseModelToolDecisionRejectsBadSchema(t *testing.T) {
 	calls, ok := parseModelToolDecision("```json\n{\"calls\":[{\"name\":\"get_weather\",\"arguments\":{\"city\":2}}]}\n```", testTools(), "auto")
 	if !ok || len(calls) != 0 {

@@ -79,6 +79,13 @@ func validateDetectedToolCalls(calls []detectedToolCall, tools []map[string]any,
 				rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: "custom tool input is empty"})
 				continue
 			}
+			if call.Name == "exec" {
+				description, _ := fn["description"].(string)
+				if execInputReferencesUnavailableTool(input, description) {
+					rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: "exec input references an unavailable nested tool"})
+					continue
+				}
+			}
 		}
 		if call.ID == "" {
 			call.ID = callID(call.Name, string(call.Arguments), len(valid))

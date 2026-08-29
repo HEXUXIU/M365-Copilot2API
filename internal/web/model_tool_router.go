@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	maxRouterDescriptionBytes = 240
-	maxRouterPromptBytes      = 128 << 10
+	maxRouterDescriptionBytes     = 240
+	maxExecRouterDescriptionBytes = 2048
+	maxRouterPromptBytes          = 128 << 10
 )
 
 var (
@@ -20,6 +21,8 @@ var (
 	workspaceEnglishActionPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:create|write|save|modify|edit|update|delete|remove|move|rename|copy|read|inspect|list|search|find|open|execute|run)(?:s|d|ing)?(?:$|[^a-z])`)
 	workspaceEnglishTargetPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:files?|director(?:y|ies)|folders?|code|projects?|repositories|repos?|commands?|scripts?|workspace)(?:$|[^a-z])`)
 	weightedTokenNoticePattern     = regexp.MustCompile(`(?i)^\s*you have [0-9]+ weighted tokens left\.?\s*$`)
+	execNestedToolHeadingPattern   = regexp.MustCompile("(?m)^###\\s+`?([A-Za-z0-9_]+)`?\\s*$")
+	execNestedToolCallPattern      = regexp.MustCompile(`\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
 )
 
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
@@ -72,7 +75,11 @@ func compactRouterTools(tools []map[string]any) []map[string]any {
 			}
 		}
 		if description, _ := function["description"].(string); description != "" {
-			compact["description"] = compactToolResult(description, maxRouterDescriptionBytes)
+			if name, _ := function["name"].(string); tool["type"] == "custom" && name == "exec" {
+				compact["description"] = compactExecRouterDescription(description)
+			} else {
+				compact["description"] = compactToolResult(description, maxRouterDescriptionBytes)
+			}
 		}
 		if parameters, ok := function["parameters"]; ok {
 			compact["parameters"] = compactRouterSchema(parameters, 0)
@@ -84,6 +91,65 @@ func compactRouterTools(tools []map[string]any) []map[string]any {
 		out = append(out, entry)
 	}
 	return out
+}
+
+func execNestedToolNames(description string) []string {
+	matches := execNestedToolHeadingPattern.FindAllStringSubmatch(description, -1)
+	names := make([]string, 0, len(matches))
+	seen := make(map[string]struct{}, len(matches))
+	for _, match := range matches {
+		if len(match) < 2 || match[1] == "" {
+			continue
+		}
+		if _, ok := seen[match[1]]; ok {
+			continue
+		}
+		seen[match[1]] = struct{}{}
+		names = append(names, match[1])
+	}
+	return names
+}
+
+func compactExecRouterDescription(description string) string {
+	names := execNestedToolNames(description)
+	if len(names) == 0 {
+		return compactToolResult(description, maxRouterDescriptionBytes)
+	}
+	available := make(map[string]bool, len(names))
+	for _, name := range names {
+		available[name] = true
+	}
+	var summary strings.Builder
+	summary.WriteString("Run raw JavaScript in an async module. Call only listed nested tools as await tools.<name>(...). Emit returned results with text(result). Available nested tools: ")
+	summary.WriteString(strings.Join(names, ", "))
+	summary.WriteString(".")
+	if available["apply_patch"] {
+		summary.WriteString(" For workspace edits, pass the complete patch text to tools.apply_patch.")
+	}
+	if available["shell_command"] {
+		summary.WriteString(" For PowerShell commands, call tools.shell_command({command: COMMAND}).")
+	}
+	return compactToolResult(summary.String(), maxExecRouterDescriptionBytes)
+}
+
+func execInputReferencesUnavailableTool(input, description string) bool {
+	names := execNestedToolNames(description)
+	if len(names) == 0 {
+		return false
+	}
+	available := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		available[name] = struct{}{}
+	}
+	for _, match := range execNestedToolCallPattern.FindAllStringSubmatch(input, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		if _, ok := available[match[1]]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 func compactRouterSchema(value any, depth int) any {

@@ -35,6 +35,25 @@ var ErrOffensiveContent = errors.New("upstream content policy flagged as offensi
 
 var ErrMeteringThrottled = errors.New("upstream metering throttle: capability access denied")
 
+type MeteringError struct {
+	Err         error
+	Information any
+}
+
+func (e *MeteringError) Error() string {
+	if e == nil || e.Err == nil {
+		return "upstream metering error"
+	}
+	return e.Err.Error()
+}
+
+func (e *MeteringError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 const defaultResponseIdleTimeout = 30 * time.Second
 
 func responseIdleTimeoutFromEnv() time.Duration {
@@ -60,15 +79,15 @@ func checkMeteringError(mi any) error {
 			continue
 		}
 		meterErr, _ := m["meterError"].(string)
-		hasAccess, _ := m["hasAccess"].(bool)
-		if meterErr != "" && !hasAccess {
+		hasAccess, present := m["hasAccess"].(bool)
+		if meterErr != "" && present && !hasAccess {
 			switch meterErr {
 			case "ImageGenInsufficientTokensThrottled":
-				return ErrImageLimit
+				return &MeteringError{Err: ErrImageLimit, Information: mi}
 			case "ImageGenSystemCapacityThrottled":
-				return ErrMeteringThrottled
+				return &MeteringError{Err: ErrMeteringThrottled, Information: mi}
 			default:
-				return ErrMeteringThrottled
+				return &MeteringError{Err: ErrMeteringThrottled, Information: mi}
 			}
 		}
 	}
@@ -1267,7 +1286,7 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 							if meterErr := checkMeteringError(mi); meterErr != nil {
 								log.Printf("[chathub] meteringError in type:2 frame: %v", meterErr)
 								returnConn = false
-								return Result{}, meterErr
+								return Result{Throttling: throttling, MeteringInformation: mi}, meterErr
 							}
 						}
 						if msg, ok := res["message"].(string); ok {

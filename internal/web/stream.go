@@ -3,7 +3,6 @@ package web
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -61,9 +60,6 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		FeatureFlags: s.featureFlags(),
 	})
 	if err != nil {
-		if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
-			s.accountPool.MarkImageLimited(acc.ID)
-		}
 		writeUpstreamError(w, err)
 		return
 	}
@@ -161,34 +157,40 @@ func writeSSE(r *http.Request, w http.ResponseWriter, f http.Flusher, name strin
 
 type meteringInfoItem struct {
 	MeterError string `json:"meterError"`
-	HasAccess  bool   `json:"hasAccess"`
+	HasAccess  *bool  `json:"hasAccess"`
 }
 
 type throttlingMeteringEntry struct {
 	RemainingAllowance int `json:"remainingAllowance"`
 }
 
-func ParseMetering(accountID string, items json.RawMessage) (meterError string, hasAccess bool) {
-	hasAccess = true
+func ParseMetering(accountID string, items json.RawMessage) (meterError string, hasAccess bool, known bool) {
 	if len(items) == 0 {
-		return "", hasAccess
+		return "", false, false
 	}
 	var parsed []meteringInfoItem
 	if json.Unmarshal(items, &parsed) != nil {
-		return "", hasAccess
+		return "", false, false
 	}
 	for _, mi := range parsed {
-		if !mi.HasAccess {
+		if meterError == "" && mi.MeterError != "" {
+			meterError = mi.MeterError
+		}
+		if mi.HasAccess == nil {
+			continue
+		}
+		if !known {
+			hasAccess = *mi.HasAccess
+		}
+		known = true
+		if !*mi.HasAccess {
 			hasAccess = false
-			if meterError == "" {
-				meterError = mi.MeterError
-			}
 		}
 	}
 	if meterError != "" {
-		log.Printf("[metering] account=%s meterError=%q hasAccess=%v", accountID, meterError, hasAccess)
+		log.Printf("[metering] account=%s meterError=%q hasAccess=%v known=%v", accountID, meterError, hasAccess, known)
 	}
-	return meterError, hasAccess
+	return meterError, hasAccess, known
 }
 
 func remainingAllowances(throttling any) map[string]int {

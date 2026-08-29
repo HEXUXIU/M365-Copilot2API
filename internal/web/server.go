@@ -100,7 +100,13 @@ func (s *Server) markAccountResult(accountID string, err error) {
 		return
 	}
 	if err != nil {
-		s.accountPool.MarkFailure(accountID, err, s.getRateLimitCooldown())
+		proxyScoped := len(outbound.ProxyPoolStatus()) > 0
+		if !proxyScoped && s.tokens != nil {
+			if account, ok := s.tokens.Get(accountID); ok {
+				proxyScoped = strings.TrimSpace(account.BoundProxy) != ""
+			}
+		}
+		s.accountPool.MarkFailureScoped(accountID, err, s.getRateLimitCooldown(), proxyScoped)
 		return
 	}
 	s.markAccountSuccess(accountID)
@@ -117,23 +123,46 @@ func (s *Server) markAccountSuccess(accountID string) {
 }
 
 func (s *Server) recordAccountChatResult(accountID string, result chathub.Result, err error) {
-	s.markAccountResult(accountID, err)
-	if err != nil || s == nil || s.accountPool == nil || accountID == "" {
+	if s == nil || s.accountPool == nil || accountID == "" {
 		return
+	}
+	if result.MeteringInformation == nil && err != nil {
+		var meteringErr *chathub.MeteringError
+		if errors.As(err, &meteringErr) {
+			result.MeteringInformation = meteringErr.Information
+		}
 	}
 	if result.Throttling != nil {
 		s.accountPool.UpdateThrottling(accountID, result.Throttling)
 		s.logThrottlingWarning(accountID, result.Throttling)
 	}
 	meterError := ""
-	hasAccess := true
+	hasAccess := false
+	known := false
+	accessObserved := false
+	imageMeteringApplied := false
 	if result.MeteringInformation != nil {
+		accessObserved = true
 		if raw, marshalErr := json.Marshal(result.MeteringInformation); marshalErr == nil {
-			meterError, hasAccess = ParseMetering(accountID, json.RawMessage(raw))
-			applyMeteringCooldown(s.accountPool, accountID, meterError)
+			meterError, hasAccess, known = ParseMetering(accountID, json.RawMessage(raw))
+			if known && !hasAccess {
+				applyMeteringCooldown(s.accountPool, accountID, meterError)
+				imageMeteringApplied = meterError == "ImageGenInsufficientTokensThrottled" || meterError == "ImageGenSystemCapacityThrottled"
+			}
 		}
 	}
-	s.accountPool.UpdateMetering(accountID, meterError, hasAccess, remainingAllowances(result.Throttling))
+	s.accountPool.UpdateMetering(accountID, accountMeteringUpdate{
+		MeterError:     meterError,
+		HasAccess:      hasAccess,
+		AccessKnown:    known,
+		AccessObserved: accessObserved,
+		Remaining:      remainingAllowances(result.Throttling),
+		Source:         "chathub",
+	})
+	if errors.Is(err, chathub.ErrImageLimit) && !imageMeteringApplied {
+		s.accountPool.MarkImageFailure(accountID, err)
+	}
+	s.markAccountResult(accountID, err)
 }
 
 // confirmRateLimitNotice verifies a text-channel rate-limit notice with a
@@ -813,6 +842,9 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 		Throttling         any            `json:"throttling,omitempty"`
 		MeterError         string         `json:"meterError,omitempty"`
 		MeterHasAccess     bool           `json:"meterHasAccess"`
+		MeteringKnown      bool           `json:"meteringKnown"`
+		MeteringUpdatedAt  *time.Time     `json:"meteringUpdatedAt,omitempty"`
+		MeteringSource     string         `json:"meteringSource,omitempty"`
 		RemainingAllowance map[string]int `json:"remainingAllowance,omitempty"`
 		Concurrency        int            `json:"concurrency"`
 		OID                string         `json:"oid,omitempty"`
@@ -829,7 +861,10 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 		var rateLimited bool
 		var throttling any
 		var meterError string
-		var meterHasAccess = true
+		var meterHasAccess bool
+		var meteringKnown bool
+		var meteringUpdatedAt *time.Time
+		var meteringSource string
 		var remainingAllowance map[string]int
 		var authFailReason string
 		var imageLimited bool
@@ -841,7 +876,16 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 			callCount = s.accountPool.CallCount(a.ID)
 			rateLimited = s.accountPool.RateLimited(a.ID)
 			throttling = s.accountPool.GetThrottling(a.ID)
-			meterError, meterHasAccess, remainingAllowance = s.accountPool.GetMetering(a.ID)
+			metering := s.accountPool.GetMetering(a.ID)
+			meterError = metering.MeterError
+			meterHasAccess = metering.HasAccess
+			meteringKnown = metering.Known
+			if !metering.UpdatedAt.IsZero() {
+				updatedAt := metering.UpdatedAt
+				meteringUpdatedAt = &updatedAt
+			}
+			meteringSource = metering.Source
+			remainingAllowance = metering.Remaining
 			authFailReason = s.accountPool.AuthFailReason(a.ID)
 			imageLimited = s.accountPool.ImageLimited(a.ID)
 		}
@@ -853,7 +897,8 @@ func (s *Server) accounts(w http.ResponseWriter, r *http.Request) {
 			AuthFailed:     s.accountPool != nil && !s.accountPool.Available(a.ID) && authFailReason != "",
 			AuthFailReason: authFailReason,
 			CooldownUntil:  cooldownUntil, Throttling: throttling,
-			MeterError: meterError, MeterHasAccess: meterHasAccess, RemainingAllowance: remainingAllowance,
+			MeterError: meterError, MeterHasAccess: meterHasAccess, MeteringKnown: meteringKnown,
+			MeteringUpdatedAt: meteringUpdatedAt, MeteringSource: meteringSource, RemainingAllowance: remainingAllowance,
 			Concurrency: concurrency,
 			OID:         a.OID, TID: a.TID,
 			ExpiresAt: a.ExpiresAt, UpdatedAt: a.UpdatedAt, BoundProxy: a.BoundProxy,
@@ -1270,6 +1315,52 @@ func (s *Server) nextHealthyAccountExcluding(excluded map[string]struct{}) (auth
 	return auth.AccountToken{}, fmt.Errorf("no healthy account available for failover")
 }
 
+func (s *Server) imageAccountAvailable(accountID string) bool {
+	if !s.accountAvailable(accountID) {
+		return false
+	}
+	return s.accountPool == nil || s.accountPool.ImageGenAvailable(accountID)
+}
+
+func (s *Server) resolveImageAccount(accountID string) (auth.AccountToken, error) {
+	acc, err := s.resolveAccount(accountID)
+	if err != nil {
+		return auth.AccountToken{}, err
+	}
+	if s.accountPool == nil || s.accountPool.ImageGenAvailable(acc.ID) {
+		return acc, nil
+	}
+	if accountID != "" {
+		return auth.AccountToken{}, chathub.ErrImageLimit
+	}
+
+	next, err := s.nextImageAccountExcluding(map[string]struct{}{acc.ID: {}})
+	if err != nil {
+		return auth.AccountToken{}, chathub.ErrImageLimit
+	}
+	s.mu.Lock()
+	s.lastHealthyAccount = next.ID
+	s.mu.Unlock()
+	return next, nil
+}
+
+func (s *Server) nextImageAccountExcluding(excluded map[string]struct{}) (auth.AccountToken, error) {
+	for i := 0; i < s.accountProbeLimit(); i++ {
+		acc, ok := s.tokens.Next()
+		if !ok {
+			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
+		}
+		if _, skip := excluded[acc.ID]; skip {
+			continue
+		}
+		if !s.imageAccountAvailable(acc.ID) {
+			continue
+		}
+		return s.tokens.EnsureValid(acc.ID)
+	}
+	return auth.AccountToken{}, fmt.Errorf("no image-capable account available for failover")
+}
+
 const (
 	maxToolRouterAccountAttempts        = 3
 	maxToolRouterTotalTimeout           = 55 * time.Second
@@ -1449,7 +1540,6 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		FeatureFlags:          s.featureFlags(),
 	})
 	if err != nil {
-		originalErr := err
 		// Failover: a rate-limited or auth-failed account must not take down the
 		// request when the pool has other healthy accounts. Only auto-selected
 		// requests fail over; an explicitly chosen account is respected, and a
@@ -1473,24 +1563,15 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 					FeatureFlags:          s.featureFlags(),
 				})
 				if err2 == nil {
-					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(acc.ID)
-					}
 					acc = next
 					res = res2
 					err = nil
 				} else {
-					if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(next.ID)
-					}
 					err = err2
 				}
 			}
 		}
 		if err != nil {
-			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
-				s.accountPool.MarkImageLimited(acc.ID)
-			}
 			writeUpstreamError(w, err)
 			return
 		}
@@ -2271,7 +2352,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if routeErr != nil {
 			if IsRateLimited(routeErr) && body.AccountID == "" {
 				if next, nerr := s.nextHealthyAccount(acc.ID); nerr == nil {
-					s.accountPool.MarkFailure(acc.ID, routeErr, s.getRateLimitCooldown())
 					routeRes2, routeErr2 := s.chatWithAccount(ctx, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 					if routeErr2 == nil {
 						routeRes = routeRes2
@@ -2279,7 +2359,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 						account = chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
 						routeErr = nil
 					} else {
-						s.accountPool.MarkFailure(next.ID, routeErr2, s.getRateLimitCooldown())
 						writeRouterStreamError(routeErr2)
 						return
 					}
@@ -2494,7 +2573,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			res, err = s.chatWithAccountEvents(ctx, acc.ID, account, magicReq, onStreamEvent)
 		}
 		if err != nil && text.Len() == 0 && reasoningBytes == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
-			originalErr := err
 			// A throttled stream may retry on the next healthy account: only the
 			// ": connected" preamble reached the client, so the retried stream is
 			// indistinguishable from a fresh request.
@@ -2511,28 +2589,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				defer cancel2()
 				res2, err2 := s.chatWithAccountEvents(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq, onStreamEvent)
 				if err2 == nil {
-					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(acc.ID)
-					}
 					res = res2
 					acc = next
 					err = nil
 				} else {
-					if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(acc.ID)
-					}
-					if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
-						s.accountPool.MarkImageLimited(next.ID)
-					}
 					err = err2
 				}
 			}
 		}
 		if err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
-				s.accountPool.MarkImageLimited(acc.ID)
-			}
 			if convReused {
 				s.invalidateConvCache(acc.ID, convCacheModel)
 			}
@@ -2554,7 +2620,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if err := emitReasoning(reasoningGate.Finish()); err != nil {
 			return
 		}
-		s.markAccountSuccess(acc.ID)
 		if res.Throttling != nil && s.accountPool != nil {
 			s.accountPool.UpdateThrottling(acc.ID, res.Throttling)
 			s.logThrottlingWarning(acc.ID, res.Throttling)
@@ -2813,7 +2878,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		res, err = s.chatWithAccountReasoning(ctx, acc.ID, account, answerReq, onDeltaWrapped, onReasoningWrapped)
 		if err != nil && streamedReasoningLen == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
 			for attempt := 0; attempt < 3 && err != nil; attempt++ {
-				originalErr := err
 				next, nerr := s.nextHealthyAccount(acc.ID)
 				if nerr != nil {
 					break
@@ -2826,20 +2890,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 				res2, err2 := s.chatWithAccountReasoning(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq, onDelta, onReasoning)
 				cancel2()
-				s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
-				if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
-					s.accountPool.MarkImageLimited(acc.ID)
-				}
 				if err2 == nil {
-					s.accountPool.MarkSuccess(next.ID)
 					res = res2
 					acc = next
 					err = nil
 					break
-				}
-				s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
-				if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
-					s.accountPool.MarkImageLimited(next.ID)
 				}
 				err = err2
 				if streamedReasoningLen > 0 || !isRetryableAccountFailure(err) {
@@ -2880,9 +2935,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			log.Printf("[req-trace] id=%s stage=stream_error err=%v", requestID, err)
-			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
-				s.accountPool.MarkImageLimited(acc.ID)
-			}
 			if convReused {
 				s.invalidateConvCache(acc.ID, convCacheModel)
 			}
@@ -2935,7 +2987,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			// number of healthy accounts so transient tenant/account failures do
 			// not surface as an immediate 502, while avoiding retry storms.
 			for attempt := 0; attempt < 3 && err != nil; attempt++ {
-				originalErr := err
 				next, nerr := s.nextHealthyAccount(acc.ID)
 				if nerr != nil {
 					break
@@ -2948,20 +2999,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 				res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, failoverReq)
 				cancel2()
-				s.accountPool.MarkFailure(acc.ID, originalErr, s.getRateLimitCooldown())
-				if errors.Is(originalErr, chathub.ErrImageLimit) && s.accountPool != nil {
-					s.accountPool.MarkImageLimited(acc.ID)
-				}
 				if err2 == nil {
-					s.accountPool.MarkSuccess(next.ID)
 					res = res2
 					acc = next
 					err = nil
 					break
-				}
-				s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
-				if errors.Is(err2, chathub.ErrImageLimit) && s.accountPool != nil {
-					s.accountPool.MarkImageLimited(next.ID)
 				}
 				err = err2
 				if !isRetryableAccountFailure(err) {
@@ -2971,9 +3013,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
-		if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
-			s.accountPool.MarkImageLimited(acc.ID)
-		}
 		if convReused {
 			s.invalidateConvCache(acc.ID, convCacheModel)
 			log.Printf("[conv-cache] invalidated account=%s model=%s after error: %v", acc.ID, convCacheModel, err)

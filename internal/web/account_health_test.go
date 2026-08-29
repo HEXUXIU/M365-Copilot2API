@@ -124,6 +124,59 @@ func TestAccountHealthLifecycle(t *testing.T) {
 	if until == nil || until["available"].(bool) || until["cooldownUntil"] == nil {
 		t.Fatalf("snapshot should report cooldown until: %v", h.Snapshot())
 	}
+	if until["cooldownReason"] != string(CategoryQuota429) || until["cooldownScope"] != "account" || until["cooldownTriggeredAt"] == nil {
+		t.Fatalf("snapshot should explain account cooldown: %v", until)
+	}
+}
+
+func TestImageLimitOnlyDisablesImageCapability(t *testing.T) {
+	h := newAccountHealth()
+	const id = "acct-image-limit"
+
+	h.MarkImageLimited(id)
+	if !h.Available(id) {
+		t.Fatal("image limit must not make the account unavailable for text")
+	}
+	if h.ImageGenAvailable(id) {
+		t.Fatal("image-limited account must be unavailable for image generation")
+	}
+
+	h.MarkSuccess(id)
+	if !h.Available(id) {
+		t.Fatal("text success must leave the account available")
+	}
+	if h.ImageGenAvailable(id) {
+		t.Fatal("text success must not clear an active image limit")
+	}
+	snapshot := h.Snapshot()[id]
+	if snapshot["imageCooldownReason"] != "IMAGE_LIMIT" || snapshot["imageCooldownScope"] != "capability" || snapshot["imageCooldownTriggeredAt"] == nil || snapshot["imageCooldownUntil"] == nil {
+		t.Fatalf("snapshot should explain image capability cooldown: %v", snapshot)
+	}
+}
+
+func TestMeteredImageLimitKeepsItsSpecificRecoveryWindow(t *testing.T) {
+	h := newAccountHealth()
+	const id = "acct-metered-image-limit"
+	information := []any{map[string]any{
+		"meterError": "ImageGenInsufficientTokensThrottled",
+		"hasAccess":  false,
+	}}
+	err := &chathub.MeteringError{Err: chathub.ErrImageLimit, Information: information}
+
+	h.MarkImageFailure(id, err)
+	snapshot := h.Snapshot()[id]
+	until, ok := snapshot["imageCooldownUntil"].(time.Time)
+	if !ok {
+		t.Fatalf("missing image recovery time: %v", snapshot)
+	}
+	now := time.Now().UTC()
+	want := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
+	if until.Sub(want) > time.Second || want.Sub(until) > time.Second {
+		t.Fatalf("image recovery=%s, want next UTC midnight %s", until, want)
+	}
+	if snapshot["imageCooldownReason"] != "ImageGenInsufficientTokensThrottled" {
+		t.Fatalf("image reason=%v", snapshot["imageCooldownReason"])
+	}
 }
 
 func TestCooldownExpiryClearsCallCount(t *testing.T) {
@@ -314,6 +367,49 @@ func TestNextHealthyAccountExcludingDoesNotRepeatTriedAccounts(t *testing.T) {
 	}
 }
 
+func TestResolveImageAccountSkipsImageLimitedAccount(t *testing.T) {
+	store := testAccountFiles(t)
+	s := &Server{tokens: store, accountPool: newAccountHealth()}
+	s.lastHealthyAccount = "u-1"
+	s.accountPool.MarkImageLimited("u-1")
+
+	acc, err := s.resolveImageAccount("")
+	if err != nil {
+		t.Fatalf("resolveImageAccount: %v", err)
+	}
+	if acc.ID == "u-1" {
+		t.Fatal("automatic image selection reused an image-limited account")
+	}
+	if !s.accountPool.Available("u-1") {
+		t.Fatal("image-limited account must remain available to text scheduling")
+	}
+}
+
+func TestResolveImageAccountRejectsExplicitImageLimitedAccount(t *testing.T) {
+	store := testAccountFiles(t)
+	s := &Server{tokens: store, accountPool: newAccountHealth()}
+	s.accountPool.MarkImageLimited("u-1")
+
+	_, err := s.resolveImageAccount("u-1")
+	if !errors.Is(err, chathub.ErrImageLimit) {
+		t.Fatalf("resolveImageAccount error=%v, want ErrImageLimit", err)
+	}
+}
+
+func TestNextImageAccountExcludingSkipsTriedAndImageLimitedAccounts(t *testing.T) {
+	store := testAccountFiles(t)
+	s := &Server{tokens: store, accountPool: newAccountHealth()}
+	s.accountPool.MarkImageLimited("u-2")
+
+	acc, err := s.nextImageAccountExcluding(map[string]struct{}{"u-1": {}})
+	if err != nil {
+		t.Fatalf("nextImageAccountExcluding: %v", err)
+	}
+	if acc.ID != "u-3" {
+		t.Fatalf("selected account=%q, want u-3", acc.ID)
+	}
+}
+
 func TestScheduleAccount(t *testing.T) {
 	store := testAccountFiles(t)
 	s := &Server{tokens: store}
@@ -388,6 +484,99 @@ func TestErrRateLimitNoticeTriggersMarkFailure(t *testing.T) {
 	}
 }
 
+func TestTransientAndCapabilityFailuresDoNotCooldownAccount(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "overload", err: &UpstreamHTTPError{Status: http.StatusServiceUnavailable}},
+		{name: "dns", err: &chathub.DialError{Kind: "DNS"}},
+		{name: "tcp", err: &chathub.DialError{Kind: "TCP"}},
+		{name: "tls", err: &chathub.DialError{Kind: "TLS"}},
+		{name: "websocket handshake", err: &chathub.DialError{Kind: "WS_HANDSHAKE"}},
+		{name: "timeout", err: context.DeadlineExceeded},
+		{name: "retryable 422", err: &UpstreamHTTPError{Status: http.StatusUnprocessableEntity}},
+		{name: "empty completion", err: chathub.ErrEmptyCompletion},
+		{name: "content policy", err: chathub.ErrOffensiveContent},
+		{name: "image limit", err: chathub.ErrImageLimit},
+		{name: "image tokens", err: &UpstreamHTTPError{ErrorCode: "InsufficientTokens"}},
+		{name: "unknown", err: errors.New("single upstream failure")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newAccountHealth()
+			h.MarkFailure("acct", tt.err, 10*time.Minute)
+			if until, ok := h.CooldownUntil("acct"); ok {
+				t.Fatalf("failure %v created account cooldown until %s", tt.err, until)
+			}
+		})
+	}
+}
+
+func TestBoundProxyFailuresDoNotOpenGlobalCircuit(t *testing.T) {
+	store := testAccountFiles(t)
+	if err := store.SetBoundProxy("u-1", "http://127.0.0.1:18080"); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		tokens:      store,
+		accountPool: newAccountHealth(),
+		settings:    &settingsStore{v: defaultRuntimeSettings()},
+	}
+	for i := 0; i < 10; i++ {
+		s.markAccountResult("u-1", &chathub.DialError{Kind: "TCP"})
+	}
+	if GlobalCircuitIsOpen() {
+		t.Fatal("bound proxy failures must remain proxy-scoped")
+	}
+	if !s.accountPool.Available("u-1") {
+		t.Fatal("bound proxy failures must not disable the account")
+	}
+}
+
+func TestAccountCooldownRecoveryWindows(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want time.Duration
+	}{
+		{name: "429 retry after", err: &UpstreamHTTPError{Status: http.StatusTooManyRequests, RetryAfter: 90}, want: 90 * time.Second},
+		{name: "401", err: &UpstreamHTTPError{Status: http.StatusUnauthorized}, want: 2 * time.Minute},
+		{name: "403", err: &UpstreamHTTPError{Status: http.StatusForbidden}, want: 24 * time.Hour},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newAccountHealth()
+			started := time.Now()
+			h.MarkFailure("acct", tt.err, time.Minute)
+			until, ok := h.CooldownUntil("acct")
+			if !ok {
+				t.Fatalf("missing cooldown for %v", tt.err)
+			}
+			got := until.Sub(started)
+			if got < tt.want-time.Second || got > tt.want+time.Second {
+				t.Fatalf("cooldown=%s, want %s", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfirmedAccountMeteringDenialStillCoolsAccount(t *testing.T) {
+	h := newAccountHealth()
+	err := &chathub.MeteringError{
+		Err: chathub.ErrMeteringThrottled,
+		Information: []any{map[string]any{
+			"meterError": "AccountCapabilityThrottled",
+			"hasAccess":  false,
+		}},
+	}
+	h.MarkFailure("acct", err, time.Minute)
+	if _, ok := h.CooldownUntil("acct"); !ok {
+		t.Fatal("confirmed account-level metering denial must create account cooldown")
+	}
+}
+
 func TestGlobalCircuitOnlyRecordsInfrastructureFailures(t *testing.T) {
 	nonGlobal := []error{
 		&UpstreamHTTPError{Status: 401},
@@ -427,10 +616,24 @@ func TestParseMeteringAggregatesDeniedItemsRegardlessOfOrder(t *testing.T) {
 		`[{"hasAccess":true},{"meterError":"denied","hasAccess":false}]`,
 	}
 	for _, raw := range cases {
-		meterError, hasAccess := ParseMetering("account", json.RawMessage(raw))
-		if hasAccess || meterError != "denied" {
-			t.Fatalf("ParseMetering(%s) = (%q, %v)", raw, meterError, hasAccess)
+		meterError, hasAccess, known := ParseMetering("account", json.RawMessage(raw))
+		if !known || hasAccess || meterError != "denied" {
+			t.Fatalf("ParseMetering(%s) = (%q, %v, %v)", raw, meterError, hasAccess, known)
 		}
+	}
+}
+
+func TestParseMeteringTreatsMissingHasAccessAsUnknown(t *testing.T) {
+	meterError, hasAccess, known := ParseMetering("account", json.RawMessage(`[{"meterError":"denied"}]`))
+	if known || hasAccess || meterError != "denied" {
+		t.Fatalf("ParseMetering missing hasAccess = (%q, %v, %v)", meterError, hasAccess, known)
+	}
+}
+
+func TestParseMeteringRecognizesExplicitAccess(t *testing.T) {
+	meterError, hasAccess, known := ParseMetering("account", json.RawMessage(`[{"hasAccess":true}]`))
+	if !known || !hasAccess || meterError != "" {
+		t.Fatalf("ParseMetering explicit access = (%q, %v, %v)", meterError, hasAccess, known)
 	}
 }
 
@@ -438,8 +641,8 @@ func TestAccountHealthMeteringDefaultsDeepCopySnapshotAndReset(t *testing.T) {
 	h := newAccountHealth()
 	const id = "acct-metering"
 
-	if _, hasAccess, _ := h.GetMetering(id); !hasAccess {
-		t.Fatal("missing metering state must default hasAccess to true")
+	if state := h.GetMetering(id); state.Known || state.HasAccess || !state.UpdatedAt.IsZero() {
+		t.Fatalf("missing metering state must be unknown: %#v", state)
 	}
 
 	throttling := map[string]any{
@@ -448,8 +651,17 @@ func TestAccountHealthMeteringDefaultsDeepCopySnapshotAndReset(t *testing.T) {
 		"nested":                           map[string]any{"value": "original"},
 	}
 	remaining := map[string]int{"Chat": 17}
+	observedAt := time.Unix(1_777_777_777, 0).UTC()
 	h.UpdateThrottling(id, throttling)
-	h.UpdateMetering(id, "meter-error", false, remaining)
+	h.UpdateMetering(id, accountMeteringUpdate{
+		MeterError:     "meter-error",
+		HasAccess:      false,
+		AccessKnown:    true,
+		AccessObserved: true,
+		Remaining:      remaining,
+		Source:         "chathub",
+		UpdatedAt:      observedAt,
+	})
 
 	throttling["nested"].(map[string]any)["value"] = "mutated"
 	remaining["Chat"] = 0
@@ -458,9 +670,15 @@ func TestAccountHealthMeteringDefaultsDeepCopySnapshotAndReset(t *testing.T) {
 	if stored["nested"].(map[string]any)["value"] != "original" {
 		t.Fatal("UpdateThrottling must deep-copy input")
 	}
-	meterError, hasAccess, gotRemaining := h.GetMetering(id)
-	if meterError != "meter-error" || hasAccess || gotRemaining["Chat"] != 17 {
-		t.Fatalf("unexpected metering state: error=%q access=%v remaining=%v", meterError, hasAccess, gotRemaining)
+	state := h.GetMetering(id)
+	if state.MeterError != "meter-error" || !state.Known || state.HasAccess || state.Remaining["Chat"] != 17 || state.Source != "chathub" || !state.UpdatedAt.Equal(observedAt) {
+		t.Fatalf("unexpected metering state: %#v", state)
+	}
+
+	h.UpdateMetering(id, accountMeteringUpdate{})
+	state = h.GetMetering(id)
+	if state.MeterError != "meter-error" || !state.Known || state.Remaining["Chat"] != 17 || !state.UpdatedAt.Equal(observedAt) {
+		t.Fatalf("empty update cleared the prior snapshot: %#v", state)
 	}
 
 	snapshot := h.Snapshot()
@@ -469,8 +687,8 @@ func TestAccountHealthMeteringDefaultsDeepCopySnapshotAndReset(t *testing.T) {
 	if h.GetThrottling(id).(map[string]any)["nested"].(map[string]any)["value"] != "original" {
 		t.Fatal("Snapshot must deep-copy throttling")
 	}
-	_, _, gotRemaining = h.GetMetering(id)
-	if gotRemaining["Chat"] != 17 {
+	state = h.GetMetering(id)
+	if state.Remaining["Chat"] != 17 {
 		t.Fatal("Snapshot must deep-copy remaining allowance")
 	}
 
@@ -478,7 +696,77 @@ func TestAccountHealthMeteringDefaultsDeepCopySnapshotAndReset(t *testing.T) {
 	if got := h.Snapshot(); len(got) != 0 {
 		t.Fatalf("reset left health state: %#v", got)
 	}
-	if meterError, hasAccess, remaining := h.GetMetering(id); meterError != "" || !hasAccess || len(remaining) != 0 {
-		t.Fatalf("reset left metering state: error=%q access=%v remaining=%v", meterError, hasAccess, remaining)
+	if state := h.GetMetering(id); state.MeterError != "" || state.Known || state.HasAccess || len(state.Remaining) != 0 || !state.UpdatedAt.IsZero() {
+		t.Fatalf("reset left metering state: %#v", state)
+	}
+}
+
+func TestRecordAccountChatErrorPreservesMeteringDenial(t *testing.T) {
+	h := newAccountHealth()
+	s := &Server{accountPool: h, settings: &settingsStore{v: defaultRuntimeSettings()}}
+	const id = "acct-metering-error"
+	information := []any{map[string]any{
+		"meterError": "ImageGenInsufficientTokensThrottled",
+		"hasAccess":  false,
+	}}
+
+	s.recordAccountChatResult(id, chathub.Result{}, &chathub.MeteringError{
+		Err:         chathub.ErrImageLimit,
+		Information: information,
+	})
+
+	state := h.GetMetering(id)
+	if !state.Known || state.HasAccess || state.MeterError != "ImageGenInsufficientTokensThrottled" {
+		t.Fatalf("metering denial was not retained: %#v", state)
+	}
+	if !h.Available(id) {
+		t.Fatal("image metering denial must not disable text")
+	}
+	if h.ImageGenAvailable(id) {
+		t.Fatal("image metering denial must disable image generation")
+	}
+}
+
+func TestImageSystemCapacityMeteringOnlyCoolsImageCapability(t *testing.T) {
+	h := newAccountHealth()
+	s := &Server{accountPool: h, settings: &settingsStore{v: defaultRuntimeSettings()}}
+	const id = "acct-image-capacity"
+	information := []any{map[string]any{
+		"meterError": "ImageGenSystemCapacityThrottled",
+		"hasAccess":  false,
+	}}
+
+	s.recordAccountChatResult(id, chathub.Result{}, &chathub.MeteringError{
+		Err:         chathub.ErrMeteringThrottled,
+		Information: information,
+	})
+
+	if !h.Available(id) {
+		t.Fatal("image system capacity must not disable text")
+	}
+	if h.ImageGenAvailable(id) {
+		t.Fatal("image system capacity must cool image generation")
+	}
+	snapshot := h.Snapshot()[id]
+	until, ok := snapshot["imageCooldownUntil"].(time.Time)
+	if !ok || time.Until(until) < 29*time.Minute || time.Until(until) > 31*time.Minute {
+		t.Fatalf("image capacity recovery=%v, want about 30 minutes", snapshot["imageCooldownUntil"])
+	}
+	if _, ok := snapshot["cooldownUntil"]; ok {
+		t.Fatalf("image capacity created account cooldown: %v", snapshot)
+	}
+}
+
+func TestServerRecordsAccountResultOnlyAtChatBoundary(t *testing.T) {
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if got := strings.Count(text, ".accountPool.MarkFailureScoped("); got != 1 {
+		t.Fatalf("server.go has %d direct MarkFailureScoped calls, want the single chat-boundary call", got)
+	}
+	if got := strings.Count(text, ".accountPool.MarkSuccess("); got != 1 {
+		t.Fatalf("server.go has %d direct MarkSuccess calls, want the single chat-boundary call", got)
 	}
 }

@@ -433,6 +433,8 @@ func ResetGlobalCircuit() {
 type accountHealth struct {
 	mu                     sync.Mutex
 	cooldown               map[string]time.Time
+	cooldownReason         map[string]string
+	cooldownTriggeredAt    map[string]time.Time
 	authFail               map[string]bool
 	limited                map[string]bool
 	calls                  map[string]uint64
@@ -440,9 +442,14 @@ type accountHealth struct {
 	imageLimitUntil        map[string]time.Time
 	imageGenCooldownUntil  map[string]time.Time
 	imageGenSystemCooldown map[string]time.Time
+	imageCooldownReason    map[string]string
+	imageCooldownTriggered map[string]time.Time
 	lastThrottling         map[string]any
 	lastMeterError         map[string]string
 	lastMeterAccess        map[string]bool
+	meteringKnown          map[string]bool
+	meteringUpdatedAt      map[string]time.Time
+	meteringSource         map[string]string
 	remainingAllowance     map[string]map[string]int
 	authFailReason         map[string]string
 	quotaAttempts          map[string]int
@@ -452,6 +459,8 @@ func newAccountHealth() *accountHealth {
 	ResetGlobalCircuit()
 	return &accountHealth{
 		cooldown:               map[string]time.Time{},
+		cooldownReason:         map[string]string{},
+		cooldownTriggeredAt:    map[string]time.Time{},
 		authFail:               map[string]bool{},
 		limited:                map[string]bool{},
 		calls:                  map[string]uint64{},
@@ -459,9 +468,14 @@ func newAccountHealth() *accountHealth {
 		imageLimitUntil:        map[string]time.Time{},
 		imageGenCooldownUntil:  map[string]time.Time{},
 		imageGenSystemCooldown: map[string]time.Time{},
+		imageCooldownReason:    map[string]string{},
+		imageCooldownTriggered: map[string]time.Time{},
 		lastThrottling:         map[string]any{},
 		lastMeterError:         map[string]string{},
 		lastMeterAccess:        map[string]bool{},
+		meteringKnown:          map[string]bool{},
+		meteringUpdatedAt:      map[string]time.Time{},
+		meteringSource:         map[string]string{},
 		remainingAllowance:     map[string]map[string]int{},
 		authFailReason:         map[string]string{},
 		quotaAttempts:          map[string]int{},
@@ -475,20 +489,54 @@ func (h *accountHealth) cleanupExpiredCooldownLocked(accountID string) {
 	}
 	wasRateLimited := h.limited[accountID]
 	delete(h.cooldown, accountID)
+	delete(h.cooldownReason, accountID)
+	delete(h.cooldownTriggeredAt, accountID)
 	delete(h.limited, accountID)
 	delete(h.authFail, accountID)
 	delete(h.authFailReason, accountID)
-	delete(h.imageLimited, accountID)
 	if wasRateLimited {
 		delete(h.calls, accountID)
 	}
 	delete(h.quotaAttempts, accountID)
+
+}
+
+func (h *accountHealth) cleanupExpiredImageCooldownLocked(accountID string) {
+	now := time.Now()
+	if until, ok := h.imageLimitUntil[accountID]; ok && !now.Before(until) {
+		delete(h.imageLimited, accountID)
+		delete(h.imageLimitUntil, accountID)
+	}
 	if t, ok := h.imageGenCooldownUntil[accountID]; ok && time.Now().After(t) {
 		delete(h.imageGenCooldownUntil, accountID)
 	}
 	if t, ok := h.imageGenSystemCooldown[accountID]; ok && time.Now().After(t) {
 		delete(h.imageGenSystemCooldown, accountID)
 	}
+	if !h.imageLimited[accountID] && h.imageGenCooldownUntil[accountID].IsZero() && h.imageGenSystemCooldown[accountID].IsZero() {
+		delete(h.imageCooldownReason, accountID)
+		delete(h.imageCooldownTriggered, accountID)
+	}
+}
+
+func (h *accountHealth) setAccountCooldownLocked(accountID string, category ErrorCategory, until time.Time) {
+	h.cooldown[accountID] = until
+	h.cooldownReason[accountID] = string(category)
+	h.cooldownTriggeredAt[accountID] = time.Now()
+}
+
+func (h *accountHealth) imageCooldownUntilLocked(accountID string) time.Time {
+	var until time.Time
+	for _, candidate := range []time.Time{
+		h.imageLimitUntil[accountID],
+		h.imageGenCooldownUntil[accountID],
+		h.imageGenSystemCooldown[accountID],
+	} {
+		if candidate.After(until) {
+			until = candidate
+		}
+	}
+	return until
 }
 
 func (h *accountHealth) MarkCall(accountID string) {
@@ -527,9 +575,38 @@ func (h *accountHealth) MarkImageLimited(accountID string) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	now := time.Now()
 	h.imageLimited[accountID] = true
-	h.imageLimitUntil[accountID] = time.Now().Add(24 * time.Hour)
-	h.cooldown[accountID] = time.Now().Add(24 * time.Hour)
+	h.imageLimitUntil[accountID] = now.Add(24 * time.Hour)
+	h.imageCooldownReason[accountID] = "IMAGE_LIMIT"
+	h.imageCooldownTriggered[accountID] = now
+}
+
+func (h *accountHealth) MarkImageFailure(accountID string, err error) {
+	if meterError, ok := meteringDenialName(accountID, err); ok {
+		switch meterError {
+		case "ImageGenInsufficientTokensThrottled":
+			h.MarkImageGenTokensThrottled(accountID)
+			return
+		case "ImageGenSystemCapacityThrottled":
+			h.MarkImageGenSystemThrottled(accountID)
+			return
+		}
+	}
+	h.MarkImageLimited(accountID)
+}
+
+func meteringDenialName(accountID string, err error) (string, bool) {
+	var meteringErr *chathub.MeteringError
+	if !errors.As(err, &meteringErr) {
+		return "", false
+	}
+	raw, marshalErr := json.Marshal(meteringErr.Information)
+	if marshalErr != nil {
+		return "", false
+	}
+	meterError, hasAccess, known := ParseMetering(accountID, raw)
+	return meterError, known && !hasAccess
 }
 
 func (h *accountHealth) ImageLimited(accountID string) bool {
@@ -538,14 +615,7 @@ func (h *accountHealth) ImageLimited(accountID string) bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.imageLimited[accountID] {
-		if until, ok := h.imageLimitUntil[accountID]; ok && time.Now().After(until) {
-			delete(h.imageLimited, accountID)
-			delete(h.imageLimitUntil, accountID)
-			delete(h.imageLimitUntil, accountID)
-		}
-	}
-	h.cleanupExpiredCooldownLocked(accountID)
+	h.cleanupExpiredImageCooldownLocked(accountID)
 	return h.imageLimited[accountID]
 }
 
@@ -558,6 +628,8 @@ func (h *accountHealth) MarkImageGenTokensThrottled(accountID string) {
 	now := time.Now().UTC()
 	tomorrow := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.UTC)
 	h.imageGenCooldownUntil[accountID] = tomorrow
+	h.imageCooldownReason[accountID] = "ImageGenInsufficientTokensThrottled"
+	h.imageCooldownTriggered[accountID] = now
 }
 
 func (h *accountHealth) MarkImageGenSystemThrottled(accountID string) {
@@ -566,7 +638,10 @@ func (h *accountHealth) MarkImageGenSystemThrottled(accountID string) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.imageGenSystemCooldown[accountID] = time.Now().Add(30 * time.Minute)
+	now := time.Now()
+	h.imageGenSystemCooldown[accountID] = now.Add(30 * time.Minute)
+	h.imageCooldownReason[accountID] = "ImageGenSystemCapacityThrottled"
+	h.imageCooldownTriggered[accountID] = now
 }
 
 func (h *accountHealth) ImageGenAvailable(accountID string) bool {
@@ -575,6 +650,10 @@ func (h *accountHealth) ImageGenAvailable(accountID string) bool {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.cleanupExpiredImageCooldownLocked(accountID)
+	if h.imageLimited[accountID] {
+		return false
+	}
 	if t, ok := h.imageGenCooldownUntil[accountID]; ok && time.Now().Before(t) {
 		return false
 	}
@@ -601,28 +680,62 @@ func (h *accountHealth) UpdateThrottling(accountID string, data any) {
 	h.lastThrottling[accountID] = copied
 }
 
-func (h *accountHealth) UpdateMetering(accountID, meterError string, hasAccess bool, remaining map[string]int) {
+type accountMeteringUpdate struct {
+	MeterError     string
+	HasAccess      bool
+	AccessKnown    bool
+	AccessObserved bool
+	Remaining      map[string]int
+	Source         string
+	UpdatedAt      time.Time
+}
+
+type accountMeteringState struct {
+	MeterError string
+	HasAccess  bool
+	Known      bool
+	Remaining  map[string]int
+	Source     string
+	UpdatedAt  time.Time
+}
+
+func (h *accountHealth) UpdateMetering(accountID string, update accountMeteringUpdate) {
 	if h == nil || accountID == "" {
+		return
+	}
+	if !update.AccessObserved && len(update.Remaining) == 0 {
 		return
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.lastMeterError[accountID] = meterError
-	h.lastMeterAccess[accountID] = hasAccess
-	if len(remaining) == 0 {
-		delete(h.remainingAllowance, accountID)
-		return
+	if update.AccessObserved {
+		h.lastMeterError[accountID] = update.MeterError
+		h.meteringKnown[accountID] = update.AccessKnown
+		if update.AccessKnown {
+			h.lastMeterAccess[accountID] = update.HasAccess
+		} else {
+			delete(h.lastMeterAccess, accountID)
+		}
 	}
-	copyRemaining := make(map[string]int, len(remaining))
-	for capability, allowance := range remaining {
-		copyRemaining[capability] = allowance
+	if len(update.Remaining) > 0 {
+		copyRemaining := make(map[string]int, len(update.Remaining))
+		for capability, allowance := range update.Remaining {
+			copyRemaining[capability] = allowance
+		}
+		h.remainingAllowance[accountID] = copyRemaining
 	}
-	h.remainingAllowance[accountID] = copyRemaining
+	if update.Source != "" {
+		h.meteringSource[accountID] = update.Source
+	}
+	if update.UpdatedAt.IsZero() {
+		update.UpdatedAt = time.Now()
+	}
+	h.meteringUpdatedAt[accountID] = update.UpdatedAt
 }
 
-func (h *accountHealth) GetMetering(accountID string) (string, bool, map[string]int) {
+func (h *accountHealth) GetMetering(accountID string) accountMeteringState {
 	if h == nil {
-		return "", true, nil
+		return accountMeteringState{}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -631,11 +744,15 @@ func (h *accountHealth) GetMetering(accountID string) (string, bool, map[string]
 	for capability, allowance := range remaining {
 		copyRemaining[capability] = allowance
 	}
-	hasAccess, ok := h.lastMeterAccess[accountID]
-	if !ok {
-		hasAccess = true
+	known := h.meteringKnown[accountID]
+	return accountMeteringState{
+		MeterError: h.lastMeterError[accountID],
+		HasAccess:  known && h.lastMeterAccess[accountID],
+		Known:      known,
+		Remaining:  copyRemaining,
+		Source:     h.meteringSource[accountID],
+		UpdatedAt:  h.meteringUpdatedAt[accountID],
 	}
-	return h.lastMeterError[accountID], hasAccess, copyRemaining
 }
 
 func (h *accountHealth) GetThrottling(accountID string) any {
@@ -669,37 +786,33 @@ func (h *accountHealth) AuthFailReason(accountID string) string {
 }
 
 func (h *accountHealth) MarkFailure(accountID string, err error, window time.Duration) {
-	if window <= 0 {
-		window = 60 * time.Second
+	h.markFailure(accountID, err, window, true)
+}
+
+func (h *accountHealth) MarkFailureScoped(accountID string, err error, window time.Duration, proxyScoped bool) {
+	h.markFailure(accountID, err, window, !proxyScoped)
+}
+
+func (h *accountHealth) markFailure(accountID string, err error, _ time.Duration, recordGlobal bool) {
+	if h == nil || accountID == "" || err == nil {
+		return
 	}
 	cat := ClassifyError(err)
-	// ChatHub's generic fallback is a transient, tenant-scoped completion
-	// failure. It should trigger the caller's bounded retry, but must not cool
-	// down or quarantine the account; doing so can drain the whole pool when
-	// several accounts share the same upstream condition.
-	if errors.Is(err, chathub.ErrEmptyCompletion) {
-		h.mu.Lock()
-		delete(h.cooldown, accountID)
-		delete(h.limited, accountID)
-		h.mu.Unlock()
-		return
+	if recordGlobal {
+		GlobalCircuitRecord(err)
 	}
-	GlobalCircuitRecord(err)
-	if cat == CategoryClientCanceled {
-		return
-	}
-	if cat == CategoryGlobalUnavailable {
-		h.mu.Lock()
-		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, 0, 1))
-		h.mu.Unlock()
-		return
+	if meterError, denied := meteringDenialName(accountID, err); denied {
+		switch meterError {
+		case "ImageGenInsufficientTokensThrottled", "ImageGenSystemCapacityThrottled":
+			return
+		}
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch cat {
 	case CategoryAuthExpired401:
 		cooldown := CooldownForCategory(cat, 0, 1)
-		h.cooldown[accountID] = time.Now().Add(cooldown)
+		h.setAccountCooldownLocked(accountID, cat, time.Now().Add(cooldown))
 		h.authFail[accountID] = true
 		delete(h.limited, accountID)
 		var httpErr *UpstreamHTTPError
@@ -727,7 +840,7 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 		if errors.As(err, &dialErr403) && dialErr403.Kind == "DESIGNER_DISABLED" {
 			return
 		}
-		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, 0, 1))
+		h.setAccountCooldownLocked(accountID, cat, time.Now().Add(CooldownForCategory(cat, 0, 1)))
 		h.authFail[accountID] = true
 		delete(h.limited, accountID)
 		h.authFailReason[accountID] = "403"
@@ -745,92 +858,41 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 		h.limited[accountID] = true
 		if errors.Is(err, chathub.ErrMeteringThrottled) && RetryAfterSeconds(err) == 0 {
 			h.quotaAttempts[accountID] = 0
-			h.cooldown[accountID] = time.Now().Add(15 * time.Minute)
+			h.setAccountCooldownLocked(accountID, cat, time.Now().Add(15*time.Minute))
 			return
 		}
 		attempt := h.quotaAttempts[accountID] + 1
 		h.quotaAttempts[accountID] = attempt
 		cd := CooldownForCategory(cat, RetryAfterSeconds(err), attempt)
-		h.cooldown[accountID] = time.Now().Add(cd)
-		return
-	case CategoryOverload503:
-		delete(h.authFail, accountID)
-		delete(h.authFailReason, accountID)
-		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, RetryAfterSeconds(err), 1))
-		return
-	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout:
-		delete(h.authFail, accountID)
-		delete(h.authFailReason, accountID)
-		cd := CooldownForCategory(cat, 0, 1)
-		h.cooldown[accountID] = time.Now().Add(cd)
-		return
-	case CategoryUpstreamStructured:
-		cd := CooldownForCategory(cat, 0, 1)
-		h.cooldown[accountID] = time.Now().Add(cd)
+		h.setAccountCooldownLocked(accountID, cat, time.Now().Add(cd))
 		return
 	case CategoryUserBanned:
 		h.authFail[accountID] = true
 		h.authFailReason[accountID] = "banned"
-		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, 0, 1))
+		h.setAccountCooldownLocked(accountID, cat, time.Now().Add(CooldownForCategory(cat, 0, 1)))
 		return
 	case CategoryUserThrottled:
 		h.authFail[accountID] = true
 		h.authFailReason[accountID] = "throttled"
-		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, 0, 1))
-		return
-	case CategoryInsufficientTokens:
-		delete(h.authFail, accountID)
-		delete(h.authFailReason, accountID)
-		h.limited[accountID] = true
-		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, 0, 1))
-		return
-	case CategoryRetryable422:
-		delete(h.authFail, accountID)
-		delete(h.authFailReason, accountID)
-		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, 0, 1))
+		h.setAccountCooldownLocked(accountID, cat, time.Now().Add(CooldownForCategory(cat, 0, 1)))
 		return
 	default:
-		delete(h.authFail, accountID)
-		delete(h.authFailReason, accountID)
-		cd := window
-		if cd > 30*time.Second {
-			cd = 30 * time.Second
-		}
-		h.cooldown[accountID] = time.Now().Add(cd)
+		return
 	}
 }
 
 func (h *accountHealth) MarkSuccess(accountID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	imageLimited := h.imageLimited[accountID]
-	imageLimitUntil := h.imageLimitUntil[accountID]
-	imageGenCooldown := h.imageGenCooldownUntil[accountID]
-	imageGenSysCooldown := h.imageGenSystemCooldown[accountID]
 	delete(h.cooldown, accountID)
+	delete(h.cooldownReason, accountID)
+	delete(h.cooldownTriggeredAt, accountID)
 	delete(h.authFail, accountID)
 	delete(h.limited, accountID)
 	delete(h.authFailReason, accountID)
 	delete(h.quotaAttempts, accountID)
 	GlobalCircuitRecord(nil)
-	if imageLimited && time.Now().Before(imageLimitUntil) {
-		h.imageLimited[accountID] = true
-		h.imageLimitUntil[accountID] = imageLimitUntil
-		h.cooldown[accountID] = imageLimitUntil
-	} else {
-		delete(h.imageLimited, accountID)
-		delete(h.imageLimitUntil, accountID)
-	}
-	if !imageGenCooldown.IsZero() && time.Now().Before(imageGenCooldown) {
-		h.imageGenCooldownUntil[accountID] = imageGenCooldown
-	} else {
-		delete(h.imageGenCooldownUntil, accountID)
-	}
-	if !imageGenSysCooldown.IsZero() && time.Now().Before(imageGenSysCooldown) {
-		h.imageGenSystemCooldown[accountID] = imageGenSysCooldown
-	} else {
-		delete(h.imageGenSystemCooldown, accountID)
-	}
+	h.cleanupExpiredImageCooldownLocked(accountID)
 }
 
 func (h *accountHealth) Available(accountID string) bool {
@@ -874,6 +936,12 @@ func (h *accountHealth) Snapshot() map[string]map[string]any {
 	for id := range h.authFail {
 		ids[id] = true
 	}
+	for id := range h.cooldownReason {
+		ids[id] = true
+	}
+	for id := range h.cooldownTriggeredAt {
+		ids[id] = true
+	}
 	for id := range h.limited {
 		ids[id] = true
 	}
@@ -887,6 +955,15 @@ func (h *accountHealth) Snapshot() map[string]map[string]any {
 		ids[id] = true
 	}
 	for id := range h.lastMeterAccess {
+		ids[id] = true
+	}
+	for id := range h.meteringKnown {
+		ids[id] = true
+	}
+	for id := range h.meteringUpdatedAt {
+		ids[id] = true
+	}
+	for id := range h.meteringSource {
 		ids[id] = true
 	}
 	for id := range h.remainingAllowance {
@@ -904,12 +981,24 @@ func (h *accountHealth) Snapshot() map[string]map[string]any {
 	for id := range h.imageGenSystemCooldown {
 		ids[id] = true
 	}
+	for id := range h.imageCooldownReason {
+		ids[id] = true
+	}
+	for id := range h.imageCooldownTriggered {
+		ids[id] = true
+	}
 	for id := range ids {
 		h.cleanupExpiredCooldownLocked(id)
+		h.cleanupExpiredImageCooldownLocked(id)
 		m := map[string]any{}
 		if until, ok := h.cooldown[id]; ok {
 			m["available"] = time.Now().After(until)
 			m["cooldownUntil"] = until
+			m["cooldownReason"] = h.cooldownReason[id]
+			m["cooldownScope"] = "account"
+			if triggeredAt := h.cooldownTriggeredAt[id]; !triggeredAt.IsZero() {
+				m["cooldownTriggeredAt"] = triggeredAt
+			}
 			if catAttempts, ok := h.quotaAttempts[id]; ok && catAttempts > 0 {
 				m["quotaAttempts"] = catAttempts
 			}
@@ -924,6 +1013,14 @@ func (h *accountHealth) Snapshot() map[string]map[string]any {
 		}
 		if h.imageLimited[id] {
 			m["imageLimited"] = true
+		}
+		if imageUntil := h.imageCooldownUntilLocked(id); !imageUntil.IsZero() {
+			m["imageCooldownUntil"] = imageUntil
+			m["imageCooldownReason"] = h.imageCooldownReason[id]
+			m["imageCooldownScope"] = "capability"
+			if triggeredAt := h.imageCooldownTriggered[id]; !triggeredAt.IsZero() {
+				m["imageCooldownTriggeredAt"] = triggeredAt
+			}
 		}
 		if t, ok := h.imageGenCooldownUntil[id]; ok && !t.IsZero() {
 			if time.Now().Before(t) {
@@ -946,11 +1043,16 @@ func (h *accountHealth) Snapshot() map[string]map[string]any {
 		if meterError := h.lastMeterError[id]; meterError != "" {
 			m["meterError"] = meterError
 		}
-		hasAccess, ok := h.lastMeterAccess[id]
-		if !ok {
-			hasAccess = true
+		m["meteringKnown"] = h.meteringKnown[id]
+		if h.meteringKnown[id] {
+			m["hasAccess"] = h.lastMeterAccess[id]
 		}
-		m["hasAccess"] = hasAccess
+		if updatedAt := h.meteringUpdatedAt[id]; !updatedAt.IsZero() {
+			m["meteringUpdatedAt"] = updatedAt
+		}
+		if source := h.meteringSource[id]; source != "" {
+			m["meteringSource"] = source
+		}
 		if remaining := h.remainingAllowance[id]; len(remaining) > 0 {
 			copied := make(map[string]int, len(remaining))
 			for capability, allowance := range remaining {
@@ -979,6 +1081,8 @@ func (h *accountHealth) ClearAllCooldowns() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.cooldown = map[string]time.Time{}
+	h.cooldownReason = map[string]string{}
+	h.cooldownTriggeredAt = map[string]time.Time{}
 	h.authFail = map[string]bool{}
 	h.limited = map[string]bool{}
 	h.calls = map[string]uint64{}
@@ -986,9 +1090,14 @@ func (h *accountHealth) ClearAllCooldowns() {
 	h.imageLimitUntil = map[string]time.Time{}
 	h.imageGenCooldownUntil = map[string]time.Time{}
 	h.imageGenSystemCooldown = map[string]time.Time{}
+	h.imageCooldownReason = map[string]string{}
+	h.imageCooldownTriggered = map[string]time.Time{}
 	h.lastThrottling = map[string]any{}
 	h.lastMeterError = map[string]string{}
 	h.lastMeterAccess = map[string]bool{}
+	h.meteringKnown = map[string]bool{}
+	h.meteringUpdatedAt = map[string]time.Time{}
+	h.meteringSource = map[string]string{}
 	h.remainingAllowance = map[string]map[string]int{}
 	h.authFailReason = map[string]string{}
 	h.quotaAttempts = map[string]int{}

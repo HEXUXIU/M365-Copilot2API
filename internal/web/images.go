@@ -75,7 +75,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	explicitAccount := firstNonEmpty(b.AccountID, b.User)
-	acc, err := s.resolveAccount(explicitAccount)
+	acc, err := s.resolveImageAccount(explicitAccount)
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -112,20 +112,19 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		// keeps transient upstream failures from surfacing as avoidable 502s.
 		maxAttempts = 3
 	}
+	attempted := make(map[string]struct{}, maxAttempts)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
-			next, nextErr := s.nextHealthyAccount(acc.ID)
+			next, nextErr := s.nextImageAccountExcluding(attempted)
 			if nextErr != nil {
 				break
 			}
 			acc = next
 		}
+		attempted[acc.ID] = struct{}{}
 		res, err = s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, request)
 		if err != nil {
 			lastErr = err
-			if errors.Is(err, chathub.ErrImageLimit) && s.accountPool != nil {
-				s.accountPool.MarkImageLimited(acc.ID)
-			}
 			if attempt+1 >= maxAttempts || !(IsTransientUpstreamFailure(err) || IsRateLimited(err) || IsAuthFailure(err) || errors.Is(err, chathub.ErrImageLimit) || IsEmptyCompletion(err)) {
 				break
 			}

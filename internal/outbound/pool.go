@@ -13,14 +13,16 @@ import (
 )
 
 type poolEntry struct {
-	raw       string
-	clients   *Clients
-	failures  int
-	cooldown  time.Time
-	lastCheck time.Time
-	latency   time.Duration
-	lastError string
-	health    string
+	raw                 string
+	clients             *Clients
+	failures            int
+	cooldown            time.Time
+	cooldownReason      string
+	cooldownTriggeredAt time.Time
+	lastCheck           time.Time
+	latency             time.Duration
+	lastError           string
+	health              string
 }
 type Pool struct {
 	mu      sync.Mutex
@@ -103,6 +105,26 @@ func proxyBaseDuration(err error) time.Duration {
 	}
 }
 
+func proxyErrorCategory(err error) string {
+	s := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(s, "socks"):
+		return "SOCKS5"
+	case strings.Contains(s, "no such host") || strings.Contains(s, "dns"):
+		return "DNS"
+	case strings.Contains(s, "tls") || strings.Contains(s, "certificate") || strings.Contains(s, "x509"):
+		return "TLS"
+	case strings.Contains(s, "handshake"):
+		return "WS_HANDSHAKE"
+	case strings.Contains(s, "timeout") || strings.Contains(s, "deadline"):
+		return "TIMEOUT"
+	case strings.Contains(s, "connection refused") || strings.Contains(s, "connection reset") || strings.Contains(s, "broken pipe") || strings.Contains(s, "network is unreachable"):
+		return "TCP"
+	default:
+		return "PROXY_TRANSPORT"
+	}
+}
+
 func (p *Pool) mark(raw string, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -111,6 +133,8 @@ func (p *Pool) mark(raw string, err error) {
 			if err == nil {
 				e.failures = 0
 				e.cooldown = time.Time{}
+				e.cooldownReason = ""
+				e.cooldownTriggeredAt = time.Time{}
 				e.lastError = ""
 				e.health = "reachable"
 			} else {
@@ -131,7 +155,10 @@ func (p *Pool) mark(raw string, err error) {
 				if d < 5*time.Second {
 					d = 5 * time.Second
 				}
-				e.cooldown = time.Now().Add(d)
+				now := time.Now()
+				e.cooldown = now.Add(d)
+				e.cooldownReason = proxyErrorCategory(err)
+				e.cooldownTriggeredAt = now
 				e.lastError = err.Error()
 				e.health = "cooldown"
 			}
@@ -190,7 +217,13 @@ func (p *Pool) List() []map[string]any {
 	defer p.mu.Unlock()
 	out := make([]map[string]any, 0, len(p.entries))
 	for _, e := range p.entries {
-		out = append(out, map[string]any{"url": e.raw, "failures": e.failures, "cooldownUntil": e.cooldown, "lastCheck": e.lastCheck, "latencyMs": e.latency.Milliseconds(), "lastError": e.lastError, "health": e.health})
+		entry := map[string]any{"url": e.raw, "failures": e.failures, "cooldownUntil": e.cooldown, "lastCheck": e.lastCheck, "latencyMs": e.latency.Milliseconds(), "lastError": e.lastError, "health": e.health}
+		if !e.cooldown.IsZero() {
+			entry["cooldownReason"] = e.cooldownReason
+			entry["cooldownTriggeredAt"] = e.cooldownTriggeredAt
+			entry["cooldownScope"] = "proxy"
+		}
+		out = append(out, entry)
 	}
 	return out
 }

@@ -1203,17 +1203,16 @@ function renderAccounts(){
   list.forEach(x=>{
     const cooldown=x.cooldownUntil?`<div style="font-size:11px;color:var(--muted);margin-top:3px"><span>Cooldown until</span> ${new Date(x.cooldownUntil).toLocaleString()}</div>`:'';
     const status=x.status==='cooldown'?`<div><span class="status cooldown"><i></i>Cooldown</span>${cooldown}</div>`:x.status==='online'?'<span class="status online"><i></i>Online</span>':'<span class="status offline"><i></i>Offline</span>';
-    const calls=(x.rateLimited?`Limited after ${x.callCount||0} calls`:`Called ${x.callCount||0} times`)+accountQuotaDetails(x);
+    const calls=x.rateLimited?`Limited after ${x.callCount||0} calls`:`Called ${x.callCount||0} times`;
     const scheduleEnabled=x.scheduleEnabled!==false;
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td><div class="account-cell"><div class="avatar"></div><div><b></b><div class="account-email" style="font-size:11px;color:var(--muted)"></div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}<div style="margin-top:6px"><button class="btn-sm btn" data-account-action="probe">刷新额度</button></div></td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" data-account-action="schedule">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td><span class="account-proxy" style="font-size:11px;word-break:break-all"></span> <button class="btn-sm btn" style="margin-top:2px" data-account-action="proxy">Bind</button></td><td><button class="btn-sm btn danger" data-account-action="delete">Delete</button></td>`;
+    tr.innerHTML=`<td><div class="account-cell"><div class="avatar"></div><div><b></b><div class="account-email" style="font-size:11px;color:var(--muted)"></div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" data-account-action="schedule">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td><span class="account-proxy" style="font-size:11px;word-break:break-all"></span> <button class="btn-sm btn" style="margin-top:2px" data-account-action="proxy">Bind</button></td><td><button class="btn-sm btn danger" data-account-action="delete">Delete</button></td>`;
     tr.querySelector('.avatar').textContent=(x.displayName||x.email||'M')[0];
     tr.querySelector('b').textContent=x.displayName||x.email||'';
     tr.querySelector('.account-email').textContent=x.email||'';
     const proxy=tr.querySelector('.account-proxy');proxy.textContent=x.boundProxy||'—';if(!x.boundProxy)proxy.style.color='var(--muted)';
     tr.querySelector('[data-account-action="schedule"]').addEventListener('click',()=>toggleAccountSchedule(x.id,!scheduleEnabled));
     tr.querySelector('[data-account-action="proxy"]').addEventListener('click',()=>bindAccountProxy(x.id,x.boundProxy||''));
-    tr.querySelector('[data-account-action="probe"]').addEventListener('click',()=>probeAccount(x.id, tr.querySelector('[data-account-action="probe"]')));
     tr.querySelector('[data-account-action="delete"]').addEventListener('click',()=>deleteAccount(x.id));
     rows.append(tr);
   });
@@ -1233,7 +1232,6 @@ async function loadAccounts(){
     const d=await api('/api/accounts');
     _accountsCache=d.accounts||[];
     renderAccounts();
-    renderQuotaDashboard();
   }catch(e){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=7;td.className='empty';td.textContent=e.message;tr.append(td);$('accountRows').replaceChildren(tr);}
 }
 function startAccountsPolling(){

@@ -2,9 +2,12 @@ package web
 
 import (
 	"fmt"
-	"m365-copilot2api/internal/chathub"
 	"strings"
+
+	"m365-copilot2api/internal/chathub"
 )
+
+const maxPromptImageAttachments = 10
 
 func flattenPromptMessagesBudgeted(messages []oaiMsg, attachments []chathub.Attachment, budget int) (string, []chathub.Attachment, bool, error) {
 	truncatedMsgs, truncated, err := slidingWindow(messages, budget)
@@ -21,6 +24,7 @@ func flattenAtomsAlias(atoms []contextAtom, attachments []chathub.Attachment) (s
 }
 
 func flattenPromptMessages(messages []oaiMsg, attachments []chathub.Attachment) (string, []chathub.Attachment) {
+	preferredAttachmentCount := len(attachments)
 	var systemParts []string
 	var rest []oaiMsg
 	for _, m := range messages {
@@ -77,5 +81,47 @@ func flattenPromptMessages(messages []oaiMsg, attachments []chathub.Attachment) 
 		}
 		b.WriteString(fmt.Sprintf("\n[%s]\n%s\n", role, txt))
 	}
-	return strings.TrimSpace(b.String()), attachments
+	return strings.TrimSpace(b.String()), limitPromptImageAttachments(attachments, preferredAttachmentCount)
+}
+
+// limitPromptImageAttachments prevents full-history agent requests from
+// re-uploading every screenshot on each turn. Request-level attachments are
+// preferred, then the most recent images from message history are retained.
+func limitPromptImageAttachments(attachments []chathub.Attachment, preferredPrefix int) []chathub.Attachment {
+	imageCount := 0
+	for _, attachment := range attachments {
+		if attachment.Type == "image" {
+			imageCount++
+		}
+	}
+	if imageCount <= maxPromptImageAttachments {
+		return attachments
+	}
+	if preferredPrefix < 0 {
+		preferredPrefix = 0
+	}
+	if preferredPrefix > len(attachments) {
+		preferredPrefix = len(attachments)
+	}
+	keep := make([]bool, len(attachments))
+	remaining := maxPromptImageAttachments
+	for i := preferredPrefix - 1; i >= 0 && remaining > 0; i-- {
+		if attachments[i].Type == "image" {
+			keep[i] = true
+			remaining--
+		}
+	}
+	for i := len(attachments) - 1; i >= preferredPrefix && remaining > 0; i-- {
+		if attachments[i].Type == "image" {
+			keep[i] = true
+			remaining--
+		}
+	}
+	out := make([]chathub.Attachment, 0, len(attachments)-imageCount+maxPromptImageAttachments)
+	for i, attachment := range attachments {
+		if attachment.Type != "image" || keep[i] {
+			out = append(out, attachment)
+		}
+	}
+	return out
 }

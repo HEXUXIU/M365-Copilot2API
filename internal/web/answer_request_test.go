@@ -4,9 +4,19 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"m365-copilot2api/internal/chathub"
 )
+
+func TestAnswerRequestTimeoutCoversContinuationBudget(t *testing.T) {
+	if got := answerRequestTimeout(300); got != 15*time.Minute {
+		t.Fatalf("answerRequestTimeout(300)=%s", got)
+	}
+	if got := answerRequestTimeout(1800); got != time.Hour {
+		t.Fatalf("answerRequestTimeout cap=%s", got)
+	}
+}
 
 func answerRequestTestBody() oaiReq {
 	return oaiReq{

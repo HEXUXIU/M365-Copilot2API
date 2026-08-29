@@ -14,8 +14,8 @@ import (
 	"net/http/httptest"
 	"sort"
 	"strings"
+	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -23,7 +23,7 @@ import (
 type explicitToolRequiredContextKey struct{}
 type responsesAdapterContextKey struct{}
 
-const responsesTextTailBytes = 512
+const responsesHeartbeatInterval = 15 * time.Second
 
 func carryExplicitToolRequirement(r *http.Request, required bool) *http.Request {
 	if !required {
@@ -135,6 +135,34 @@ func (p *pipeResponseWriter) Write(b []byte) (int, error) {
 }
 func (p *pipeResponseWriter) Flush() {}
 
+func startSSEHeartbeat(ctx context.Context, sw *sseWriter, interval time.Duration) func() {
+	done := make(chan struct{})
+	var once sync.Once
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := sw.raw(": keepalive\n\n"); err != nil {
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		once.Do(func() { close(done) })
+		wg.Wait()
+	}
+}
+
 // streamResponsesAdapter converts the internal OpenAI SSE incrementally instead
 // of buffering the entire completion in httptest.ResponseRecorder.
 func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, beforeCompleted func([]byte) error) bool {
@@ -146,6 +174,10 @@ func (s *Server) streamResponsesAdapterWithRunner(w http.ResponseWriter, r *http
 }
 
 func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, run func(http.ResponseWriter, *http.Request), beforeCompleted func([]byte) error) bool {
+	return s.streamResponsesAdapterWithRunnerAndCompletionInterval(w, r, o, model, responseID, affinitySessionID, tenant, run, beforeCompleted, responsesHeartbeatInterval)
+}
+
+func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.ResponseWriter, r *http.Request, o oaiReq, model, responseID, affinitySessionID, tenant string, run func(http.ResponseWriter, *http.Request), beforeCompleted func([]byte) error, heartbeatInterval time.Duration) bool {
 	o.Stream = true
 	b, _ := json.Marshal(o)
 	r2 := r.Clone(r.Context())
@@ -173,20 +205,25 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, _ := w.(http.Flusher)
+	sw := newSSEWriter(w, flusher)
 	sequence := 0
 	emit := func(name string, v any) error {
 		if event, ok := v.(map[string]any); ok {
 			event["sequence_number"] = sequence
 			sequence++
 		}
-		return writeSSE(r, w, flusher, name, v)
+		payload, _ := json.Marshal(v)
+		return sw.raw("event: " + name + "\ndata: " + string(payload) + "\n\n")
 	}
 	id := responseID
 	created := time.Now().Unix()
-	emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}})
+	if err := emit("response.created", map[string]any{"type": "response.created", "response": map[string]any{"id": id, "object": "response", "created_at": created, "status": "in_progress", "model": model, "output": []any{}}}); err != nil {
+		return false
+	}
+	stopHeartbeat := startSSEHeartbeat(r.Context(), sw, heartbeatInterval)
+	defer stopHeartbeat()
 
 	var text strings.Builder
-	var textPending strings.Builder
 	var textEmitted strings.Builder
 	authoritativeText := ""
 	hasAuthoritativeText := false
@@ -203,39 +240,26 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 		nextOutputIndex++
 		return index
 	}
-	ensureTextStarted := func() {
+	ensureTextStarted := func() error {
 		if textStarted {
-			return
+			return nil
 		}
 		textStarted = true
 		textOutputIndex = allocateOutputIndex()
-		emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": textOutputIndex, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{}}})
-		emit("response.content_part.added", map[string]any{"type": "response.content_part.added", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
+		if err := emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": textOutputIndex, "item": map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "in_progress", "content": []any{}}}); err != nil {
+			return err
+		}
+		return emit("response.content_part.added", map[string]any{"type": "response.content_part.added", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "part": map[string]any{"type": "output_text", "text": "", "annotations": []any{}}})
 	}
 	emitTextDelta := func(part string) error {
 		if part == "" {
 			return nil
 		}
-		ensureTextStarted()
+		if err := ensureTextStarted(); err != nil {
+			return err
+		}
 		textEmitted.WriteString(part)
 		return emit("response.output_text.delta", map[string]any{"type": "response.output_text.delta", "output_index": textOutputIndex, "content_index": 0, "item_id": messageID, "delta": part})
-	}
-	flushStableText := func() error {
-		value := textPending.String()
-		if len(value) <= responsesTextTailBytes {
-			return nil
-		}
-		cut := len(value) - responsesTextTailBytes
-		for cut > 0 && !utf8.RuneStart(value[cut]) {
-			cut--
-		}
-		if cut == 0 {
-			return nil
-		}
-		prefix := value[:cut]
-		textPending.Reset()
-		textPending.WriteString(value[cut:])
-		return emitTextDelta(prefix)
 	}
 	type tcState struct {
 		ID, Name, Args, Type string
@@ -300,9 +324,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 		}
 		if content, ok := delta["content"].(string); ok && content != "" {
 			text.WriteString(content)
-			textPending.WriteString(content)
-			ensureTextStarted()
-			if err := flushStableText(); err != nil {
+			if err := emitTextDelta(content); err != nil {
 				return false
 			}
 		}
@@ -407,7 +429,6 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 	}
 	text.Reset()
 	text.WriteString(finalText)
-	textPending.Reset()
 	if err := emitTextDelta(finalText[len(textEmitted.String()):]); err != nil {
 		return false
 	}
@@ -474,7 +495,9 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 	}
 	if text.Len() > 0 {
 		if !textStarted {
-			ensureTextStarted()
+			if err := ensureTextStarted(); err != nil {
+				return false
+			}
 		}
 		contentPart := map[string]any{"type": "output_text", "text": text.String(), "annotations": []any{}}
 		item := map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{contentPart}}
@@ -834,6 +857,24 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		writeAnthropicError(w, 400, "invalid_request_error", err.Error())
 		return
 	}
+	model := firstNonEmpty(body.Model, defaultPublicModelName)
+	if body.Stream {
+		estimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, "")
+		fallback := reuseUsage{PromptTokens: numberInt64(estimate.Values["input_tokens"])}
+		u, ok := s.streamAnthropicAdapter(w, r, o, model, fallback)
+		cached := confirmedCachedTokens(u)
+		status := 200
+		if !ok {
+			status = http.StatusBadGateway
+		}
+		s.usage.record(UsageRecord{
+			Time: time.Now(), APIKeyPrefix: extractAPIKey(r), Model: model, Endpoint: "/v1/messages",
+			InputTokens: u.PromptTokens - cached, OutputTokens: u.CompletionTokens, CacheTokens: cached,
+			CacheHit: u.Confirmed, CacheSource: usageSourceFromCachedTokens(cached),
+			DurationMs: time.Since(startedAt).Milliseconds(), Status: status,
+		})
+		return
+	}
 	out, raw, status, err := s.runOpenAIAdapter(r, o)
 	if status >= 400 {
 		writeAnthropicError(w, status, "api_error", errorMessage(raw, "upstream protocol error"))
@@ -844,7 +885,7 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	estimate := estimateResponsesUsage(
-		firstNonEmpty(body.Model, defaultPublicModelName),
+		model,
 		o.Messages,
 		o.Tools,
 		o.ToolChoice,
@@ -856,7 +897,7 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 	s.usage.record(UsageRecord{
 		Time:         time.Now(),
 		APIKeyPrefix: extractAPIKey(r),
-		Model:        firstNonEmpty(body.Model, defaultPublicModelName),
+		Model:        model,
 		Endpoint:     "/v1/messages",
 		InputTokens:  u.PromptTokens - confirmedCachedTokens(u),
 		OutputTokens: u.CompletionTokens,
@@ -866,7 +907,7 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})
-	writeAnthropicResult(w, firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, out, anthropicUsage(u), source)
+	writeAnthropicResult(w, model, false, out, anthropicUsage(u), source)
 }
 
 func adapterOutputForUsage(out map[string]any) string {

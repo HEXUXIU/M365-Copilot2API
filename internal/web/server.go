@@ -1292,6 +1292,20 @@ func requiredToolRouterAttemptTimeout(chatTimeoutSeconds int) time.Duration {
 	return timeout
 }
 
+func answerRequestTimeout(chatTimeoutSeconds int) time.Duration {
+	base := time.Duration(chatTimeoutSeconds) * time.Second
+	if base <= 0 {
+		base = 120 * time.Second
+	}
+	// A final answer can use its initial ChatHub turn plus two bounded
+	// continuation turns. The configured value remains the per-turn budget.
+	total := base * 3
+	if total > time.Hour {
+		return time.Hour
+	}
+	return total
+}
+
 type chatBody struct {
 	AccountID             string                   `json:"accountId"`
 	Message               string                   `json:"message"`
@@ -1780,7 +1794,7 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 	if len(ledger.Completed) > 0 {
 		answerPrompt += "\nFINAL ANSWER RULE: Report only actions supported by completed tool results. If the goal is not fully verified, state exactly what remains unconfirmed."
 	}
-	req := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, LicenseType: cfg.LicenseType, Scenario: cfg.Scenario, FeatureFlags: flags, Locale: locale.Locale, Market: locale.Market, TimeZone: locale.TimeZone, TimeZoneOffset: locale.TimeZoneOffset, DeviceOS: locale.DeviceOS, DisableMemory: disableMemory}
+	req := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, LicenseType: cfg.LicenseType, Scenario: cfg.Scenario, FeatureFlags: flags, Locale: locale.Locale, Market: locale.Market, TimeZone: locale.TimeZone, TimeZoneOffset: locale.TimeZoneOffset, DeviceOS: locale.DeviceOS, DisableMemory: disableMemory, AutoContinue: true}
 	if planningMode == "native" {
 		req.Tools = body.Tools
 		req.ToolChoice = body.ToolChoice
@@ -2096,7 +2110,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	protocolMode := s.settings.get().ToolProtocolMode
 	toolCfg := s.settings.get()
 
-	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), answerRequestTimeout(s.settings.get().ChatTimeoutSeconds))
 	defer cancel()
 	account := chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}
 	localeInfo := parseLocaleFromHeaders(r)
@@ -2218,6 +2232,26 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		// Only fall through to text streaming when the router explicitly selects
 		// no tool; this prevents a natural-language preamble from becoming a
 		// completed assistant turn with the actual call lost.
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		routerFlusher, ok := w.(http.Flusher)
+		if !ok {
+			writeOpenAIError(w, http.StatusInternalServerError, "server_error", "stream unsupported")
+			return
+		}
+		routerStream := newSSEWriter(w, routerFlusher)
+		if err := routerStream.raw(": connected\n\n"); err != nil {
+			return
+		}
+		stopRouterHeartbeat := startSSEHeartbeat(r.Context(), routerStream, responsesHeartbeatInterval)
+		writeRouterStreamError := func(routeErr error) {
+			stopRouterHeartbeat()
+			message := sanitizePublicInternalText(upstreamError(routeErr))
+			_ = routerStream.data(mustJSON(map[string]any{"error": map[string]any{"message": message, "code": "upstream_error"}}))
+			_ = routerStream.data("[DONE]")
+		}
 		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
@@ -2235,17 +2269,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 						routeErr = nil
 					} else {
 						s.accountPool.MarkFailure(next.ID, routeErr2, s.getRateLimitCooldown())
-						writeUpstreamErrorWithAccount(w, routeErr2, next.ID)
+						writeRouterStreamError(routeErr2)
 						return
 					}
 				}
 			}
 			if routeErr != nil {
-				if IsRateLimited(routeErr) {
-					writeUpstreamErrorWithAccount(w, routeErr, acc.ID)
-				} else {
-					writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "tool router: "+routeErr.Error())
-				}
+				writeRouterStreamError(routeErr)
 				return
 			}
 		}
@@ -2277,9 +2307,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			routeRes.Reasoning = ""
 			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
+			stopRouterHeartbeat()
 			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
 			return
 		}
+		stopRouterHeartbeat()
 		if reuseRouterConversation {
 			routerConversation.adopt(&body)
 			body.Attachments = nil

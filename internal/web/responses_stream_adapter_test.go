@@ -6,8 +6,46 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
+
+type synchronizedStreamRecorder struct {
+	header http.Header
+	mu     sync.Mutex
+	body   strings.Builder
+}
+
+func newSynchronizedStreamRecorder() *synchronizedStreamRecorder {
+	return &synchronizedStreamRecorder{header: make(http.Header)}
+}
+
+func (w *synchronizedStreamRecorder) Header() http.Header { return w.header }
+func (w *synchronizedStreamRecorder) WriteHeader(int)     {}
+func (w *synchronizedStreamRecorder) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.Write(p)
+}
+func (w *synchronizedStreamRecorder) Flush() {}
+func (w *synchronizedStreamRecorder) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.body.String()
+}
+
+func waitForStreamText(t *testing.T, w *synchronizedStreamRecorder, want string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(w.String(), want) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("stream did not contain %q before deadline: %s", want, w.String())
+}
 
 func responsesInnerStream(lines ...string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, _ *http.Request) {
@@ -15,6 +53,52 @@ func responsesInnerStream(lines ...string) func(http.ResponseWriter, *http.Reque
 		for _, line := range lines {
 			fmt.Fprintf(w, "data: %s\n\n", line)
 		}
+	}
+}
+
+func TestStreamResponsesAdapterForwardsShortDeltaBeforeCompletion(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := newSynchronizedStreamRecorder()
+	release := make(chan struct{})
+	done := make(chan bool, 1)
+	run := func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n")
+		<-release
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}
+	go func() {
+		done <- s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_live", "session", "tenant", run)
+	}()
+	waitForStreamText(t, w, `"delta":"hi"`)
+	select {
+	case <-done:
+		t.Fatal("adapter completed before the upstream stream was released")
+	default:
+	}
+	close(release)
+	if ok := <-done; !ok {
+		t.Fatalf("adapter failed: %s", w.String())
+	}
+}
+
+func TestStreamResponsesAdapterHeartbeatsDuringUpstreamSilence(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := newSynchronizedStreamRecorder()
+	release := make(chan struct{})
+	done := make(chan bool, 1)
+	run := func(w http.ResponseWriter, _ *http.Request) {
+		<-release
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}
+	go func() {
+		done <- s.streamResponsesAdapterWithRunnerAndCompletionInterval(w, r, oaiReq{}, "gpt-5.6-sol", "resp_heartbeat", "session", "tenant", run, nil, 5*time.Millisecond)
+	}()
+	waitForStreamText(t, w, ": keepalive\n\n")
+	close(release)
+	if ok := <-done; !ok {
+		t.Fatalf("adapter failed: %s", w.String())
 	}
 }
 
@@ -99,10 +183,10 @@ func TestStreamResponsesAdapterUsesAuthoritativeFinalText(t *testing.T) {
 		t.Fatalf("adapter failed: %s", w.Body.String())
 	}
 	body := w.Body.String()
-	if strings.Contains(body, `"delta":"`+partial+`"`) {
-		t.Fatalf("partial upstream text escaped the tail buffer: %s", body)
+	if !strings.Contains(body, `"delta":`+mustJSON(partial)) {
+		t.Fatalf("upstream delta was not forwarded immediately: %s", body)
 	}
-	if !strings.Contains(body, mustJSON(final)) || !strings.Contains(body, "event: response.completed") {
+	if !strings.Contains(body, `"delta":`+mustJSON("文件](/tmp/outputs/probe.txt)")) || !strings.Contains(body, mustJSON(final)) || !strings.Contains(body, "event: response.completed") {
 		t.Fatalf("authoritative final text missing: %s", body)
 	}
 	node := s.responseMessages["tenant"]["resp_authoritative"]
@@ -118,8 +202,8 @@ func TestStreamResponsesAdapterFailsWhenRevisionPrecedesBufferedTail(t *testing.
 	s := newResponsesAdapterTestServer()
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	w := httptest.NewRecorder()
-	partial := strings.Repeat("a", responsesTextTailBytes+64)
-	final := strings.Repeat("b", responsesTextTailBytes+64)
+	partial := strings.Repeat("a", 64)
+	final := strings.Repeat("b", 64)
 	run := responsesInnerStream(
 		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": partial}}}}),
 		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{}, "finish_reason": "stop"}}, "x_m365_final_text": final}),

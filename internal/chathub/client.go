@@ -236,6 +236,11 @@ func canFinalizeNormalClose(err error, sawSuccessfulResult bool, final string, s
 		websocket.IsCloseError(err, websocket.CloseNormalClosure)
 }
 
+func canRecoverIncompleteNormalClose(err error, final string, streamedLen, reasoningLen int) bool {
+	return (strings.TrimSpace(final) != "" || streamedLen > 0 || reasoningLen > 0) &&
+		websocket.IsCloseError(err, websocket.CloseNormalClosure)
+}
+
 var chTrace = os.Getenv("M365_TRACE") == "1"
 
 func commonPrefixLen(a, b string) int {
@@ -310,6 +315,10 @@ type Request struct {
 	TimeZone              string
 	TimeZoneOffset        int
 	DeviceOS              string
+	// AutoContinue allows a final-answer request to resume when ChatHub closes
+	// normally after emitting content but before its completion frame. Router
+	// and tool-planning requests leave this disabled.
+	AutoContinue bool
 }
 
 type FeatureFlags struct {
@@ -372,6 +381,8 @@ type Result struct {
 	StorageMessageID          string
 	References                map[string]Reference
 	Timestamps                Timestamps
+	Incomplete                bool
+	TerminalReason            string
 }
 
 type SuggestedResponse struct {
@@ -459,7 +470,7 @@ func (c *Client) ChatWithReasoning(ctx context.Context, acc Account, req Request
 	})
 }
 
-func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request, onDelta func(string) error, onEvent StreamHandler) (Result, error) {
+func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Request, onDelta func(string) error, onEvent StreamHandler) (Result, error) {
 	startedAt := time.Now()
 	log.Printf("chathub timing start prompt_len=%d", len(req.Text))
 	if acc.AccessToken == "" || acc.OID == "" || acc.TID == "" {
@@ -758,6 +769,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	var firstServiceResponse bool
 	var sawSuccessfulResult bool
 	finishResult := func(terminal string) (Result, error) {
+		incomplete := terminal == "normal_close_with_content"
 		phase = PhaseCompleted
 		ts.LastTokenReceived = time.Now().UTC().Format(time.RFC3339Nano)
 		log.Printf("chathub timing terminal=%s elapsed_ms=%d streamed_text=%d events=%d skipped_snapshots=%d", terminal, time.Since(payloadSentAt).Milliseconds(), streamed.Len(), len(events), skippedSnapshots)
@@ -791,7 +803,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			returnConn = false
 			return Result{}, ErrRateLimitNotice
 		}
-		if text == "" {
+		if text == "" && (!incomplete || reasoningBuf.Len() == 0) {
 			returnConn = false
 			return Result{}, ErrEmptyCompletion
 		}
@@ -827,6 +839,8 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			Normalized:                NormalizeEvents(events),
 			Images:                    imageURLs(events),
 			Timestamps:                ts,
+			Incomplete:                incomplete,
+			TerminalReason:            terminal,
 		}, nil
 	}
 
@@ -916,6 +930,9 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			returnConn = false
 			if canFinalizeNormalClose(read.err, sawSuccessfulResult, final, streamed.Len()) {
 				return finishResult("normal_close_after_result")
+			}
+			if canRecoverIncompleteNormalClose(read.err, final, streamed.Len(), reasoningBuf.Len()) {
+				return finishResult("normal_close_with_content")
 			}
 			if errors.Is(read.err, context.Canceled) {
 				return Result{}, &DialError{Status: 0, Kind: "CLIENT_CANCELED", cause: fmt.Errorf("ws read before completion: %w", read.err)}
@@ -1396,8 +1413,18 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		if base64.StdEncoding.DecodedLen(len(encoded)) > maxAttachmentMiB<<20 {
 			return fmt.Errorf("image exceeds %d MiB limit", maxAttachmentMiB)
 		}
-		if _, err := base64.StdEncoding.DecodeString(encoded); err != nil {
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
 			return fmt.Errorf("decode image: %w", err)
+		}
+		// Some agent clients use data:image/* or preserve the wrong extension
+		// after clipboard conversion. UploadFile validates the declared media
+		// type, so canonicalize it from the decoded bytes whenever possible.
+		detectedType := strings.ToLower(strings.TrimSpace(strings.SplitN(http.DetectContentType(decoded), ";", 2)[0]))
+		if strings.HasPrefix(detectedType, "image/") {
+			imageData = "data:" + detectedType + ";base64," + encoded
+			a.URL = imageData
+			a.MimeType = detectedType
 		}
 		form := url.Values{}
 		form.Set("scenario", "UploadImage")
@@ -1445,6 +1472,17 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 			return fmt.Errorf("attachment %d: read upload response: %w", i, readErr)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			// Office's file sanitizer intermittently rejects otherwise valid
+			// clipboard images with InvalidRequest. Keep the bounded data URL on
+			// the attachment so chatPayload can use ChatHub's inline imageBase64
+			// path instead of aborting an already-open client stream.
+			if resp.StatusCode == http.StatusBadRequest {
+				a.URL = imageData
+				if c.Trace != nil {
+					c.Trace(map[string]any{"stage": "upload_inline_fallback", "index": i, "mime_type": a.MimeType, "status": resp.StatusCode})
+				}
+				continue
+			}
 			return fmt.Errorf("attachment %d: upload HTTP %d: %s", i, resp.StatusCode, strings.TrimSpace(string(data[:minInt(len(data), 500)])))
 		}
 		var out struct {

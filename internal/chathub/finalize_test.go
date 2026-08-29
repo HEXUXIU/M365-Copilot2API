@@ -138,3 +138,30 @@ func TestCanFinalizeNormalClose(t *testing.T) {
 		})
 	}
 }
+
+func TestCanRecoverIncompleteNormalClose(t *testing.T) {
+	normalClose := &websocket.CloseError{Code: websocket.CloseNormalClosure, Text: "normal"}
+	abnormalClose := &websocket.CloseError{Code: websocket.CloseAbnormalClosure, Text: "unexpected EOF"}
+	tests := []struct {
+		name         string
+		err          error
+		final        string
+		streamedLen  int
+		reasoningLen int
+		want         bool
+	}{
+		{name: "streamed answer", err: normalClose, streamedLen: 12, want: true},
+		{name: "reasoning only", err: normalClose, reasoningLen: 8, want: true},
+		{name: "final snapshot", err: normalClose, final: "partial", want: true},
+		{name: "empty close", err: normalClose, want: false},
+		{name: "abnormal close", err: abnormalClose, streamedLen: 12, want: false},
+		{name: "network failure", err: errors.New("connection reset"), streamedLen: 12, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := canRecoverIncompleteNormalClose(tc.err, tc.final, tc.streamedLen, tc.reasoningLen); got != tc.want {
+				t.Fatalf("canRecoverIncompleteNormalClose()=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}

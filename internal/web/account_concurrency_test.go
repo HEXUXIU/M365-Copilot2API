@@ -63,6 +63,32 @@ func TestAccountConcurrencyUsesDocumentedDefault(t *testing.T) {
 	}
 }
 
+func TestAdaptiveAccountConcurrencyReducesOn429AndRecovers(t *testing.T) {
+	limiter := &accountConcurrency{
+		limit:      20,
+		inflight:   map[string]int{},
+		changed:    make(chan struct{}),
+		adaptive:   true,
+		perAccount: map[string]int{},
+		successes:  map[string]int{},
+	}
+	if got := limiter.effectiveLimit("account-a"); got != 5 {
+		t.Fatalf("initial adaptive limit=%d, want 5", got)
+	}
+	limiter.Observe("account-a", &UpstreamHTTPError{Status: 429})
+	if got := limiter.effectiveLimit("account-a"); got != 3 {
+		t.Fatalf("429 adaptive limit=%d, want 3", got)
+	}
+	limiter.Observe("account-a", nil)
+	if got := limiter.effectiveLimit("account-a"); got != 3 {
+		t.Fatalf("limit grew after one success=%d, want 3", got)
+	}
+	limiter.Observe("account-a", nil)
+	if got := limiter.effectiveLimit("account-a"); got != 4 {
+		t.Fatalf("limit after recovery=%d, want 4", got)
+	}
+}
+
 func TestAccountConcurrencySupports128ConcurrentCalls(t *testing.T) {
 	const concurrency = 128
 	t.Setenv("M365_ACCOUNT_CONCURRENCY_LIMIT", "128")

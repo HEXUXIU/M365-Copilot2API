@@ -100,6 +100,9 @@ func (s *Server) markAccountResult(accountID string, err error) {
 		return
 	}
 	if err != nil {
+		if s.accountConcurrency != nil {
+			s.accountConcurrency.Observe(accountID, err)
+		}
 		proxyScoped := len(outbound.ProxyPoolStatus()) > 0
 		if !proxyScoped && s.tokens != nil {
 			if account, ok := s.tokens.Get(accountID); ok {
@@ -107,7 +110,16 @@ func (s *Server) markAccountResult(accountID string, err error) {
 			}
 		}
 		s.accountPool.MarkFailureScoped(accountID, err, s.getRateLimitCooldown(), proxyScoped)
+		// Keep the distributed affinity selector aligned with local health for
+		// account-scoped failures. Transport failures remain proxy-scoped and
+		// are intentionally excluded from this state.
+		if s.affinity != nil && (IsRateLimited(err) || IsAuthFailure(err)) {
+			s.affinity.markAccountFailure(accountID, err, s.getRateLimitCooldown())
+		}
 		return
+	}
+	if s.accountConcurrency != nil {
+		s.accountConcurrency.Observe(accountID, nil)
 	}
 	s.markAccountSuccess(accountID)
 }
@@ -206,6 +218,7 @@ type Server struct {
 	tokens               *auth.Store
 	accountPool          *accountHealth
 	accountConcurrency   *accountConcurrency
+	requestGate          *requestGate
 	pkce                 map[string]pendingPKCE
 	chat                 *chathub.Client
 	proxyClients         sync.Map
@@ -339,6 +352,8 @@ func New() (*Server, error) {
 	// The settings file is the source of truth after startup. Environment
 	// variables still seed the initial value for new deployments.
 	s.accountConcurrency.SetLimit(s.settings.get().AccountConcurrencyLimit)
+	s.accountConcurrency.SetAdaptive(s.settings.get().AdaptiveAccountConcurrency)
+	s.requestGate = newRequestGate(s.settings.get().GlobalRequestLimit, s.settings.get().GlobalRequestQueueLimit)
 	return s, nil
 }
 
@@ -554,7 +569,7 @@ func (s *Server) Routes() http.Handler {
 	m.HandleFunc("/v1/memory/instructions/", s.handleMemoryInstructionsID)
 	m.HandleFunc("/v1/memory/settings", s.handleMemorySettings)
 	m.HandleFunc("/", s.rootPage)
-	return recoverPanics(requestID(httpTrace(securityHeaders(s.adminMiddleware(s.debugMiddleware(m))))))
+	return recoverPanics(requestID(httpTrace(securityHeaders(s.adminMiddleware(s.requestGateMiddleware(s.debugMiddleware(m)))))))
 }
 
 func (s *Server) adminMiddleware(next http.Handler) http.Handler {
@@ -817,6 +832,8 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 		"tokenCache":         s.tokens.Path(),
 		"accountCount":       len(list),
 		"accountConcurrency": s.accountConcurrency.Snapshot(),
+		"requestQueue":       s.requestGate.Snapshot(),
+		"affinity":           s.affinity.status(),
 		"throttling":         throttlingSummary,
 	})
 }
@@ -2062,22 +2079,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if !tempSession && s.affinity != nil {
 		available := s.accountAvailable
 		if s.settings.get().CacheStrategy == "sticky" {
-			// Sticky cache keeps the bound account across transient cooldowns;
-			// token validity is still checked by EnsureValid before use.
+			// Sticky cache keeps the bound account across transient transport
+			// failures, while account-level quota/auth cooldowns remain a hard
+			// routing boundary.
 			stickyLimit := s.settings.get().StickyAccountConcurrency
 			available = func(id string) bool {
-				if !s.tokens.ScheduleEnabled(id) {
-					return false
-				}
-				// The affinity selector and request semaphore must agree on the
-				// effective capacity. A separate sticky cap may further restrict
-				// traffic, but it must never advertise slots the semaphore cannot
-				// actually grant.
-				limit := s.accountConcurrency.Limit()
-				if stickyLimit > 0 && stickyLimit < limit {
-					limit = stickyLimit
-				}
-				return s.accountConcurrency.Inflight(id) < limit
+				return s.stickyAccountAvailable(id, stickyLimit)
 			}
 		}
 		affinityState, err = s.affinity.begin(r.Context(), s.affinityTenantIdentity(r), &body, r, s.tokens.List(), available)

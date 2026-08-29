@@ -71,6 +71,9 @@ type runtimeSettings struct {
 	MaxConversationMessages    int            `json:"maxConversationMessages"`
 	LicenseType                string         `json:"licenseType"`
 	AccountConcurrencyLimit    int            `json:"accountConcurrencyLimit"`
+	AdaptiveAccountConcurrency bool           `json:"adaptiveAccountConcurrency"`
+	GlobalRequestLimit         int            `json:"globalRequestLimit"`
+	GlobalRequestQueueLimit    int            `json:"globalRequestQueueLimit"`
 	EnableMemoryV2             bool           `json:"enableMemoryV2"`
 	EnableDeepWork             bool           `json:"enableDeepWork"`
 	EnableComputerUse          bool           `json:"enableComputerUse"`
@@ -94,6 +97,22 @@ func envInt(name string, fallback int) int {
 	}
 	return fallback
 }
+
+func envBoolSetting(name string, fallback bool) bool {
+	raw, ok := os.LookupEnv(name)
+	if !ok {
+		return fallback
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func defaultRuntimeSettings() runtimeSettings {
 	return runtimeSettings{
 		MaxToolCallsPerTurn: envInt("M365_MAX_TOOL_CALLS_PER_TURN", 32), MaxToolRounds: envInt("M365_MAX_TOOL_ROUNDS", 512),
@@ -113,6 +132,9 @@ func defaultRuntimeSettings() runtimeSettings {
 		MaxConversationMessages:    envInt("M365_MAX_CONVERSATION_MESSAGES", 600),
 		LicenseType:                firstNonEmptySetting(os.Getenv("M365_LICENSE_TYPE"), "Starter"),
 		AccountConcurrencyLimit:    accountConcurrencyEnv("M365_ACCOUNT_CONCURRENCY_LIMIT", defaultAccountConcurrency),
+		AdaptiveAccountConcurrency: envBoolSetting("M365_ADAPTIVE_ACCOUNT_CONCURRENCY", false),
+		GlobalRequestLimit:         envInt("M365_GLOBAL_REQUEST_LIMIT", 500),
+		GlobalRequestQueueLimit:    envInt("M365_GLOBAL_REQUEST_QUEUE_LIMIT", 1000),
 		EnableMemoryV2:             os.Getenv("M365_ENABLE_MEMORY_V2") == "true",
 		EnableDeepWork:             os.Getenv("M365_ENABLE_DEEP_WORK") == "true",
 		EnableComputerUse:          os.Getenv("M365_ENABLE_COMPUTER_USE") == "true",
@@ -146,6 +168,13 @@ var openSettingsStore = sync.OnceValue(func() *settingsStore {
 	}
 	if s.v.StickyAccountConcurrency < minAccountConcurrency || s.v.StickyAccountConcurrency > maxAccountConcurrency {
 		s.v.StickyAccountConcurrency = defaultAccountConcurrency
+	}
+	defaults := defaultRuntimeSettings()
+	if s.v.GlobalRequestLimit < 1 || s.v.GlobalRequestLimit > 10000 {
+		s.v.GlobalRequestLimit = defaults.GlobalRequestLimit
+	}
+	if s.v.GlobalRequestQueueLimit < 0 || s.v.GlobalRequestQueueLimit > 100000 {
+		s.v.GlobalRequestQueueLimit = defaults.GlobalRequestQueueLimit
 	}
 	if e := validateSettings(s.v); e != nil {
 		log.Printf("[settings] invalid persisted settings: %v", e)
@@ -239,6 +268,12 @@ func validateSettings(v runtimeSettings) error {
 	if v.StickyAccountConcurrency < minAccountConcurrency || v.StickyAccountConcurrency > maxAccountConcurrency {
 		return fmt.Errorf("sticky 账号并发上限必须为 %d-%d", minAccountConcurrency, maxAccountConcurrency)
 	}
+	if v.GlobalRequestLimit < 1 || v.GlobalRequestLimit > 10000 {
+		return fmt.Errorf("全局请求并发必须为 1-10000")
+	}
+	if v.GlobalRequestQueueLimit < 0 || v.GlobalRequestQueueLimit > 100000 {
+		return fmt.Errorf("全局等待队列必须为 0-100000")
+	}
 	if strings.TrimSpace(v.Scenario) == "" {
 		return fmt.Errorf("场景标识不能为空")
 	}
@@ -295,6 +330,10 @@ func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.accountConcurrency != nil {
 			s.accountConcurrency.SetLimit(v.AccountConcurrencyLimit)
+			s.accountConcurrency.SetAdaptive(v.AdaptiveAccountConcurrency)
+		}
+		if s.requestGate != nil {
+			s.requestGate.SetLimits(v.GlobalRequestLimit, v.GlobalRequestQueueLimit)
 		}
 		if e := outbound.ConfigurePool(v.ProxyPool); e != nil {
 			writeOpenAIError(w, 400, "invalid_request_error", e.Error())

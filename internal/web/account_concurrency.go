@@ -27,14 +27,24 @@ const (
 )
 
 type accountConcurrency struct {
-	mu       sync.Mutex
-	limit    int
-	inflight map[string]int
-	changed  chan struct{}
+	mu         sync.Mutex
+	limit      int
+	inflight   map[string]int
+	changed    chan struct{}
+	adaptive   bool
+	perAccount map[string]int
+	successes  map[string]int
 }
 
 func newAccountConcurrency() *accountConcurrency {
-	return &accountConcurrency{limit: configuredAccountConcurrencyLimit(), inflight: map[string]int{}, changed: make(chan struct{})}
+	return &accountConcurrency{
+		limit:      configuredAccountConcurrencyLimit(),
+		inflight:   map[string]int{},
+		changed:    make(chan struct{}),
+		adaptive:   adaptiveAccountConcurrencyEnv(),
+		perAccount: map[string]int{},
+		successes:  map[string]int{},
+	}
 }
 
 // configuredAccountConcurrencyLimit reads the current setting and accepts the
@@ -64,6 +74,129 @@ func accountConcurrencyEnv(name string, fallback int) int {
 	return parsed
 }
 
+func adaptiveAccountConcurrencyEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("M365_ADAPTIVE_ACCOUNT_CONCURRENCY"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *accountConcurrency) notifyLocked() {
+	if c.changed == nil {
+		c.changed = make(chan struct{})
+		return
+	}
+	close(c.changed)
+	c.changed = make(chan struct{})
+}
+
+func (c *accountConcurrency) effectiveLimitLocked(accountID string) int {
+	limit := c.limit
+	if limit < minAccountConcurrency {
+		limit = minAccountConcurrency
+	}
+	if !c.adaptive || accountID == "" {
+		return limit
+	}
+	if c.perAccount == nil {
+		c.perAccount = map[string]int{}
+	}
+	if current, ok := c.perAccount[accountID]; ok {
+		if current < minAccountConcurrency {
+			return minAccountConcurrency
+		}
+		if current < limit {
+			return current
+		}
+	}
+	// Start cautiously when adaptive mode is enabled, then grow after
+	// successful completions. This keeps a newly recovered account from
+	// immediately reproducing the burst that caused its previous 429.
+	start := limit / 4
+	if start < 1 {
+		start = 1
+	}
+	c.perAccount[accountID] = start
+	return start
+}
+
+// SetAdaptive toggles per-account AIMD limits without interrupting active
+// requests. Disabling it restores the configured shared limit immediately.
+func (c *accountConcurrency) SetAdaptive(enabled bool) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	if c.adaptive == enabled {
+		c.mu.Unlock()
+		return
+	}
+	c.adaptive = enabled
+	c.perAccount = map[string]int{}
+	c.successes = map[string]int{}
+	c.notifyLocked()
+	c.mu.Unlock()
+}
+
+func (c *accountConcurrency) Adaptive() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.adaptive
+}
+
+func (c *accountConcurrency) effectiveLimit(accountID string) int {
+	if c == nil {
+		return defaultAccountConcurrency
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.effectiveLimitLocked(accountID)
+}
+
+// Observe applies additive increase/multiplicative decrease to account
+// concurrency. Only account-scoped rate/auth failures reduce the limit;
+// transient transport errors are handled by the proxy pool and retry layer.
+func (c *accountConcurrency) Observe(accountID string, err error) {
+	if c == nil || accountID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.adaptive {
+		return
+	}
+	if c.successes == nil {
+		c.successes = map[string]int{}
+	}
+	current := c.effectiveLimitLocked(accountID)
+	if err != nil {
+		if !IsRateLimited(err) && !IsAuthFailure(err) {
+			return
+		}
+		next := (current + 1) / 2
+		if next < minAccountConcurrency {
+			next = minAccountConcurrency
+		}
+		c.perAccount[accountID] = next
+		c.successes[accountID] = 0
+		c.notifyLocked()
+		return
+	}
+	c.successes[accountID]++
+	// Grow every two successful completions to avoid oscillating on single
+	// responses while still recovering quickly after a cooldown.
+	if c.successes[accountID]%2 != 0 || current >= c.limit {
+		return
+	}
+	c.perAccount[accountID] = current + 1
+	c.notifyLocked()
+}
+
 // SetLimit updates the shared per-account limit without interrupting active
 // calls. Waiters are notified when the limit changes so increases take effect
 // immediately and decreases drain naturally as in-flight calls finish.
@@ -80,8 +213,12 @@ func (c *accountConcurrency) SetLimit(limit int) {
 		return
 	}
 	c.limit = limit
-	close(c.changed)
-	c.changed = make(chan struct{})
+	for accountID, current := range c.perAccount {
+		if current > limit {
+			c.perAccount[accountID] = limit
+		}
+	}
+	c.notifyLocked()
 	c.mu.Unlock()
 }
 
@@ -100,7 +237,7 @@ func (c *accountConcurrency) Available(accountID string) bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.inflight[accountID] < c.limit
+	return c.inflight[accountID] < c.effectiveLimitLocked(accountID)
 }
 
 func (c *accountConcurrency) Acquire(ctx context.Context, accountID string) (func(), error) {
@@ -109,7 +246,7 @@ func (c *accountConcurrency) Acquire(ctx context.Context, accountID string) (fun
 	}
 	for {
 		c.mu.Lock()
-		if c.inflight[accountID] < c.limit {
+		if c.inflight[accountID] < c.effectiveLimitLocked(accountID) {
 			c.inflight[accountID]++
 			c.mu.Unlock()
 			var once sync.Once
@@ -121,8 +258,7 @@ func (c *accountConcurrency) Acquire(ctx context.Context, accountID string) (fun
 					} else {
 						c.inflight[accountID]--
 					}
-					close(c.changed)
-					c.changed = make(chan struct{})
+					c.notifyLocked()
 					c.mu.Unlock()
 				})
 			}, nil
@@ -147,7 +283,11 @@ func (c *accountConcurrency) Snapshot() map[string]any {
 	for accountID, count := range c.inflight {
 		inflight[accountID] = count
 	}
-	return map[string]any{"limit": c.limit, "inflight": inflight}
+	limits := make(map[string]int, len(c.perAccount))
+	for accountID := range c.perAccount {
+		limits[accountID] = c.effectiveLimitLocked(accountID)
+	}
+	return map[string]any{"limit": c.limit, "adaptive": c.adaptive, "inflight": inflight, "accountLimits": limits}
 }
 
 func (c *accountConcurrency) Inflight(accountID string) int {
@@ -164,6 +304,27 @@ func (s *Server) accountAvailable(accountID string) bool {
 		return false
 	}
 	return s.accountPool.Available(accountID) && s.accountConcurrency.Available(accountID)
+}
+
+// stickyAccountAvailable keeps cache affinity from bypassing account-level
+// cooldowns. Sticky routing may continue through transient transport failures
+// (those do not enter accountHealth cooldown), but quota/auth failures must
+// stop the bound account from receiving another upstream request.
+func (s *Server) stickyAccountAvailable(accountID string, stickyLimit int) bool {
+	if s == nil || accountID == "" {
+		return false
+	}
+	if s.tokens != nil && !s.tokens.ScheduleEnabled(accountID) {
+		return false
+	}
+	if s.accountPool != nil && !s.accountPool.Available(accountID) {
+		return false
+	}
+	limit := s.accountConcurrency.Limit()
+	if stickyLimit > 0 && stickyLimit < limit {
+		limit = stickyLimit
+	}
+	return s.accountConcurrency.Inflight(accountID) < limit
 }
 
 func (s *Server) accountClient(accountID string) *chathub.Client {

@@ -288,6 +288,36 @@ func TestResolveAccountSkipsUnhealthy(t *testing.T) {
 	}
 }
 
+func TestStickyAccountAvailabilityHonorsCooldown(t *testing.T) {
+	store := testAccountFiles(t)
+	s := &Server{tokens: store, accountPool: newAccountHealth(), accountConcurrency: newAccountConcurrency()}
+	s.accountPool.MarkFailure("u-1", &UpstreamHTTPError{Status: 429}, 10*time.Minute)
+	if s.stickyAccountAvailable("u-1", 20) {
+		t.Fatal("sticky routing must not advertise a cooling-down account")
+	}
+	if !s.stickyAccountAvailable("u-2", 20) {
+		t.Fatal("healthy account should remain available to sticky routing")
+	}
+}
+
+func TestMarkAccountResultPersistsAccountCooldownToAffinity(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	s := &Server{
+		accountPool: newAccountHealth(),
+		affinity:    manager,
+		settings:    &settingsStore{v: defaultRuntimeSettings()},
+	}
+	s.markAccountResult("account-a", &UpstreamHTTPError{Status: 429})
+	health, ok, err := manager.fallback.GetAccountHealth(context.Background(), "account-a")
+	if err != nil {
+		t.Fatalf("GetAccountHealth: %v", err)
+	}
+	if !ok || health.CooldownUntil.IsZero() || !health.CooldownUntil.After(time.Now()) {
+		t.Fatalf("account cooldown was not persisted: ok=%v health=%+v", ok, health)
+	}
+}
+
 func TestResolveAccountSkipsSchedulingDisabled(t *testing.T) {
 	store := testAccountFiles(t)
 	if err := store.SetScheduleEnabled("u-1", false); err != nil {

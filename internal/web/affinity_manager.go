@@ -198,7 +198,11 @@ func (m *affinityManager) status() map[string]any {
 			store = "memory_fallback"
 		}
 	}
-	return map[string]any{"mode": string(m.config.Mode), "store": store, "degraded": m.degraded, "last_error": m.lastError}
+	status := map[string]any{"mode": string(m.config.Mode), "store": store, "degraded": m.degraded, "last_error": m.lastError}
+	if redisStore, ok := m.primary.(*redisAffinityStore); ok {
+		status["redis"] = redisStore.metrics()
+	}
+	return status
 }
 
 type affinityRequest struct {

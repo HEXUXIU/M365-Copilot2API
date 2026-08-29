@@ -479,4 +479,21 @@ func (s *redisAffinityStore) ClearAccountHealth(ctx context.Context, accountID s
 	return s.client.Del(ctx, redisHealthKey(accountID)).Err()
 }
 
+func (s *redisAffinityStore) metrics() map[string]any {
+	if s == nil || s.client == nil {
+		return map[string]any{"available": false}
+	}
+	stats := s.client.PoolStats()
+	return map[string]any{
+		"available":   true,
+		"poolSize":    stats.TotalConns,
+		"idle":        stats.IdleConns,
+		"hits":        stats.Hits,
+		"misses":      stats.Misses,
+		"timeouts":    stats.Timeouts,
+		"stale":       stats.StaleConns,
+		"evictWrites": s.evictWrites.Load(),
+	}
+}
+
 func (s *redisAffinityStore) Close() error { return s.client.Close() }

@@ -268,6 +268,56 @@ func TestStreamResponsesAdapterPreservesMixedTextAndToolOutput(t *testing.T) {
 	}
 }
 
+func TestStreamResponsesAdapterEmitsCustomApplyPatchLifecycle(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	patch := "*** Begin Patch\n*** Add File: 1.txt\n+123214324\n*** End Patch"
+	arguments := mustJSON(map[string]any{"input": patch})
+	run := responsesInnerStream(
+		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "id": "call_apply_patch", "type": "custom",
+			"function": map[string]any{"name": "apply_patch", "arguments": arguments[:24]},
+		}}}}}}),
+		mustJSON(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "function": map[string]any{"arguments": arguments[24:]},
+		}}}}}}),
+		`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_apply_patch", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"event: response.output_item.added",
+		`"type":"custom_tool_call"`,
+		`"call_id":"call_apply_patch"`,
+		`"name":"apply_patch"`,
+		"event: response.custom_tool_call_input.delta",
+		"event: response.custom_tool_call_input.done",
+		mustJSON(patch),
+		"event: response.output_item.done",
+		"event: response.completed",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("custom apply_patch stream missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "event: response.failed") {
+		t.Fatalf("custom apply_patch stream failed: %s", body)
+	}
+	node := s.responseMessages["tenant"]["resp_apply_patch"]
+	if node == nil || len(node.Messages) != 1 || len(node.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("custom apply_patch history=%#v", node)
+	}
+	call := node.Messages[0].ToolCalls[0]
+	fn, _ := call["function"].(map[string]any)
+	if call["type"] != "custom" || fn["name"] != "apply_patch" || fn["arguments"] != arguments {
+		t.Fatalf("stored custom apply_patch call=%#v", call)
+	}
+}
+
 func TestStreamResponsesAdapterWaitsForSplitToolIdentity(t *testing.T) {
 	s := newResponsesAdapterTestServer()
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

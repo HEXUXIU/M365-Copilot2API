@@ -25,10 +25,32 @@ func TestResponsesCustomExecToOpenAI(t *testing.T) {
 	}
 }
 
+func TestResponsesCustomApplyPatchToOpenAI(t *testing.T) {
+	r := responsesRequest{
+		Model: "m",
+		Input: "在当前目录创建 1.txt，必须实际调用 apply_patch 工具。",
+		Tools: []map[string]any{{
+			"type": "custom", "name": "apply_patch", "description": "apply a patch",
+			"format": map[string]any{"type": "grammar"},
+		}},
+	}
+	o, err := r.openAI()
+	if err != nil || len(o.Tools) != 1 || o.Tools[0].Type != "custom" {
+		t.Fatalf("tools=%+v err=%v", o.Tools, err)
+	}
+	if !containsJSON(o.Tools[0].Function, "apply_patch") || !containsJSON(o.Tools[0].Function, "input") {
+		t.Fatalf("custom apply_patch was not bridged: %s", o.Tools[0].Function)
+	}
+	if !o.ExplicitToolRequired {
+		t.Fatal("explicit custom apply_patch request was not required")
+	}
+}
+
 func TestResponsesAdditionalToolsItemToOpenAI(t *testing.T) {
 	r := responsesRequest{Input: []any{
 		map[string]any{"type": "additional_tools", "role": "developer", "tools": []any{
 			map[string]any{"type": "custom", "name": "exec", "description": "run a command", "format": map[string]any{"type": "grammar"}},
+			map[string]any{"type": "custom", "name": "apply_patch", "description": "apply a patch", "format": map[string]any{"type": "grammar"}},
 			map[string]any{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}},
 			map[string]any{"type": "namespace", "name": "collaboration", "tools": []any{}},
 		}},
@@ -38,8 +60,8 @@ func TestResponsesAdditionalToolsItemToOpenAI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(o.Tools) != 1 || o.Tools[0].Type != "custom" {
-		t.Fatalf("tools=%#v, want only the inline custom exec tool", o.Tools)
+	if len(o.Tools) != 2 || o.Tools[0].Type != "custom" || o.Tools[1].Type != "custom" {
+		t.Fatalf("tools=%#v, want inline custom exec and apply_patch tools", o.Tools)
 	}
 	if len(o.Messages) != 2 || o.Messages[1].Role != "user" {
 		t.Fatalf("additional_tools leaked into messages: %#v", o.Messages)
@@ -92,17 +114,21 @@ func TestResponsesClearsExplicitToolRequestAfterToolOutput(t *testing.T) {
 	}
 }
 
-func TestResponsesCustomExecIsExclusiveTool(t *testing.T) {
+func TestResponsesCustomExecKeepsLocalCustomToolsAndExcludesNativeFunctions(t *testing.T) {
 	r := responsesRequest{Input: "edit the project", Tools: []map[string]any{
 		{"type": "custom", "name": "exec", "description": "local execution"},
+		{"type": "custom", "name": "apply_patch", "description": "apply a patch"},
 		{"type": "function", "name": "m365_search", "description": "native search"},
 	}}
 	o, err := r.openAI()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(o.Tools) != 1 || o.Tools[0].Type != "custom" {
-		t.Fatalf("tools=%#v, want only custom exec", o.Tools)
+	if len(o.Tools) != 2 || o.Tools[0].Type != "custom" || o.Tools[1].Type != "custom" {
+		t.Fatalf("tools=%#v, want exec and apply_patch custom tools", o.Tools)
+	}
+	if !containsJSON(o.Tools[0].Function, "exec") || !containsJSON(o.Tools[1].Function, "apply_patch") {
+		t.Fatalf("custom tools were not preserved in order: %#v", o.Tools)
 	}
 	if !strings.Contains(fmt.Sprint(o.Messages[0].Content), "Never use") {
 		t.Fatalf("missing native-tool prohibition: %#v", o.Messages)

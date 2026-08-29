@@ -60,7 +60,7 @@ func compactRedundantProbeInstructions(r *responsesRequest) bool {
 	return true
 }
 
-const customExecWorkspaceInstruction = `You are operating through the caller's local execution bridge. Never use, request, or mention remote native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor starts in the project workspace selected by the caller. Use relative paths only; never guess, cd to, or write under /root, /workspace, /mnt/data, /tmp, or any other absolute project path. Use custom exec to inspect the actual working directory before changes. Do not create files outside that directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every change, use custom exec to verify the result.`
+const customExecWorkspaceInstruction = `You are operating through the caller's local execution bridge. Never use, request, or mention remote native tools. The only permitted execution tools are the caller-provided custom tools, including exec and apply_patch when declared. The executor starts in the project workspace selected by the caller. Use relative paths only; never guess, cd to, or write under /root, /workspace, /mnt/data, /tmp, or any other absolute project path. Use custom exec to inspect the actual working directory before changes. Do not create files outside that directory. Never claim a file was created, modified, or verified until the matching custom tool returns a successful result. After every change, use custom exec to verify the result.`
 
 const (
 	emptyToolOutputPlaceholder   = "(no tool output)"
@@ -287,17 +287,20 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	}
 	for _, t := range r.Tools {
 		typ, _ := t["type"].(string)
-		name, _ := t["name"].(string)
-		if hasCustomExec && !(typ == "custom" && name == "exec") {
+		// A custom exec declaration selects the caller-local tool bridge. Keep
+		// every custom tool from that bridge (Codex commonly sends apply_patch
+		// alongside exec), while excluding remote/native function tools.
+		if hasCustomExec && typ != "custom" {
 			continue
 		}
 		f := map[string]any{"name": t["name"], "description": t["description"], "parameters": t["parameters"]}
-		if typ == "custom" && name == "exec" {
-			// ChatHub accepts JSON function arguments while Codex exec accepts a
-			// grammar-constrained raw input string. Preserve the distinction in
-			// Tool.Type and bridge the input through a single string field.
+		if typ == "custom" {
+			// ChatHub accepts JSON function arguments while Responses custom tools
+			// accept grammar-constrained raw input. Preserve the public tool type
+			// and bridge that raw input through a single string field. This covers
+			// exec as well as clients such as Codex that expose apply_patch as a
+			// custom tool.
 			f["parameters"] = map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}, "required": []string{"input"}, "additionalProperties": false}
-			hasCustomExec = true
 		} else if typ != "function" {
 			continue
 		}

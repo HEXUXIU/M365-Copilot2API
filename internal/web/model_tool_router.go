@@ -9,6 +9,11 @@ import (
 	"m365-copilot2api/internal/chathub"
 )
 
+const (
+	maxRouterDescriptionBytes = 240
+	maxRouterPromptBytes      = 128 << 10
+)
+
 var (
 	workspaceFilenamePattern       = regexp.MustCompile(`(?i)\b[[:alnum:]_.-]+\.[a-z0-9]{1,12}\b`)
 	workspaceToolDescriptorPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:exec(?:ute)?|shell|terminal|command|powershell|bash|files?|filesystem|workspace|apply[_ -]?patch|editor|directory)(?:$|[^a-z0-9])`)
@@ -18,7 +23,7 @@ var (
 )
 
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
-	defs, _ := json.Marshal(tools)
+	defs, _ := json.Marshal(compactRouterTools(tools))
 	mode := normalizedToolChoiceMode(choice)
 	rules := `- If a tool is needed, respond with: CALL_TOOL: tool_name({"arg1":"value1"})
 - If no tool is needed, respond with: NO_TOOL_NEEDED
@@ -47,6 +52,90 @@ Rules:
 
 User request and evidence:
 %s`, defs, mode, rules, prompt)
+}
+
+// compactRouterTools keeps the argument structure needed for selection while
+// dropping documentation-only schema fields. The full declarations are still
+// used by validateDetectedToolCalls before anything reaches the client.
+func compactRouterTools(tools []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, tool := range tools {
+		function, _ := tool["function"].(map[string]any)
+		if function == nil {
+			out = append(out, tool)
+			continue
+		}
+		compact := map[string]any{}
+		for _, key := range []string{"name", "strict"} {
+			if value, ok := function[key]; ok {
+				compact[key] = value
+			}
+		}
+		if description, _ := function["description"].(string); description != "" {
+			compact["description"] = compactToolResult(description, maxRouterDescriptionBytes)
+		}
+		if parameters, ok := function["parameters"]; ok {
+			compact["parameters"] = compactRouterSchema(parameters, 0)
+		}
+		entry := map[string]any{"function": compact}
+		if typ, ok := tool["type"]; ok {
+			entry["type"] = typ
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func compactRouterSchema(value any, depth int) any {
+	if depth > 16 {
+		return map[string]any{"type": "object"}
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any)
+		for _, key := range []string{
+			"type", "$ref", "format", "pattern", "required", "enum", "const",
+			"additionalProperties", "minItems", "maxItems", "minLength", "maxLength",
+			"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
+		} {
+			if item, ok := typed[key]; ok {
+				out[key] = item
+			}
+		}
+		if description, _ := typed["description"].(string); description != "" {
+			out["description"] = compactToolResult(description, maxRouterDescriptionBytes)
+		}
+		for _, key := range []string{"properties", "$defs", "definitions"} {
+			if children, ok := typed[key].(map[string]any); ok {
+				mapped := make(map[string]any, len(children))
+				for name, child := range children {
+					mapped[name] = compactRouterSchema(child, depth+1)
+				}
+				out[key] = mapped
+			}
+		}
+		if item, ok := typed["items"]; ok {
+			out["items"] = compactRouterSchema(item, depth+1)
+		}
+		for _, key := range []string{"oneOf", "anyOf", "allOf", "prefixItems"} {
+			if variants, ok := typed[key].([]any); ok {
+				mapped := make([]any, 0, len(variants))
+				for _, variant := range variants {
+					mapped = append(mapped, compactRouterSchema(variant, depth+1))
+				}
+				out[key] = mapped
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, compactRouterSchema(item, depth+1))
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func explicitToolRequest(messages []oaiMsg) bool {

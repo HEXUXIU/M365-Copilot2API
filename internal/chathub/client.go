@@ -35,6 +35,20 @@ var ErrOffensiveContent = errors.New("upstream content policy flagged as offensi
 
 var ErrMeteringThrottled = errors.New("upstream metering throttle: capability access denied")
 
+const defaultResponseIdleTimeout = 30 * time.Second
+
+func responseIdleTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("M365_RESPONSE_IDLE_TIMEOUT_SECONDS"))
+	if raw == "" {
+		return defaultResponseIdleTimeout
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds < 5 || seconds > 300 {
+		return defaultResponseIdleTimeout
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func checkMeteringError(mi any) error {
 	arr, ok := mi.([]any)
 	if !ok {
@@ -412,11 +426,12 @@ type Reference struct {
 }
 
 type Client struct {
-	HTTPHeader http.Header
-	HTTPClient *http.Client
-	Dialer     *websocket.Dialer
-	Pool       *ConnPool
-	Trace      func(map[string]any)
+	HTTPHeader          http.Header
+	HTTPClient          *http.Client
+	Dialer              *websocket.Dialer
+	Pool                *ConnPool
+	Trace               func(map[string]any)
+	ResponseIdleTimeout time.Duration
 }
 
 func NewClient() *Client {
@@ -425,10 +440,11 @@ func NewClient() *Client {
 	h.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 	d := outbound.WebSocketDialer()
 	return &Client{
-		HTTPHeader: h,
-		HTTPClient: outbound.HTTPClient(),
-		Dialer:     d,
-		Pool:       NewConnPool(d, h),
+		HTTPHeader:          h,
+		HTTPClient:          outbound.HTTPClient(),
+		Dialer:              d,
+		Pool:                NewConnPool(d, h),
+		ResponseIdleTimeout: responseIdleTimeoutFromEnv(),
 	}
 }
 
@@ -644,6 +660,31 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 
 	var deltas []string
 	var streamed strings.Builder
+	idleTimeout := c.ResponseIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = defaultResponseIdleTimeout
+	}
+	var responseIdleTimer *time.Timer
+	var responseIdleC <-chan time.Time
+	markMeaningfulOutput := func() {
+		if responseIdleTimer == nil {
+			responseIdleTimer = time.NewTimer(idleTimeout)
+			responseIdleC = responseIdleTimer.C
+			return
+		}
+		if !responseIdleTimer.Stop() {
+			select {
+			case <-responseIdleTimer.C:
+			default:
+			}
+		}
+		responseIdleTimer.Reset(idleTimeout)
+	}
+	defer func() {
+		if responseIdleTimer != nil {
+			responseIdleTimer.Stop()
+		}
+	}()
 	var fallbackGuard streamFallbackGuard
 	deliverDelta := func(d string) error {
 		if d == "" {
@@ -662,6 +703,7 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 		}
 		streamed.WriteString(d)
 		deltas = append(deltas, d)
+		markMeaningfulOutput()
 		if onDelta != nil {
 			return onDelta(d)
 		}
@@ -769,7 +811,7 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 	var firstServiceResponse bool
 	var sawSuccessfulResult bool
 	finishResult := func(terminal string) (Result, error) {
-		incomplete := terminal == "normal_close_with_content"
+		incomplete := terminal == "normal_close_with_content" || terminal == "response_idle_with_content"
 		phase = PhaseCompleted
 		ts.LastTokenReceived = time.Now().UTC().Format(time.RFC3339Nano)
 		log.Printf("chathub timing terminal=%s elapsed_ms=%d streamed_text=%d events=%d skipped_snapshots=%d", terminal, time.Since(payloadSentAt).Milliseconds(), streamed.Len(), len(events), skippedSnapshots)
@@ -905,6 +947,12 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 	for time.Now().Before(deadline) {
 		var read wsRead
 		select {
+		case <-responseIdleC:
+			returnConn = false
+			if streamed.Len() > 0 || reasoningBuf.Len() > 0 {
+				return finishResult("response_idle_with_content")
+			}
+			return Result{}, &DialError{Status: 0, Kind: "WS_READ_TIMEOUT", cause: fmt.Errorf("upstream produced no meaningful output for %s", idleTimeout)}
 		case <-ctx.Done():
 			returnConn = false
 			_ = conn.Close()
@@ -993,6 +1041,7 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 						}
 						if len(seenStreamTools) > beforeTools {
 							phase = PhaseStreaming
+							markMeaningfulOutput()
 						}
 					}
 
@@ -1003,6 +1052,9 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 								ev.Text = "\n" + ev.Text
 							}
 							reasoningBuf.WriteString(strings.TrimPrefix(ev.Text, "\n"))
+							if strings.TrimSpace(ev.Text) != "" {
+								markMeaningfulOutput()
+							}
 						}
 						ev.Raw = eventRaw(arg)
 						if ev.Kind != "text" && onEvent != nil {

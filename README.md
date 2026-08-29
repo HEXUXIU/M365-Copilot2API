@@ -336,6 +336,7 @@ python manage.py stop     # 停止服务
 | `M365_CONTEXT_WINDOW` | `128000` | 上下文窗口 |
 | `M365_MAX_OUTPUT_TOKENS` | `16384` | 最大输出 Token |
 | `M365_CHAT_TIMEOUT_SECONDS` | `120` | 聊天超时（秒） |
+| `M365_RESPONSE_IDLE_TIMEOUT_SECONDS` | `30` | 已开始输出后若仅剩心跳、没有新增正文或思考内容，等待多少秒后按不完整回答续接（范围 `5-300`） |
 | `M365_IMAGE_TIMEOUT_SECONDS` | `150` | 图片处理超时（秒） |
 
 ### 代理池与认证

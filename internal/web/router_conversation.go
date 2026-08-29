@@ -1,6 +1,10 @@
 package web
 
-import "m365-copilot2api/internal/chathub"
+import (
+	"strings"
+
+	"m365-copilot2api/internal/chathub"
+)
 
 // routerConversation keeps tool planning on the same upstream conversation as
 // the public tool history. When reuse is disabled, accept returns the transient
@@ -63,12 +67,21 @@ func (state *routerConversation) reset() {
 }
 
 func routerPlanningInput(fullPrompt string, fullAttachments []chathub.Attachment, explicitAttachments []chathub.Attachment, messages []oaiMsg, affinity *affinityRequest, reuse bool) (string, []chathub.Attachment) {
-	if !reuse || affinity == nil || !affinity.enforced || !affinity.incremental || affinity.prefixCount <= 0 || affinity.prefixCount >= len(messages) {
+	if reuse && affinity != nil && affinity.enforced && affinity.incremental && affinity.prefixCount > 0 && affinity.prefixCount < len(messages) {
+		prompt, attachments := flattenPromptMessages(messages[affinity.prefixCount:], explicitAttachments)
+		if prompt != "" {
+			return compactToolResult(prompt, maxRouterPromptBytes), attachments
+		}
+	}
+	if len(fullPrompt) <= maxRouterPromptBytes {
 		return fullPrompt, fullAttachments
 	}
-	prompt, attachments := flattenPromptMessages(messages[affinity.prefixCount:], explicitAttachments)
-	if prompt == "" {
-		return fullPrompt, fullAttachments
+	// Tool selection needs the active user turn and its tool evidence, not an
+	// unbounded replay of every previous turn. Keep head and tail when the
+	// current turn itself contains a large document.
+	prompt, attachments := flattenPromptMessages(activeMessages(messages), explicitAttachments)
+	if strings.TrimSpace(prompt) == "" {
+		return compactToolResult(fullPrompt, maxRouterPromptBytes), fullAttachments
 	}
-	return prompt, attachments
+	return compactToolResult(prompt, maxRouterPromptBytes), attachments
 }

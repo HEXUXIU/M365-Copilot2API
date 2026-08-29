@@ -80,6 +80,23 @@ func TestRouterPlanningInputUsesIncrementalSuffix(t *testing.T) {
 	}
 }
 
+func TestRouterPlanningInputBoundsLongHistoryToActiveTurn(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "system", Content: strings.Repeat("old-system ", 20000)},
+		{Role: "user", Content: strings.Repeat("old-request ", 20000)},
+		{Role: "assistant", Content: "old answer"},
+		{Role: "user", Content: "Create current.txt in the workspace."},
+	}
+	full, attachments := flattenPromptMessages(messages, nil)
+	prompt, gotAttachments := routerPlanningInput(full, attachments, nil, messages, nil, false)
+	if len(prompt) > maxRouterPromptBytes+200 || !strings.Contains(prompt, "current.txt") || strings.Contains(prompt, "old-system") {
+		t.Fatalf("router prompt was not bounded to the active turn: len=%d prompt=%q", len(prompt), prompt)
+	}
+	if len(gotAttachments) != 0 {
+		t.Fatalf("unexpected attachments: %+v", gotAttachments)
+	}
+}
+
 func TestRouterToolConversationCachesAcrossTenTurns(t *testing.T) {
 	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
 	defer manager.close()

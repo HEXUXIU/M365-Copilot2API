@@ -157,3 +157,61 @@ func TestChatMarksContentOnlyNormalCloseIncomplete(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestChatMarksHeartbeatOnlyStallIncomplete(t *testing.T) {
+	const answer = "partial before stall"
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		if _, _, err = conn.ReadMessage(); err != nil {
+			return
+		}
+		if err = conn.WriteMessage(websocket.TextMessage, []byte(`{}`+rs)); err != nil {
+			return
+		}
+		for i := 0; i < 2; i++ {
+			if _, _, err = conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+		frame := `{"type":1,"target":"update","arguments":[{"messages":[{"author":"bot","text":"partial before stall","messageType":""}]}]}` + rs
+		if err = conn.WriteMessage(websocket.TextMessage, []byte(frame)); err != nil {
+			return
+		}
+		for i := 0; i < 20; i++ {
+			time.Sleep(10 * time.Millisecond)
+			if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":6}`+rs)); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	localAddress := strings.TrimPrefix(server.URL, "https://")
+	dialer := *websocket.DefaultDialer
+	dialer.Proxy = nil
+	dialer.NetDialTLSContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		tlsDialer := tls.Dialer{NetDialer: &net.Dialer{}, Config: &tls.Config{InsecureSkipVerify: true}} // Local TLS fixture.
+		return tlsDialer.DialContext(ctx, network, localAddress)
+	}
+	client := NewClient()
+	client.Dialer = &dialer
+	client.Pool = nil
+	client.ResponseIdleTimeout = 50 * time.Millisecond
+
+	started := time.Now()
+	result, err := client.Chat(context.Background(), Account{AccessToken: "token", OID: "oid", TID: "tid"}, Request{Text: "prompt"})
+	if err != nil {
+		t.Fatalf("heartbeat-only stall returned error: %v", err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("heartbeat-only stall was not detected promptly: %s", time.Since(started))
+	}
+	if result.Text != answer || !result.Incomplete || result.TerminalReason != "response_idle_with_content" {
+		t.Fatalf("result=%#v", result)
+	}
+}

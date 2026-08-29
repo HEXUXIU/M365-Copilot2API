@@ -115,6 +115,40 @@ tool[call_x]: 2026-07-18`, testTools(), "auto")
 	}
 }
 
+func TestCompactRouterToolsPreservesValidationShape(t *testing.T) {
+	tools := []map[string]any{{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "write_file",
+			"description": strings.Repeat("long function description ", 200),
+			"parameters": map[string]any{
+				"type":     "object",
+				"required": []any{"path", "mode"},
+				"properties": map[string]any{
+					"path": map[string]any{"type": "string", "description": strings.Repeat("path details ", 200)},
+					"mode": map[string]any{"type": "string", "enum": []any{"create", "append"}},
+				},
+				"examples": []any{strings.Repeat("unused", 1000)},
+			},
+		},
+	}}
+	compact := compactRouterTools(tools)
+	raw, _ := json.Marshal(compact)
+	if len(raw) >= 3000 {
+		t.Fatalf("router schema remained oversized: %d", len(raw))
+	}
+	function := compact[0]["function"].(map[string]any)
+	parameters := function["parameters"].(map[string]any)
+	properties := parameters["properties"].(map[string]any)
+	mode := properties["mode"].(map[string]any)
+	if function["name"] != "write_file" || len(parameters["required"].([]any)) != 2 || len(mode["enum"].([]any)) != 2 {
+		t.Fatalf("router schema lost required structure: %#v", compact)
+	}
+	if _, exists := parameters["examples"]; exists {
+		t.Fatalf("documentation-only examples were retained: %#v", parameters)
+	}
+}
+
 func TestParseModelToolDecisionRejectsBadSchema(t *testing.T) {
 	calls, ok := parseModelToolDecision("```json\n{\"calls\":[{\"name\":\"get_weather\",\"arguments\":{\"city\":2}}]}\n```", testTools(), "auto")
 	if !ok || len(calls) != 0 {

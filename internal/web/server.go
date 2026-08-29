@@ -1888,14 +1888,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	explicitToolRequired := body.ExplicitToolRequired || explicitToolRequirementFromContext(r.Context()) || explicitToolRequest(body.Messages) || workspaceToolRequest(body.Messages, body.Tools)
-	// Rebuild a protocol-neutral evidence ledger from actual tool calls/results.
-	// Round limits apply only to the current user turn; full history still informs evidence.
-	ledger := buildAgentLedger(body.Messages)
-	activeLedger := buildAgentLedger(activeMessages(body.Messages))
-	if err := activeLedger.CanContinue(maxToolRounds()); err != nil {
+	// Tool evidence and loop limits are scoped to the active user turn. Older
+	// tool history remains in the flattened conversation but must not bloat the
+	// router prompt or suppress a legitimate repeated action in a later turn.
+	ledger := buildAgentLedger(activeMessages(body.Messages))
+	if err := ledger.CanContinue(maxToolRounds()); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "tool_round_limit", "message": err.Error(), "completed_calls": len(activeLedger.Completed)}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"type": "tool_round_limit", "message": err.Error(), "completed_calls": len(ledger.Completed)}})
 		return
 	}
 	// Context budget sliding window: B = ContextWindow - MaxOutput - 512, atom-aware.

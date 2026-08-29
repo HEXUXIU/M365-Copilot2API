@@ -63,6 +63,23 @@ func TestRunWithContinuationStopsAfterBoundedRetries(t *testing.T) {
 	}
 }
 
+func TestRunWithContinuationRequestsFinalAnswerAfterReasoningOnlyStall(t *testing.T) {
+	calls := 0
+	result, err := runWithContinuation(context.Background(), Request{Text: "original request", AutoContinue: true}, nil, nil, func(req Request, _ func(string) error, _ StreamHandler) (Result, error) {
+		calls++
+		if calls == 1 {
+			return Result{Reasoning: "analysis in progress", ConversationID: "conv", SessionID: "sess", Incomplete: true, TerminalReason: "response_idle_with_content"}, nil
+		}
+		if strings.Contains(req.Text, "<answer_tail>") || !strings.Contains(req.Text, "Produce the final answer") {
+			t.Fatalf("reasoning-only continuation prompt=%q", req.Text)
+		}
+		return Result{Text: "final answer", ConversationID: "conv", SessionID: "sess"}, nil
+	})
+	if err != nil || calls != 2 || result.Text != "final answer" || result.Incomplete {
+		t.Fatalf("result=%+v calls=%d err=%v", result, calls, err)
+	}
+}
+
 func TestRunWithContinuationDoesNotReplayToolTurn(t *testing.T) {
 	calls := 0
 	toolFrame := json.RawMessage(`{"type":1,"target":"update","arguments":[{"toolName":"shell","arguments":{"command":"dir"}}]}`)

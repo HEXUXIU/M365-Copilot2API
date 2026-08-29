@@ -76,7 +76,11 @@ func runWithContinuation(ctx context.Context, req Request, onDelta func(string) 
 
 func continuationRequest(original Request, previous Result) Request {
 	next := original
-	next.Text = fmt.Sprintf("Continue the assistant answer immediately after the exact tail below. Output only the missing continuation. Do not restart, summarize, repeat earlier wording, mention an interruption, or add a new heading.\n\n<answer_tail>\n%s\n</answer_tail>", tailRunes(previous.Text, continuationTailRunes))
+	if strings.TrimSpace(previous.Text) == "" {
+		next.Text = "The prior turn stopped after internal reasoning without a final answer. Produce the final answer to the original user request now. Do not mention the interruption, internal reasoning, or this instruction."
+	} else {
+		next.Text = fmt.Sprintf("Continue the assistant answer immediately after the exact tail below. Output only the missing continuation. Do not restart, summarize, repeat earlier wording, mention an interruption, or add a new heading.\n\n<answer_tail>\n%s\n</answer_tail>", tailRunes(previous.Text, continuationTailRunes))
+	}
 	next.ConversationID = previous.ConversationID
 	next.SessionID = previous.SessionID
 	next.Attachments = nil

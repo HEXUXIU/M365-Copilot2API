@@ -54,10 +54,13 @@ var publicInternalCitationPattern = regexp.MustCompile(`(?i)(?:<cite>\s*turn\d+(
 var publicReasoningMarkdownPrefixPattern = regexp.MustCompile(`^(?:(?:#{1,6}|[-+*>]|\d+[.)])\s*)+`)
 var publicReasoningMetaNarrationPattern = regexp.MustCompile(`(?i)^(?:` +
 	`analy[sz]ing\s+(?:the\s+)?(?:steps?\s+for\s+(?:the\s+)?answer|judg(?:e)?ment\s+process)` +
+	`|analy[sz]ing\s+(?:the\s+)?process\s+steps?` +
 	`|i\s+will\s+break\s+down\s+the\s+process\b.*` +
+	`|i(?:\s+am|'m|\x{2019}m)\s+considering\s+how\s+to\s+(?:explain|present|structure|answer|respond)\b.*` +
+	`|i(?:\s+am|'m|\x{2019}m)\s+focusing\s+on\s+providing\b.*` +
 	`|i(?:\s+am|['’]m)\s+considering\s+how\s+to\s+approach\s+answering\b.*` +
 	`|the\s+focus\s+will\s+be\s+on\s+providing\b.*` +
-	`|without\s+revealing\s+(?:any\s+)?hidden\s+or\s+private\s+thought\s+process(?:es)?\b.*` +
+	`|without\s+revealing\s+(?:any\s+)?hidden\s+(?:or\s+private\s+)?thought\s+process(?:es)?\b.*` +
 	`|let['’]?s\s+explore\s+how\s+to\s+approach\s+this\b.*` +
 	`)[\s.!?…]*$`)
 

@@ -193,10 +193,14 @@ func TestSanitizePublicReasoningTextDropsAnswerMetaNarration(t *testing.T) {
 	for _, input := range []string{
 		"Analyzing steps for answer...",
 		"Analyzing judgment process",
+		"Analyzing process steps",
 		"I will break down the process before answering.",
 		"I'm considering how to approach answering this classic puzzle.",
+		"I'm considering how to explain the reasoning behind the judgment process, while keeping it concise and clear. I'll also need to mention the LED caveat.",
+		"I'm focusing on providing a clear, concise reasoning summary of the steps involved in answering the task, without revealing hidden thought processes.",
 		"The focus will be on providing a clear and structured response.",
 		"without revealing hidden or private thought processes",
+		"without revealing hidden thought processes",
 		"Let's explore how to approach this.",
 	} {
 		if got := sanitizePublicReasoningText(input); got != "" {

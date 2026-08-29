@@ -241,6 +241,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 		ID, Name, Args, Type string
 		ItemID               string
 		OutputIndex          int
+		Started              bool
 	}
 	calls := map[int]*tcState{}
 	var innerUsage map[string]any
@@ -323,15 +324,11 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 				}
 				if st == nil {
 					prefix := "fc_"
-					item := map[string]any{"type": "function_call", "call_id": "", "name": "", "arguments": "", "status": "in_progress"}
 					if typ == "custom" {
 						prefix = "ctc_"
-						item = map[string]any{"type": "custom_tool_call", "call_id": "", "name": "", "input": "", "status": "in_progress"}
 					}
 					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ, OutputIndex: allocateOutputIndex()}
 					calls[idx] = st
-					item["id"] = st.ItemID
-					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": st.OutputIndex, "item": item})
 				}
 				if v, ok := tc["id"].(string); ok {
 					st.ID = v
@@ -340,10 +337,27 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletion(w http.ResponseWr
 				if v, ok := fn["name"].(string); ok {
 					st.Name += v
 				}
-				if v, ok := fn["arguments"].(string); ok {
+				if !st.Started && strings.TrimSpace(st.ID) != "" && strings.TrimSpace(st.Name) != "" {
+					item := map[string]any{"type": "function_call", "id": st.ItemID, "call_id": st.ID, "name": st.Name, "arguments": "", "status": "in_progress"}
+					if st.Type == "custom" {
+						item = map[string]any{"type": "custom_tool_call", "id": st.ItemID, "call_id": st.ID, "name": st.Name, "input": "", "status": "in_progress"}
+					}
+					if err := emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": st.OutputIndex, "item": item}); err != nil {
+						return false
+					}
+					st.Started = true
+					if st.Type != "custom" && st.Args != "" {
+						if err := emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": st.OutputIndex, "item_id": st.ItemID, "delta": st.Args}); err != nil {
+							return false
+						}
+					}
+				}
+				if v, ok := fn["arguments"].(string); ok && v != "" {
 					st.Args += v
-					if st.Type != "custom" {
-						emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": st.OutputIndex, "item_id": st.ItemID, "delta": v})
+					if st.Started && st.Type != "custom" {
+						if err := emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": st.OutputIndex, "item_id": st.ItemID, "delta": v}); err != nil {
+							return false
+						}
 					}
 				}
 			}

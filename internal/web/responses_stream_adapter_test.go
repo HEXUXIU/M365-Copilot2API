@@ -175,9 +175,41 @@ func TestStreamResponsesAdapterPreservesMixedTextAndToolOutput(t *testing.T) {
 	if strings.Contains(body, "event: response.failed") {
 		t.Fatalf("mixed stream failed: %s", body)
 	}
+	if strings.Contains(body, `"call_id":""`) || strings.Contains(body, `"name":""`) {
+		t.Fatalf("tool item was exposed before its identity was complete: %s", body)
+	}
 	node := s.responseMessages["tenant"]["resp_mixed"]
 	if node == nil || len(node.Messages) != 2 || node.Messages[1].Content != "I will check. " || len(node.Messages[1].ToolCalls) != 1 || len(node.ToolCalls) != 1 {
 		t.Fatalf("mixed history=%#v", node)
+	}
+}
+
+func TestStreamResponsesAdapterWaitsForSplitToolIdentity(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"type":"function","function":{"arguments":"{\"city\":"}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_split","function":{"name":"weather","arguments":"\"Paris\"}"}}]}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_split_tool", "session", "tenant", run); !ok {
+		t.Fatalf("adapter failed: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	added := strings.Index(body, "event: response.output_item.added")
+	delta := strings.Index(body, "event: response.function_call_arguments.delta")
+	if added < 0 || delta < added {
+		t.Fatalf("tool item was not announced before argument deltas: %s", body)
+	}
+	for _, want := range []string{`"call_id":"call_split"`, `"name":"weather"`, `"arguments":"{\"city\":\"Paris\"}"`, "event: response.completed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("split tool stream missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, `"call_id":""`) || strings.Contains(body, `"name":""`) || strings.Contains(body, `"delta":""`) {
+		t.Fatalf("split tool stream exposed incomplete metadata: %s", body)
 	}
 }
 

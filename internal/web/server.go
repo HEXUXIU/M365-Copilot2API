@@ -1292,6 +1292,15 @@ func requiredToolRouterAttemptTimeout(chatTimeoutSeconds int) time.Duration {
 	return timeout
 }
 
+func callToolRouterWithToneFallback(tone string, call func(string) (chathub.Result, error)) (chathub.Result, error) {
+	res, err := call(tone)
+	if !IsEmptyCompletion(err) || strings.EqualFold(strings.TrimSpace(tone), "magic") {
+		return res, err
+	}
+	log.Printf("[tool-router] tone=%q returned empty, retrying same account with magic", tone)
+	return call("magic")
+}
+
 func answerRequestTimeout(chatTimeoutSeconds int) time.Duration {
 	base := time.Duration(chatTimeoutSeconds) * time.Second
 	if base <= 0 {
@@ -2122,9 +2131,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	runRouter := func(text string, attachments []chathub.Attachment, coldText string, coldAttachments []chathub.Attachment, requireValidCall bool) (chathub.Result, error) {
 		routerCtx, routerCancel := context.WithTimeout(r.Context(), toolRouterTotalTimeout(s.settings.get().ChatTimeoutSeconds))
 		defer routerCancel()
-		request := func(prompt string, requestAttachments []chathub.Attachment) chathub.Request {
+		request := func(prompt string, requestAttachments []chathub.Attachment, requestTone string) chathub.Request {
 			req := chathub.Request{
-				Text: prompt, Tone: tone, Attachments: requestAttachments,
+				Text: prompt, Tone: requestTone, Attachments: requestAttachments,
 				LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisablePool: true,
 			}
 			routerConversation.apply(&req)
@@ -2149,7 +2158,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				callCtx, callCancel = context.WithTimeout(routerCtx, requiredToolRouterAttemptTimeout(s.settings.get().ChatTimeoutSeconds))
 			}
 			defer callCancel()
-			return s.chatWithAccount(callCtx, selected.ID, selectedAccount, request(prompt, requestAttachments))
+			return callToolRouterWithToneFallback(tone, func(requestTone string) (chathub.Result, error) {
+				return s.chatWithAccount(callCtx, selected.ID, selectedAccount, request(prompt, requestAttachments, requestTone))
+			})
 		}
 		retryableRouterFailure := func(routeErr error) bool {
 			if isRetryableAccountFailure(routeErr) || errors.Is(routeErr, requiredDecisionErr) {

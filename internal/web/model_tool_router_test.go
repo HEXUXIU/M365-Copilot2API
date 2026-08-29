@@ -2,6 +2,8 @@ package web
 
 import (
 	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -192,6 +194,43 @@ func TestToolRouterTimeoutsStayBelowDownstreamDeadline(t *testing.T) {
 	}
 	if total := time.Duration(maxToolRouterAccountAttempts) * requiredToolRouterAttemptTimeout(120); total > maxToolRouterTotalTimeout {
 		t.Fatalf("required account attempts=%s exceed router budget=%s", total, maxToolRouterTotalTimeout)
+	}
+}
+
+func TestCallToolRouterWithToneFallbackRetriesEmptyWithMagic(t *testing.T) {
+	var tones []string
+	result, err := callToolRouterWithToneFallback("precise", func(tone string) (chathub.Result, error) {
+		tones = append(tones, tone)
+		if tone != "magic" {
+			return chathub.Result{}, chathub.ErrEmptyCompletion
+		}
+		return chathub.Result{Text: `CALL_TOOL: apply_patch({"input":"patch"})`}, nil
+	})
+	if err != nil || result.Text == "" || !reflect.DeepEqual(tones, []string{"precise", "magic"}) {
+		t.Fatalf("result=%#v err=%v tones=%v", result, err, tones)
+	}
+}
+
+func TestCallToolRouterWithToneFallbackDoesNotRetryOtherFailures(t *testing.T) {
+	want := errors.New("terminal")
+	calls := 0
+	_, err := callToolRouterWithToneFallback("precise", func(string) (chathub.Result, error) {
+		calls++
+		return chathub.Result{}, want
+	})
+	if !errors.Is(err, want) || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
+	}
+}
+
+func TestCallToolRouterWithToneFallbackDoesNotLoopMagic(t *testing.T) {
+	calls := 0
+	_, err := callToolRouterWithToneFallback("magic", func(string) (chathub.Result, error) {
+		calls++
+		return chathub.Result{}, chathub.ErrEmptyCompletion
+	})
+	if !IsEmptyCompletion(err) || calls != 1 {
+		t.Fatalf("err=%v calls=%d", err, calls)
 	}
 }
 

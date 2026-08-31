@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -452,6 +453,32 @@ func TestStreamResponsesAdapterStoresInTenantSessionNamespace(t *testing.T) {
 	}
 	if s.responseMessages["tenant"] != nil {
 		t.Fatal("stream response leaked into the tenant-only namespace")
+	}
+}
+
+func TestStreamResponsesAdapterBindsAliasFromPreviousResponseHeader(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	s.affinity = openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer s.affinity.close()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	r.Header.Set("Authorization", "Bearer response-affinity-test-key")
+	r.Header.Set(previousResponseHeader, "resp-root")
+	tenant := s.affinityTenantIdentity(r)
+	tenantHash := normalizeAffinityTenantHash(tenant)
+	rootHash := affinityExplicitHash(tenantHash, "previous_response", "resp-root")
+	if err := s.affinity.fallback.PutBinding(context.Background(), affinityBinding{ID: rootHash, TenantHash: tenantHash, AccountID: "a", ConversationID: "conv-a", SessionID: "sess-a"}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp-child", "", responseNamespace(tenant, ""), responsesInnerStream(
+		`{"choices":[{"delta":{"content":"done"}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)); !ok {
+		t.Fatalf("stream failed: %s", w.Body.String())
+	}
+	if !s.affinity.hasResponseBinding(context.Background(), tenant, "resp-child") {
+		t.Fatal("stream completion did not bind the child response alias")
 	}
 }
 

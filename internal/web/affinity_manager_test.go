@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -353,6 +354,60 @@ func TestPreviousResponseAliasResolvesCloudBinding(t *testing.T) {
 	next.apply(nextBody)
 	if !next.incremental || nextBody.ConversationID != "conv-a" || nextBody.SessionID != "sess-a" {
 		t.Fatalf("response alias did not restore binding: state=%s body=%+v", next, nextBody)
+	}
+}
+
+func TestResponsesPreviousResponseChainKeepsBindingWithoutExplicitSession(t *testing.T) {
+	manager := openAffinityManager(affinityConfig{Mode: affinityEnforce, TTL: time.Hour, MaxSessions: 100, LockTTL: time.Minute, LockWait: time.Second})
+	defer manager.close()
+	ctx := context.Background()
+	accounts := []auth.AccountToken{{ID: "a"}, {ID: "b"}}
+	available := func(string) bool { return true }
+
+	firstRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	firstReference := prepareResponsesAffinity(firstRequest, "", "", "resp-first")
+	firstBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "inspect the workspace"}}}
+	first, err := manager.begin(ctx, "tenant", firstBody, firstRequest, accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.apply(firstBody)
+	first.complete(ctx, firstBody, first.accountID, "conv-a", "sess-a", oaiMsg{Role: "assistant", Content: "done"}, 100, 4)
+	firstAccount := first.accountID
+	firstBinding := first.key.BindingID
+	first.close()
+	manager.bindResponse(ctx, "tenant", "resp-first", firstReference)
+
+	secondRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	secondReference := prepareResponsesAffinity(secondRequest, "resp-first", "", "resp-second")
+	secondBody := &oaiReq{Messages: []oaiMsg{
+		{Role: "user", Content: "inspect the workspace"},
+		{Role: "assistant", Content: "done"},
+		{Role: "user", Content: "continue"},
+	}}
+	second, err := manager.begin(ctx, "tenant", secondBody, secondRequest, accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second.apply(secondBody)
+	if !second.incremental || second.accountID != firstAccount || second.binding.ID != firstBinding || secondBody.ConversationID != "conv-a" || secondBody.SessionID != "sess-a" {
+		t.Fatalf("first continuation lost affinity: state=%s body=%+v", second, secondBody)
+	}
+	second.complete(ctx, secondBody, second.accountID, "conv-a", "sess-a", oaiMsg{Role: "assistant", Content: "continued"}, 120, 4)
+	second.close()
+	manager.bindResponse(ctx, "tenant", "resp-second", secondReference)
+
+	thirdRequest := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	prepareResponsesAffinity(thirdRequest, "resp-second", "", "resp-third")
+	thirdBody := &oaiReq{Messages: []oaiMsg{{Role: "user", Content: "next"}}}
+	third, err := manager.begin(ctx, "tenant", thirdBody, thirdRequest, accounts, available)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer third.close()
+	third.apply(thirdBody)
+	if !third.incremental || third.accountID != firstAccount || third.binding.ID != firstBinding || thirdBody.ConversationID != "conv-a" || thirdBody.SessionID != "sess-a" {
+		t.Fatalf("second continuation lost affinity: state=%s body=%+v", third, thirdBody)
 	}
 }
 

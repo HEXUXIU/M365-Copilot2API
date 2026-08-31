@@ -56,6 +56,20 @@ func responseSessionID(r *http.Request) string {
 	return strings.TrimSpace(r.Header.Get(sessionHeaderName))
 }
 
+func prepareResponsesAffinity(r *http.Request, previousResponseID, sessionID, publicResponseID string) string {
+	referenceID := firstNonEmpty(previousResponseID, sessionID, publicResponseID)
+	r.Header.Set(sessionHeaderName, sessionID)
+	r.Header.Set(previousResponseHeader, referenceID)
+	return referenceID
+}
+
+func (s *Server) bindResponsesAffinity(ctx context.Context, r *http.Request, responseID string) {
+	if s == nil || s.affinity == nil {
+		return
+	}
+	s.affinity.bindResponse(ctx, s.affinityTenantIdentity(r), responseID, r.Header.Get(previousResponseHeader))
+}
+
 func tenantHashPrefix(tenant string) string {
 	if len(tenant) >= 8 {
 		return tenant[:8]
@@ -584,9 +598,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 	}
 	stored = appendResponsesAssistantHistory(stored, text.String(), converted)
 	s.storeResponsesHistory(r.Context(), tenant, id, affinitySessionID, stored)
-	if s.affinity != nil {
-		s.affinity.bindResponse(r.Context(), s.affinityTenantIdentity(r), id, affinitySessionID)
-	}
+	s.bindResponsesAffinity(r.Context(), r, id)
 	completed := map[string]any{"type": "response.completed", "response": resp, "sequence_number": sequence}
 	sequence++
 	payload, _ := json.Marshal(completed)
@@ -741,8 +753,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		}
 		o.Messages = normalized
 	}
-	r.Header.Set(sessionHeaderName, affinitySessionID)
-	r.Header.Set(previousResponseHeader, affinitySessionID)
+	prepareResponsesAffinity(r, body.PreviousResponseID, affinitySessionID, publicID)
 	if body.Stream {
 		streamWriter := w
 		var capture *captureResponseWriter
@@ -835,6 +846,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		s.responseMu.Lock()
 		s.persistResponseNodeLocked(r.Context(), nsKey, publicID, &RespNode{At: time.Now(), Messages: stored, ToolCalls: toolCallsMap, Version: 1, Consumed: false, ParentID: body.PreviousResponseID, Tenant: tenant, SessionID: sessionID})
 		s.responseMu.Unlock()
+		s.bindResponsesAffinity(r.Context(), r, publicID)
 		log.Printf("[responses-audit] tenantHash=%s session=%s new=%s parent=%s toolCalls=%d version=1", tenantHashPrefix(tenant), sessionHashPrefix(sessionID), publicID, body.PreviousResponseID, len(toolCallsMap))
 	}
 	if claim == nil {

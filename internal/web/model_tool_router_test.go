@@ -38,6 +38,56 @@ func TestExplicitToolRequestOnlyChecksLatestUserMessage(t *testing.T) {
 	}
 }
 
+func TestToolResultContinuationReleasesGenericRequiredChoice(t *testing.T) {
+	completed := []oaiMsg{
+		{Role: "user", Content: "请实际检查当前环境"},
+		{Role: "assistant", ToolCalls: []map[string]any{{
+			"id": "call_env", "type": "function",
+			"function": map[string]any{"name": "shell_command", "arguments": `{"command":"pwd"}`},
+		}}},
+		{Role: "tool", ToolCallID: "call_env", Content: "/home/ubuntu"},
+	}
+	if got := effectiveToolChoiceForTurn(completed, "required"); got != "auto" {
+		t.Fatalf("completed tool continuation choice=%#v, want auto", got)
+	}
+
+	withNotice := append(append([]oaiMsg(nil), completed...), oaiMsg{Role: "user", Content: "You have 100 weighted tokens left"})
+	if got := effectiveToolChoiceForTurn(withNotice, "required"); got != "auto" {
+		t.Fatalf("transport notice reactivated required choice: %#v", got)
+	}
+}
+
+func TestToolResultContinuationKeepsFreshRequiredRequest(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{
+			"id": "call_env", "type": "function",
+			"function": map[string]any{"name": "shell_command", "arguments": `{"command":"pwd"}`},
+		}}},
+		{Role: "tool", ToolCallID: "call_env", Content: "/home/ubuntu"},
+		{Role: "user", Content: "现在再读取 /etc/os-release，必须实际调用工具"},
+	}
+	if got := effectiveToolChoiceForTurn(messages, "required"); got != "required" {
+		t.Fatalf("fresh user request choice=%#v, want required", got)
+	}
+}
+
+func TestToolResultContinuationPreservesNamedAndNoneChoices(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{
+			"id": "call_env", "type": "function",
+			"function": map[string]any{"name": "shell_command", "arguments": `{"command":"pwd"}`},
+		}}},
+		{Role: "tool", ToolCallID: "call_env", Content: "/home/ubuntu"},
+	}
+	named := map[string]any{"type": "function", "function": map[string]any{"name": "shell_command"}}
+	if got := effectiveToolChoiceForTurn(messages, named); !reflect.DeepEqual(got, named) {
+		t.Fatalf("named choice changed: got=%#v want=%#v", got, named)
+	}
+	if got := effectiveToolChoiceForTurn(messages, "none"); got != "none" {
+		t.Fatalf("none choice changed: %#v", got)
+	}
+}
+
 func TestWorkspaceToolRequestPromotesDirectExecution(t *testing.T) {
 	tools := workspaceTestTools("shell_command")
 	for _, request := range []string{

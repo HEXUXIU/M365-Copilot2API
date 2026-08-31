@@ -2180,6 +2180,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(tool.Function, &f)
 		toolMaps = append(toolMaps, map[string]any{"type": tool.Type, "function": f})
 	}
+	originalToolChoiceMode := normalizedToolChoiceMode(body.ToolChoice)
+	body.ToolChoice = effectiveToolChoiceForTurn(body.Messages, body.ToolChoice)
+	if originalToolChoiceMode == "required" && normalizedToolChoiceMode(body.ToolChoice) == "auto" {
+		log.Printf("[tool-policy] id=%s released generic required choice after completed tool result", requestID)
+	}
 	if body.ToolChoice == nil && len(toolMaps) > 0 {
 		body.ToolChoice = "auto"
 	}

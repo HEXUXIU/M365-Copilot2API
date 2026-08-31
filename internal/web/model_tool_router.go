@@ -399,6 +399,35 @@ func toolChoiceRequiresCall(choice any) bool {
 	return mode == "required" || strings.HasPrefix(mode, "named:")
 }
 
+// effectiveToolChoiceForTurn scopes a generic required choice to the turn that
+// requested it. Several clients resend the first-turn choice with the tool
+// result; forcing another call at that point prevents the model from producing
+// the final answer and can create a duplicate planning loop. A fresh user
+// message still starts a new required turn, while named and none choices remain
+// explicit caller constraints.
+func effectiveToolChoiceForTurn(messages []oaiMsg, choice any) any {
+	if normalizedToolChoiceMode(choice) != "required" {
+		return choice
+	}
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		switch strings.ToLower(strings.TrimSpace(message.Role)) {
+		case "system", "developer":
+			continue
+		case "user":
+			if weightedTokenNoticePattern.MatchString(contentToString(message.Content)) {
+				continue
+			}
+			return choice
+		case "tool":
+			return "auto"
+		default:
+			return choice
+		}
+	}
+	return choice
+}
+
 func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]detectedToolCall, bool) {
 	text = strings.TrimSpace(text)
 	// Try the new natural language format first: CALL_TOOL: name({...})

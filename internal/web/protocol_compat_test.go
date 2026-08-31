@@ -194,3 +194,41 @@ func TestAnthropicToolResult(t *testing.T) {
 		t.Fatalf("%+v %v", o, err)
 	}
 }
+
+func TestProtocolContinuationsReleaseGenericRequiredChoice(t *testing.T) {
+	responses, err := (responsesRequest{
+		ToolChoice: "required",
+		Input: []any{
+			map[string]any{"type": "function_call", "call_id": "call_r", "name": "shell_command", "arguments": `{"command":"pwd"}`},
+			map[string]any{"type": "function_call_output", "call_id": "call_r", "output": "/home/ubuntu"},
+		},
+	}).openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := effectiveToolChoiceForTurn(responses.Messages, responses.ToolChoice); got != "auto" {
+		t.Fatalf("Responses continuation choice=%#v, want auto", got)
+	}
+
+	anthropic, err := (anthropicRequest{
+		ToolChoice: map[string]any{"type": "any"},
+		Messages: []anthropicMessage{
+			{Role: "assistant", Content: []any{map[string]any{"type": "tool_use", "id": "call_a", "name": "shell_command", "input": map[string]any{"command": "pwd"}}}},
+			{Role: "user", Content: []any{map[string]any{"type": "tool_result", "tool_use_id": "call_a", "content": "/home/ubuntu"}}},
+		},
+	}).openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := effectiveToolChoiceForTurn(anthropic.Messages, anthropic.ToolChoice); got != "auto" {
+		t.Fatalf("Anthropic continuation choice=%#v, want auto", got)
+	}
+
+	chatMessages := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_c", "type": "function", "function": map[string]any{"name": "shell_command", "arguments": `{"command":"pwd"}`}}}},
+		{Role: "tool", ToolCallID: "call_c", Content: "/home/ubuntu"},
+	}
+	if got := effectiveToolChoiceForTurn(chatMessages, "required"); got != "auto" {
+		t.Fatalf("Chat Completions continuation choice=%#v, want auto", got)
+	}
+}

@@ -16,8 +16,8 @@
 - Modify: `internal/web/custom_tools_test.go`
 - Modify: `internal/web/responses_stream_adapter_test.go`
 
-- [ ] **Step 1: Write failing tests** for non-stream output with an empty upstream ID and a stream whose first tool delta has a name but no ID.
-- [ ] **Step 2: Run the focused tests** and confirm the assertions fail because `call_id` is empty or the adapter emits `response.failed`.
+- [x] **Step 1: Write failing tests** for non-stream output with an empty upstream ID and a stream whose first tool delta has a name but no ID.
+- [x] **Step 2: Run the focused tests** and confirm the assertions fail because `call_id` is empty or the adapter emits `response.failed`.
 
 ### Task 2: Normalize public tool-call identities
 
@@ -25,9 +25,9 @@
 - Modify: `internal/web/codex_responses.go`
 - Modify: `internal/web/protocol_handlers.go`
 
-- [ ] **Step 1: Add one helper** that trims/validates tool names, preserves non-empty IDs, and creates a UUID-backed `call_` ID for an omitted ID.
-- [ ] **Step 2: Apply the helper** before non-stream Responses output is serialized and when the stream adapter has learned a tool name but no ID.
-- [ ] **Step 3: Keep malformed calls with no tool name as a structured `invalid_tool_call` failure and never emit an item with empty identity fields.
+- [x] **Step 1: Add one helper** that trims/validates tool names, preserves non-empty IDs, and creates a UUID-backed `call_` ID for an omitted ID.
+- [x] **Step 2: Apply the helper** before non-stream Responses output is serialized and when the stream adapter has learned a tool name but no ID.
+- [x] **Step 3: Keep malformed calls with no tool name as a structured `invalid_tool_call` failure and never emit an item with empty identity fields.
 
 ### Task 3: Verify continuation and production behavior
 
@@ -35,8 +35,7 @@
 - Modify: `internal/web/protocol_compat_test.go`
 - Modify: `internal/web/responses_state_test.go`
 
-- [ ] **Step 1: Add regression coverage** for `function_call_output` and `custom_tool_call_output` continuation IDs.
-- [ ] **Step 2: Run focused tests, race tests, `go vet`, and `go build`.
-- [ ] **Step 3: Build a versioned image, back up compose/container metadata, restart only the gateway, and run public Responses JSON/SSE plus tool-result continuation checks.
+- [x] **Step 1: Add regression coverage** for `function_call_output` and `custom_tool_call_output` continuation IDs.
+- [x] **Step 2: Run focused tests, race tests, `go vet`, and `go build`.
+- [ ] **Step 3: Build a versioned image, back up compose/container metadata, restart only the gateway, and run public Responses JSON/SSE plus tool-result continuation checks. Blocked until SSH access to the production VPS is restored.
 - [ ] **Step 4: Roll back to the saved image immediately if any health, cache, or tool check regresses.
-

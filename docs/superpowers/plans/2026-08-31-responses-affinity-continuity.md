@@ -18,7 +18,7 @@
 - Modify: `internal/web/affinity_manager_test.go`
 - Modify: `internal/web/responses_stream_adapter_test.go`
 
-- [ ] **Step 1: Write the failing non-stream affinity-chain test**
+- [x] **Step 1: Write the failing non-stream affinity-chain test**
 
 Add a test that creates two healthy accounts, prepares a first Responses request with no explicit session, completes it on one account, binds `resp-first`, continues through `resp-second`, and asserts all three requests resolve the same binding, account, conversation id, and session id.
 
@@ -74,7 +74,7 @@ func TestResponsesPreviousResponseChainKeepsBindingWithoutExplicitSession(t *tes
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run:
 
@@ -84,7 +84,7 @@ go test ./internal/web -run TestResponsesPreviousResponseChainKeepsBindingWithou
 
 Expected: build failure because `prepareResponsesAffinity` does not exist on `91fa9b6`.
 
-- [ ] **Step 3: Write the failing SSE alias test**
+- [x] **Step 3: Write the failing SSE alias test**
 
 Add a test that creates a verified root binding, sets `X-M365-Previous-Response-Id: resp-root`, runs the stream adapter with no explicit session, and asserts `resp-child` becomes a verified response alias.
 
@@ -115,7 +115,7 @@ func TestStreamResponsesAdapterBindsAliasFromPreviousResponseHeader(t *testing.T
 }
 ```
 
-- [ ] **Step 4: Run the SSE test and verify RED**
+- [x] **Step 4: Run the SSE test and verify RED**
 
 Run:
 
@@ -133,7 +133,7 @@ Expected: FAIL because the current adapter passes the empty explicit session id 
 - Modify: `internal/web/protocol_handlers.go:702`
 - Modify: `internal/web/protocol_handlers.go:834`
 
-- [ ] **Step 1: Implement the request affinity reference**
+- [x] **Step 1: Implement the request affinity reference**
 
 Add the helper below. It leaves `X-M365-Session-Id` as the response-state namespace identity while using a distinct previous-response affinity key.
 
@@ -152,7 +152,7 @@ In `responses`, replace the two direct header assignments with:
 	affinityReferenceID := prepareResponsesAffinity(r, body.PreviousResponseID, affinitySessionID, publicID)
 ```
 
-- [ ] **Step 2: Bind SSE completion to the prepared reference**
+- [x] **Step 2: Bind SSE completion to the prepared reference**
 
 Replace the stream completion alias source with the prepared request header while keeping the stored `RespNode.SessionID` unchanged:
 
@@ -162,7 +162,7 @@ Replace the stream completion alias source with the prepared request header whil
 	}
 ```
 
-- [ ] **Step 3: Bind non-stream completion before publishing the result**
+- [x] **Step 3: Bind non-stream completion before publishing the result**
 
 Immediately after the successful `RespNode` persistence, record the public response alias through the same verified manager path:
 
@@ -172,7 +172,7 @@ Immediately after the successful `RespNode` persistence, record the public respo
 	}
 ```
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Run:
 
@@ -182,7 +182,7 @@ go test ./internal/web -run 'TestResponsesPreviousResponseChainKeepsBindingWitho
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the implementation**
+- [x] **Step 5: Commit the implementation**
 
 ```powershell
 git add internal/web/protocol_handlers.go internal/web/affinity_manager_test.go internal/web/responses_stream_adapter_test.go docs/superpowers/plans/2026-08-31-responses-affinity-continuity.md
@@ -194,7 +194,7 @@ git commit -m "fix(responses): preserve affinity across tool continuations"
 **Files:**
 - Verify: all Go packages and the committed diff
 
-- [ ] **Step 1: Run package tests**
+- [x] **Step 1: Run package tests**
 
 ```powershell
 go test ./... -count=1
@@ -202,7 +202,7 @@ go test ./... -count=1
 
 Expected: PASS.
 
-- [ ] **Step 2: Run race tests on shared routing state**
+- [x] **Step 2: Run race tests on shared routing state**
 
 ```powershell
 go test -race ./internal/web ./internal/chathub -count=1
@@ -210,7 +210,7 @@ go test -race ./internal/web ./internal/chathub -count=1
 
 Expected: PASS with no race report.
 
-- [ ] **Step 3: Run static and build checks**
+- [x] **Step 3: Run static and build checks**
 
 ```powershell
 go vet ./...
@@ -226,7 +226,7 @@ Expected: all commands exit 0 and `git diff --check` prints no diagnostics.
 - Verify: `/opt/m365-copilot2api/docker-compose.yml`
 - Create: `/opt/m365-copilot2api/backups/<commit>-predeploy/`
 
-- [ ] **Step 1: Push the locked production branch**
+- [x] **Step 1: Push the locked production branch**
 
 ```powershell
 git push origin production-super-20260831
@@ -234,15 +234,15 @@ git push origin production-super-20260831
 
 Expected: the new commit becomes the branch head and the push does not rewrite history.
 
-- [ ] **Step 2: Capture rollback material on the VPS**
+- [x] **Step 2: Capture rollback material on the VPS**
 
 Save the compose file, gateway container inspect output, current image inspect output, account/Redis health summaries, and SHA-256 checksums under a commit-specific backup directory.
 
-- [ ] **Step 3: Build a commit-tagged gateway image**
+- [x] **Step 3: Build a commit-tagged gateway image**
 
 Build `m365-copilot2api:production-super-<commit>` from the pushed source and verify its image id before editing Compose.
 
-- [ ] **Step 4: Recreate only the gateway container**
+- [x] **Step 4: Recreate only the gateway container**
 
 Update only the gateway image reference and run:
 
@@ -255,24 +255,24 @@ Expected: Redis, Sub2API, PostgreSQL, subscription proxy, normalizer, volumes, a
 ### Task 5: Repeat production acceptance with real workloads
 
 **Files:**
-- Create: `outputs/2026-08-31-responses-affinity-acceptance.md`
+- Create: `docs/deployments/2026-08-31-responses-affinity-acceptance.md`
 
-- [ ] **Step 1: Run a real PowerShell custom-tool chain**
+- [x] **Step 1: Run a real PowerShell custom-tool chain**
 
 Ask the model to inspect the working directory, execute the emitted PowerShell command locally, return the real tool output with `previous_response_id`, and assert HTTP 200, one stable tool call id, correct final answer, one stable account, and nonzero cached tokens.
 
-- [ ] **Step 2: Run a different Linux shell custom-tool chain from the VPS**
+- [x] **Step 2: Run a different Linux shell custom-tool chain from the VPS**
 
 Ask the model to inspect a different directory with a Linux shell contract, execute the emitted command on the VPS, return its real output, and assert the same protocol and affinity properties.
 
-- [ ] **Step 3: Run function-tool JSON and SSE chains**
+- [x] **Step 3: Run function-tool JSON and SSE chains**
 
 Use distinct real questions and function schemas for non-stream and SSE. Assert unique stable call ids, valid argument JSON, successful tool-result continuation, `response.created`, `response.completed`, and the original healthy account.
 
-- [ ] **Step 4: Run a real-paper long-context continuation**
+- [x] **Step 4: Run a real-paper long-context continuation**
 
 Use a published paper not used by the immediate pre-deploy test, ask two substantive questions through `previous_response_id`, and record input tokens, cached tokens, cache percentage, response-header time, first delta time, and completion time.
 
-- [ ] **Step 5: Run the final production audit**
+- [x] **Step 5: Run the final production audit**
 
 Verify `31/31` accounts enabled and online, zero cooldown/auth-failed/rate-limited accounts, Redis AOF/RDB healthy with zero evictions, no public `X-M365-*` response headers, custom cache controls still present, zero new 500/502/panic/fatal/tool-id errors, and a usable rollback image and backup directory.

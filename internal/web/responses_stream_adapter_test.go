@@ -412,6 +412,27 @@ func TestStreamResponsesAdapterWaitsForSplitToolIdentity(t *testing.T) {
 	}
 }
 
+func TestStreamResponsesAdapterRepairsToolCallWithoutUpstreamID(t *testing.T) {
+	s := newResponsesAdapterTestServer()
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	w := httptest.NewRecorder()
+	run := responsesInnerStream(
+		`{"choices":[{"delta":{"tool_calls":[{"index":0,"type":"function","function":{"name":"weather","arguments":"{\"city\":\"Paris\"}"}}]}}]}`,
+		`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		`[DONE]`,
+	)
+	if ok := s.streamResponsesAdapterWithRunner(w, r, oaiReq{}, "gpt-5.6-sol", "resp_missing_id", "session", "tenant", run); !ok {
+		t.Fatalf("adapter rejected a named tool without an upstream id: %s", w.Body.String())
+	}
+	body := w.Body.String()
+	if strings.Contains(body, `"call_id":""`) || !strings.Contains(body, `"name":"weather"`) || !strings.Contains(body, "event: response.completed") {
+		t.Fatalf("repaired tool stream is invalid: %s", body)
+	}
+	if node := s.responseMessages["tenant"]["resp_missing_id"]; node == nil || len(node.ToolCalls) != 1 {
+		t.Fatalf("repaired tool call was not persisted: %#v", node)
+	}
+}
+
 func TestStreamResponsesAdapterStoresInTenantSessionNamespace(t *testing.T) {
 	s := newResponsesAdapterTestServer()
 	r := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

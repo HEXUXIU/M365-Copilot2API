@@ -289,6 +289,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 		Started              bool
 	}
 	calls := map[int]*tcState{}
+	usedCallIDs := map[string]bool{}
 	var innerUsage map[string]any
 	innerFinishReason := ""
 	innerError := ""
@@ -376,12 +377,23 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ, OutputIndex: allocateOutputIndex()}
 					calls[idx] = st
 				}
-				if v, ok := tc["id"].(string); ok {
-					st.ID = v
+				if st.ID == "" {
+					if v, ok := tc["id"].(string); ok {
+						st.ID = strings.TrimSpace(v)
+					}
 				}
 				fn, _ := tc["function"].(map[string]any)
 				if v, ok := fn["name"].(string); ok {
 					st.Name += v
+				}
+				if strings.TrimSpace(st.ID) == "" && strings.TrimSpace(st.Name) != "" {
+					// Some upstream streams omit the tool ID entirely. Assign it as
+					// soon as the name is known so every emitted event and the stored
+					// continuation share one executable call identity.
+					st.ID = callID(st.Name, "", idx)
+				}
+				if !st.Started && usedCallIDs[st.ID] {
+					st.ID = callID(st.Name, "", idx)
 				}
 				if !st.Started && strings.TrimSpace(st.ID) != "" && strings.TrimSpace(st.Name) != "" {
 					item := map[string]any{"type": "function_call", "id": st.ItemID, "call_id": st.ID, "name": st.Name, "arguments": "", "status": "in_progress"}
@@ -392,6 +404,7 @@ func (s *Server) streamResponsesAdapterWithRunnerAndCompletionInterval(w http.Re
 						return false
 					}
 					st.Started = true
+					usedCallIDs[st.ID] = true
 					if st.Type != "custom" && st.Args != "" {
 						if err := emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": st.OutputIndex, "item_id": st.ItemID, "delta": st.Args}); err != nil {
 							return false
@@ -762,6 +775,10 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		writeResponsesError(w, http.StatusBadGateway, "upstream_error", "upstream protocol error: "+err.Error())
+		return
+	}
+	if normalizeErr := normalizeResponsesResult(out); normalizeErr != nil {
+		writeResponsesError(w, http.StatusBadGateway, "invalid_tool_call", normalizeErr.Error())
 		return
 	}
 	if !responsesOutputHasContent(out) {

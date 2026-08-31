@@ -4,10 +4,90 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// normalizeResponsesToolCalls prevents an incomplete upstream tool object
+// from reaching a Responses client. Upstream IDs are authoritative; when an
+// upstream adapter omitted one, the gateway creates a unique ID and keeps it
+// on the internal message so response-state continuation uses the same value.
+func normalizeResponsesToolCalls(msg map[string]any) ([]any, bool) {
+	rawCalls, ok := msg["tool_calls"].([]any)
+	if !ok {
+		return nil, false
+	}
+	normalized := make([]any, 0, len(rawCalls))
+	usedIDs := make(map[string]struct{}, len(rawCalls))
+	for index, raw := range rawCalls {
+		tc, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		fn, ok := tc["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			// A call without a name cannot be executed or safely continued.
+			continue
+		}
+		id, _ := tc["id"].(string)
+		id = strings.TrimSpace(id)
+		if id == "" {
+			id = callID(name, "", index)
+		}
+		if _, duplicate := usedIDs[id]; duplicate {
+			id = callID(name, "", index)
+		}
+		usedIDs[id] = struct{}{}
+		tc["id"] = id
+		fn["name"] = name
+		tc["function"] = fn
+		normalized = append(normalized, tc)
+	}
+	msg["tool_calls"] = normalized
+	return normalized, true
+}
+
+// normalizeResponsesResult applies tool identity normalization to an entire
+// OpenAI-style result before the result is persisted or projected publicly.
+// Calls without a name are rejected because there is no executable identity
+// that a Responses client can continue with.
+func normalizeResponsesResult(src map[string]any) error {
+	msg, _ := openAIChoice(src)
+	if msg == nil {
+		return nil
+	}
+	raw, present := msg["tool_calls"]
+	if !present || raw == nil {
+		return nil
+	}
+	calls, ok := raw.([]any)
+	if !ok {
+		return fmt.Errorf("upstream tool_calls has invalid shape")
+	}
+	for index, rawCall := range calls {
+		tc, ok := rawCall.(map[string]any)
+		if !ok {
+			return fmt.Errorf("upstream tool call %d is invalid", index)
+		}
+		fn, ok := tc["function"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("upstream tool call %d is missing name", index)
+		}
+		name, _ := fn["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("upstream tool call %d is missing name", index)
+		}
+	}
+	normalizeResponsesToolCalls(msg)
+	return nil
+}
 
 // writeResponsesResult projects an internal OpenAI-style result into the
 // Responses events and completion shape consumed by Codex.
@@ -22,7 +102,7 @@ func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src 
 			"summary": []any{map[string]any{"type": "summary_text", "text": reasoning}},
 		})
 	}
-	calls, hasCalls := msg["tool_calls"].([]any)
+	calls, hasCalls := normalizeResponsesToolCalls(msg)
 	if text, _ := msg["content"].(string); text != "" || !hasCalls || len(calls) == 0 {
 		messageID := "msg_" + uuid.NewString()
 		output = append(output, map[string]any{"type": "message", "id": messageID, "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": text, "annotations": []any{}}}})

@@ -83,3 +83,72 @@ func TestResponsesStreamWritesCustomApplyPatchEvents(t *testing.T) {
 		t.Fatalf("custom apply_patch events are out of order: %s", body)
 	}
 }
+
+func TestResponsesResultRepairsMissingToolCallID(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeResponsesResult(rr, "m", false, map[string]any{
+		"choices": []any{map[string]any{"message": map[string]any{
+			"tool_calls": []any{map[string]any{
+				"id": "", "type": "function",
+				"function": map[string]any{"name": "lookup", "arguments": "{}"},
+			}},
+		}}},
+	})
+	var response map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	output, _ := response["output"].([]any)
+	if len(output) != 1 {
+		t.Fatalf("output=%#v", output)
+	}
+	call, _ := output[0].(map[string]any)
+	if strings.TrimSpace(call["call_id"].(string)) == "" || call["name"] != "lookup" {
+		t.Fatalf("tool identity was not repaired: %#v", call)
+	}
+}
+
+func TestResponsesResultMakesParallelToolCallIDsUnique(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeResponsesResult(rr, "m", false, map[string]any{
+		"choices": []any{map[string]any{"message": map[string]any{
+			"tool_calls": []any{
+				map[string]any{"id": "same", "type": "function", "function": map[string]any{"name": "first", "arguments": "{}"}},
+				map[string]any{"id": "same", "type": "function", "function": map[string]any{"name": "second", "arguments": "{}"}},
+			},
+		}}},
+	})
+	var response map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	output, _ := response["output"].([]any)
+	if len(output) != 2 {
+		t.Fatalf("output=%#v", output)
+	}
+	first, _ := output[0].(map[string]any)
+	second, _ := output[1].(map[string]any)
+	if first["call_id"] == second["call_id"] || strings.TrimSpace(second["call_id"].(string)) == "" {
+		t.Fatalf("parallel tool IDs are not unique: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestNormalizeResponsesResultKeepsGeneratedIDForContinuationState(t *testing.T) {
+	src := map[string]any{
+		"choices": []any{map[string]any{"message": map[string]any{
+			"tool_calls": []any{map[string]any{
+				"type": "function", "function": map[string]any{"name": "lookup", "arguments": "{}"},
+			}},
+		}}},
+	}
+	if err := normalizeResponsesResult(src); err != nil {
+		t.Fatal(err)
+	}
+	msg, _ := openAIChoice(src)
+	calls, _ := msg["tool_calls"].([]any)
+	call, _ := calls[0].(map[string]any)
+	id, _ := call["id"].(string)
+	if strings.TrimSpace(id) == "" || buildRespToolCallsMap([]map[string]any{call})[id] == nil {
+		t.Fatalf("generated call ID was not retained for continuation state: %#v", call)
+	}
+}

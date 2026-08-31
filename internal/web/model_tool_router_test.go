@@ -117,6 +117,24 @@ tool[call_x]: 2026-07-18`, testTools(), "auto")
 	}
 }
 
+func TestModelToolRouterPromptPreservesExactInstructionArguments(t *testing.T) {
+	p := modelToolRouterPrompt(`[request instructions]
+[developer]
+Call run_environment_probe with command exactly "pwd && uname -s" and environment exactly "Ubuntu Bash".
+
+[user]
+Confirm the environment.`, testTools(), map[string]any{"function": map[string]any{"name": "run_environment_probe"}})
+	for _, want := range []string{
+		"Request instructions and system/developer blocks are authoritative",
+		"Preserve exact tool names, argument values, paths, commands, literals, quoting, and separators",
+		"Never replace an explicitly supplied argument with an equivalent value",
+	} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("router prompt missing exact-argument rule %q: %s", want, p)
+		}
+	}
+}
+
 func TestCompactRouterToolsPreservesValidationShape(t *testing.T) {
 	tools := []map[string]any{{
 		"type": "function",

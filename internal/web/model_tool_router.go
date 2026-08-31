@@ -33,6 +33,9 @@ func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) st
 - If no tool is needed, respond with: NO_TOOL_NEEDED
 - Only use tools from the available list above
 - Validate all arguments against the tool's schema
+- Request instructions and system/developer blocks are authoritative; follow them before the user request when they differ
+- Preserve exact tool names, argument values, paths, commands, literals, quoting, and separators supplied by those instructions
+- Never replace an explicitly supplied argument with an equivalent value, probe, default, or inferred value
 - Do not invent tools that are not in the list`
 	if toolChoiceRequiresCall(choice) {
 		rules += `

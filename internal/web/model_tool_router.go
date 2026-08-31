@@ -12,6 +12,7 @@ import (
 const (
 	maxRouterDescriptionBytes     = 240
 	maxExecRouterDescriptionBytes = 2048
+	maxExecShellContractBytes     = 1200
 	maxRouterPromptBytes          = 128 << 10
 )
 
@@ -110,6 +111,21 @@ func execNestedToolNames(description string) []string {
 	return names
 }
 
+func execNestedToolSection(description, target string) string {
+	matches := execNestedToolHeadingPattern.FindAllStringSubmatchIndex(description, -1)
+	for i, match := range matches {
+		if len(match) < 4 || !strings.EqualFold(description[match[2]:match[3]], target) {
+			continue
+		}
+		end := len(description)
+		if i+1 < len(matches) {
+			end = matches[i+1][0]
+		}
+		return strings.TrimSpace(description[match[1]:end])
+	}
+	return ""
+}
+
 func compactExecRouterDescription(description string) string {
 	names := execNestedToolNames(description)
 	if len(names) == 0 {
@@ -127,7 +143,14 @@ func compactExecRouterDescription(description string) string {
 		summary.WriteString(" For workspace edits, pass the complete patch text to tools.apply_patch.")
 	}
 	if available["shell_command"] {
-		summary.WriteString(" For PowerShell commands, call tools.shell_command({command: COMMAND}).")
+		summary.WriteString(" Call tools.shell_command({command: COMMAND}); construct COMMAND exactly from the authoritative caller-provided shell_command contract. Preserve its shell, operating-system, path, quoting, and command-separator rules. A command error does not prove that the caller environment changed. ")
+		contract := execNestedToolSection(description, "shell_command")
+		if contract == "" {
+			summary.WriteString("The caller shell environment is unspecified; do not assume one or invent shell-specific commands.")
+		} else {
+			summary.WriteString("Caller shell_command contract:\n")
+			summary.WriteString(compactToolResult(contract, maxExecShellContractBytes))
+		}
 	}
 	return compactToolResult(summary.String(), maxExecRouterDescriptionBytes)
 }

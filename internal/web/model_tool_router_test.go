@@ -180,6 +180,78 @@ Run a PowerShell command in the workspace.`
 	}
 }
 
+func TestCompactExecRouterDescriptionPreservesCallerShellContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		contract  string
+		want      []string
+		forbidden []string
+	}{
+		{
+			name:      "windows powershell",
+			contract:  "Runs a PowerShell command on Windows. Use Get-Location; Get-ChildItem -Force.",
+			want:      []string{"PowerShell", "Get-Location", "Get-ChildItem"},
+			forbidden: []string{"pwd; ls -la"},
+		},
+		{
+			name:      "linux bash",
+			contract:  "Runs a Bash command on Linux. Use pwd; ls -la; grep. Do not use PowerShell.",
+			want:      []string{"Bash", "pwd; ls -la", "Do not use PowerShell"},
+			forbidden: []string{"For PowerShell commands", "Get-Location"},
+		},
+		{
+			name:      "macos posix",
+			contract:  "Runs a POSIX shell command on macOS. Use pwd; find . -maxdepth 2.",
+			want:      []string{"POSIX", "macOS", "find . -maxdepth 2"},
+			forbidden: []string{"For PowerShell commands", "Get-ChildItem"},
+		},
+		{
+			name:      "unspecified caller shell",
+			contract:  "Runs commands in the caller-declared default shell. Follow this contract exactly.",
+			want:      []string{"caller-declared default shell", "Follow this contract exactly"},
+			forbidden: []string{"PowerShell", "Bash", "Windows", "Linux", "macOS"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			description := "Run JavaScript through the caller bridge.\n" +
+				"### apply_patch\nPATCH_SECTION_SENTINEL\n" +
+				"### shell_command\n" + tt.contract + "\n" +
+				"### view_image\nVIEW_IMAGE_SECTION_SENTINEL"
+			got := compactExecRouterDescription(description)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("router description missing %q: %q", want, got)
+				}
+			}
+			for _, forbidden := range tt.forbidden {
+				if strings.Contains(got, forbidden) {
+					t.Fatalf("router description introduced %q: %q", forbidden, got)
+				}
+			}
+			if strings.Contains(got, "VIEW_IMAGE_SECTION_SENTINEL") {
+				t.Fatalf("shell section leaked into the next tool: %q", got)
+			}
+			if len(got) > maxExecRouterDescriptionBytes {
+				t.Fatalf("exec description is unbounded: %d", len(got))
+			}
+		})
+	}
+}
+
+func TestCompactExecRouterDescriptionHandlesMissingAndLongShellContracts(t *testing.T) {
+	missing := compactExecRouterDescription("Run JavaScript.\n### shell_command\n   \n### apply_patch\nApply a patch.")
+	if !strings.Contains(missing, "environment is unspecified") || strings.Contains(missing, "PowerShell") {
+		t.Fatalf("missing shell contract gained an environment: %q", missing)
+	}
+
+	longContract := "SHELL_CONTRACT_HEAD " + strings.Repeat("x", maxExecRouterDescriptionBytes*2) + " SHELL_CONTRACT_TAIL"
+	bounded := compactExecRouterDescription("Run JavaScript.\n### shell_command\n" + longContract)
+	if len(bounded) > maxExecRouterDescriptionBytes || !strings.Contains(bounded, "SHELL_CONTRACT_HEAD") || !strings.Contains(bounded, "SHELL_CONTRACT_TAIL") {
+		t.Fatalf("bounded shell contract invalid: len=%d value=%q", len(bounded), bounded)
+	}
+}
+
 func TestParseModelToolDecisionRejectsBadSchema(t *testing.T) {
 	calls, ok := parseModelToolDecision("```json\n{\"calls\":[{\"name\":\"get_weather\",\"arguments\":{\"city\":2}}]}\n```", testTools(), "auto")
 	if !ok || len(calls) != 0 {

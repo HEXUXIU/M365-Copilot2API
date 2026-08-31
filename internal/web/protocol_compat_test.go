@@ -157,6 +157,12 @@ func TestResponsesInstructionsAndCustomExecPolicyAreSystemMessages(t *testing.T)
 	if o.Messages[2].Role != "user" || o.Messages[2].Content != r.Input {
 		t.Fatalf("input ordering changed: %#v", o.Messages[2])
 	}
+	policy := fmt.Sprint(o.Messages[0].Content)
+	for _, want := range []string{"caller-provided shell contract is authoritative", "does not mean", "remote container"} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("custom exec policy missing %q: %q", want, policy)
+		}
+	}
 }
 
 func TestResponsesCustomToolOutputToOpenAI(t *testing.T) {

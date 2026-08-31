@@ -67,7 +67,7 @@ func TestRouterPlanningInputUsesIncrementalSuffix(t *testing.T) {
 	affinity := &affinityRequest{enforced: true, incremental: true, prefixCount: 3}
 
 	prompt, attachments := routerPlanningInput("FULL PROMPT", fullAttachments, explicitAttachments, messages, affinity, true)
-	if !strings.Contains(prompt, "fresh tool output") || strings.Contains(prompt, "large stable system prompt") || strings.Contains(prompt, "first request") {
+	if !strings.Contains(prompt, "fresh tool output") || !strings.Contains(prompt, "large stable system prompt") || strings.Contains(prompt, "first request") {
 		t.Fatalf("router prompt is not the incremental suffix: %q", prompt)
 	}
 	if len(attachments) != 1 || attachments[0].Name != "current.txt" {
@@ -75,7 +75,7 @@ func TestRouterPlanningInputUsesIncrementalSuffix(t *testing.T) {
 	}
 
 	prompt, attachments = routerPlanningInput("FULL PROMPT", fullAttachments, explicitAttachments, messages, affinity, false)
-	if !strings.Contains(prompt, "first request") || !strings.Contains(prompt, "fresh tool output") || strings.Contains(prompt, "large stable system prompt") {
+	if !strings.Contains(prompt, "first request") || !strings.Contains(prompt, "fresh tool output") || !strings.Contains(prompt, "large stable system prompt") {
 		t.Fatalf("one-shot router did not isolate the active turn: prompt=%q", prompt)
 	}
 	if len(attachments) != 1 || attachments[0].Name != "current.txt" {
@@ -83,22 +83,73 @@ func TestRouterPlanningInputUsesIncrementalSuffix(t *testing.T) {
 	}
 }
 
-func TestRouterPlanningInputDropsShortSystemAndDeveloperHistory(t *testing.T) {
-	messages := []oaiMsg{
-		{Role: "system", Content: strings.Repeat("irrelevant policy ", 100)},
-		{Role: "developer", Content: strings.Repeat("old integration notes ", 100)},
-		{Role: "user", Content: "old request"},
-		{Role: "assistant", Content: "old answer"},
-		{Role: "user", Content: "Create probe.txt containing ACTIVE_MARKER."},
+func TestRouterPlanningInputKeepsCrossProtocolInstructions(t *testing.T) {
+	responses, err := (responsesRequest{
+		Instructions: "RESPONSES_MARKER exact-response-path",
+		Input:        "run the requested tool",
+	}).openAI()
+	if err != nil {
+		t.Fatal(err)
 	}
-	full, attachments := flattenPromptMessages(messages, []chathub.Attachment{{Type: "image", Name: "old.png"}})
-	prompt, gotAttachments := routerPlanningInput(full, attachments, nil, messages, nil, false)
+	anthropic, err := (anthropicRequest{
+		System:   []any{map[string]any{"type": "text", "text": "ANTHROPIC_MARKER exact-anthropic-path"}},
+		Messages: []anthropicMessage{{Role: "user", Content: "run the requested tool"}},
+	}).openAI()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		messages []oaiMsg
+		want     []string
+	}{
+		{"responses", responses.Messages, []string{"[request instructions]", "RESPONSES_MARKER", "run the requested tool"}},
+		{"chat", []oaiMsg{
+			{Role: "system", Content: "CHAT_SYSTEM_MARKER"},
+			{Role: "developer", Content: "CHAT_DEVELOPER_MARKER"},
+			{Role: "user", Content: "old request"},
+			{Role: "assistant", Content: "old answer"},
+			{Role: "user", Content: "run the current tool"},
+		}, []string{"CHAT_SYSTEM_MARKER", "CHAT_DEVELOPER_MARKER", "run the current tool"}},
+		{"anthropic", anthropic.Messages, []string{"ANTHROPIC_MARKER", "run the requested tool"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			full, attachments := flattenPromptMessages(tc.messages, nil)
+			prompt, gotAttachments := routerPlanningInput(full, attachments, nil, tc.messages, nil, false)
+			for _, want := range tc.want {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("router prompt missing %q: %q", want, prompt)
+				}
+			}
+			if strings.Contains(prompt, "old request") || strings.Contains(prompt, "old answer") {
+				t.Fatalf("router prompt retained old conversation: %q", prompt)
+			}
+			if len(gotAttachments) != 0 {
+				t.Fatalf("router prompt retained stale attachments: %+v", gotAttachments)
+			}
+		})
+	}
+}
 
-	if !strings.Contains(prompt, "ACTIVE_MARKER") || strings.Contains(prompt, "irrelevant policy") || strings.Contains(prompt, "old integration notes") || strings.Contains(prompt, "old request") {
-		t.Fatalf("short router prompt was not isolated to the active turn: %q", prompt)
+func TestRouterPlanningInstructionsPreserveOrderAndBounds(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "system", Content: "SYSTEM_FIRST"},
+		{Role: "developer", Content: "DEVELOPER_SECOND"},
+		{Role: "system", Content: "   "},
 	}
-	if len(gotAttachments) != 0 {
-		t.Fatalf("short router prompt retained stale attachments: %+v", gotAttachments)
+	got := routerPlanningInstructions(messages)
+	if strings.Index(got, "SYSTEM_FIRST") >= strings.Index(got, "DEVELOPER_SECOND") {
+		t.Fatalf("instruction order changed: %q", got)
+	}
+	if strings.Count(got, "[system]") != 1 || strings.Count(got, "[developer]") != 1 {
+		t.Fatalf("empty instruction was not omitted: %q", got)
+	}
+
+	long := "HEAD_MARKER" + strings.Repeat("x", maxRouterInstructionsBytes*2) + "TAIL_MARKER"
+	bounded := routerPlanningInstructions([]oaiMsg{{Role: "system", Content: long}})
+	if len(bounded) > maxRouterInstructionsBytes || !strings.Contains(bounded, "HEAD_MARKER") || !strings.Contains(bounded, "TAIL_MARKER") {
+		t.Fatalf("bounded instructions invalid: len=%d", len(bounded))
 	}
 }
 
@@ -111,7 +162,7 @@ func TestRouterPlanningInputBoundsLongHistoryToActiveTurn(t *testing.T) {
 	}
 	full, attachments := flattenPromptMessages(messages, nil)
 	prompt, gotAttachments := routerPlanningInput(full, attachments, nil, messages, nil, false)
-	if len(prompt) > maxRouterPromptBytes+200 || !strings.Contains(prompt, "current.txt") || strings.Contains(prompt, "old-system") {
+	if len(prompt) > maxRouterPromptBytes+maxRouterInstructionsBytes+300 || !strings.Contains(prompt, "current.txt") || !strings.Contains(prompt, "old-system") || strings.Contains(prompt, "old-request") {
 		t.Fatalf("router prompt was not bounded to the active turn: len=%d prompt=%q", len(prompt), prompt)
 	}
 	if len(gotAttachments) != 0 {
@@ -145,7 +196,7 @@ func TestRouterToolConversationCachesAcrossTenTurns(t *testing.T) {
 				t.Fatalf("turn %d lost affinity: account=%q body=%+v", turn, state.accountID, body)
 			}
 			planning, _ := routerPlanningInput("FULL HISTORY", nil, nil, body.Messages, state, true)
-			if strings.Contains(planning, "stable context") || !strings.Contains(planning, fmt.Sprintf("tool output %d", turn-1)) {
+			if !strings.Contains(planning, "stable context") || !strings.Contains(planning, fmt.Sprintf("tool output %d", turn-1)) {
 				state.close()
 				t.Fatalf("turn %d did not send only the new suffix: %q", turn, planning)
 			}

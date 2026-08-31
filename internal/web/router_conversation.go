@@ -1,10 +1,13 @@
 package web
 
 import (
+	"fmt"
 	"strings"
 
 	"m365-copilot2api/internal/chathub"
 )
+
+const maxRouterInstructionsBytes = 16 << 10
 
 // routerConversation keeps tool planning on the same upstream conversation as
 // the public tool history. When reuse is disabled, accept returns the transient
@@ -66,21 +69,46 @@ func (state *routerConversation) reset() {
 	state.sessionID = ""
 }
 
+func routerPlanningInstructions(messages []oaiMsg) string {
+	var b strings.Builder
+	for _, message := range messages {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role != "system" && role != "developer" {
+			continue
+		}
+		text, _ := parseContent(message.Content)
+		text = strings.TrimSpace(text)
+		if text == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "[%s]\n%s\n", role, text)
+	}
+	return compactToolResult(b.String(), maxRouterInstructionsBytes)
+}
+
+func prependRouterPlanningInstructions(prompt string, messages []oaiMsg) string {
+	instructions := routerPlanningInstructions(messages)
+	if instructions == "" {
+		return prompt
+	}
+	if strings.TrimSpace(prompt) == "" {
+		return "[request instructions]\n" + instructions
+	}
+	return "[request instructions]\n" + instructions + "\n\n" + prompt
+}
+
 func routerPlanningInput(fullPrompt string, fullAttachments []chathub.Attachment, explicitAttachments []chathub.Attachment, messages []oaiMsg, affinity *affinityRequest, reuse bool) (string, []chathub.Attachment) {
 	if reuse && affinity != nil && affinity.enforced && affinity.incremental && affinity.prefixCount > 0 && affinity.prefixCount < len(messages) {
 		prompt, attachments := flattenPromptMessages(messages[affinity.prefixCount:], explicitAttachments)
 		if prompt != "" {
-			return compactToolResult(prompt, maxRouterPromptBytes), attachments
+			return prependRouterPlanningInstructions(compactToolResult(prompt, maxRouterPromptBytes), messages), attachments
 		}
 	}
-	// Tool selection needs the active user turn and its tool evidence, not the
-	// system/developer prompt or an unbounded replay of previous turns. Besides
-	// reducing latency, this prevents unrelated policy text from changing a
-	// straightforward tool decision. Keep head and tail when the active turn
-	// itself contains a large document.
+	// Tool selection needs the bounded request instructions, active user turn,
+	// and tool evidence, not an unbounded replay of previous conversation turns.
 	prompt, attachments := flattenPromptMessages(activeMessages(messages), explicitAttachments)
 	if strings.TrimSpace(prompt) == "" {
-		return compactToolResult(fullPrompt, maxRouterPromptBytes), fullAttachments
+		return prependRouterPlanningInstructions(compactToolResult(fullPrompt, maxRouterPromptBytes), messages), fullAttachments
 	}
-	return compactToolResult(prompt, maxRouterPromptBytes), attachments
+	return prependRouterPlanningInstructions(compactToolResult(prompt, maxRouterPromptBytes), messages), attachments
 }

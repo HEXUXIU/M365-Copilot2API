@@ -276,4 +276,3 @@ Use a published paper not used by the immediate pre-deploy test, ask two substan
 - [ ] **Step 5: Run the final production audit**
 
 Verify `31/31` accounts enabled and online, zero cooldown/auth-failed/rate-limited accounts, Redis AOF/RDB healthy with zero evictions, no public `X-M365-*` response headers, custom cache controls still present, zero new 500/502/panic/fatal/tool-id errors, and a usable rollback image and backup directory.
-

@@ -372,6 +372,16 @@ func normalizeExecNestedToolInput(input, description string) (string, bool) {
 		"viewImage":    "view_image",
 	}
 	changed := false
+	for _, name := range names {
+		// M365 sometimes drops the tools namespace while preserving the exact
+		// declared nested name. Restrict recovery to awaited declared calls so
+		// local JavaScript helpers and unknown functions remain untouched.
+		bareAwait := regexp.MustCompile(`(\bawait\s+)` + regexp.QuoteMeta(name) + `(\s*\()`)
+		if normalized := bareAwait.ReplaceAllString(input, `${1}tools.`+name+`${2}`); normalized != input {
+			input = normalized
+			changed = true
+		}
+	}
 	for alias, target := range aliases {
 		if !declared[strings.ToLower(target)] || !strings.Contains(input, "tools."+alias) {
 			continue

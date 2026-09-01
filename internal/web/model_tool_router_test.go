@@ -235,7 +235,9 @@ func TestNormalizeExecNestedToolInputRepairsRuntimeArgumentShapes(t *testing.T) 
 		{`const r = await tools.shell_command({cmd: "Get-Location"}); text(r);`, `tools.shell_command({command: "Get-Location"})`},
 		{`const r = await tools.shell_command({commandLine: "pwd"}); text(r);`, `tools.shell_command({command: "pwd"})`},
 		{`const cmd = "pwd"; const r = await tools.shell_command({cmd}); text(r);`, `tools.shell_command({command: cmd})`},
+		{`const r = await shell_command({command: "Get-Location"}); text(r);`, `await tools.shell_command({command: "Get-Location"})`},
 		{`const patch = "*** Begin Patch"; const r = await tools.apply_patch({patch}); text(r);`, `tools.apply_patch(patch)`},
+		{`const patch = "*** Begin Patch"; const r = await apply_patch({patch}); text(r);`, `await tools.apply_patch(patch)`},
 		{`const patchText = "*** Begin Patch"; const r = await tools.apply_patch({patch: patchText}); text(r);`, `tools.apply_patch(patchText)`},
 	}
 	for _, tc := range tests {
@@ -249,6 +251,10 @@ func TestNormalizeExecNestedToolInputRepairsRuntimeArgumentShapes(t *testing.T) 
 	input := `const r = await tools.apply_patch({patch}); text(r);`
 	if got, changed := normalizeExecNestedToolInput(input, withoutPatch); changed || got != input {
 		t.Fatalf("undeclared apply_patch was rewritten: changed=%t got=%q", changed, got)
+	}
+	unknown := `const r = await unknown_tool({}); text(r);`
+	if got, changed := normalizeExecNestedToolInput(unknown, description); changed || got != unknown {
+		t.Fatalf("unknown bare call was rewritten: changed=%t got=%q", changed, got)
 	}
 }
 

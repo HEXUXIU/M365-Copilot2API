@@ -109,4 +109,9 @@ func TestCompletionGuardRejectsUnsupportedSuccess(t *testing.T) {
 	if !completionEvidenceAllows("I cannot confirm completion because no tool results were returned.", buildAgentLedger(nil)) {
 		t.Fatal("honest incomplete response rejected")
 	}
+	for _, answer := range []string{"I searched the web and found the result.", "我刚才已经按关键词进行了搜索。", "已打开浏览器并完成验证。"} {
+		if completionEvidenceAllows(answer, buildAgentLedger(nil)) {
+			t.Fatalf("unsupported external-action claim allowed: %q", answer)
+		}
+	}
 }

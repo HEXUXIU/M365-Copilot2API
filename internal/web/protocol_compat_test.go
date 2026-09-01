@@ -85,7 +85,7 @@ func TestResponsesPreservesExplicitToolRequestBeforeInternalUserItem(t *testing.
 	}
 }
 
-func TestResponsesPromotesDirectWorkspaceRequestBeforeInternalUserItem(t *testing.T) {
+func TestResponsesKeepsDirectWorkspaceRequestAsPlannerIntent(t *testing.T) {
 	r := responsesRequest{Tools: []map[string]any{{"type": "custom", "name": "exec", "description": "run a command"}}, Input: []any{
 		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "在当前目录创建 1.txt 并写入 123214324"}}},
 		map[string]any{"role": "user", "content": []any{map[string]any{"type": "input_text", "text": "You have 100 weighted tokens left"}}},
@@ -94,7 +94,10 @@ func TestResponsesPromotesDirectWorkspaceRequestBeforeInternalUserItem(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !o.ExplicitToolRequired {
+	if o.ExplicitToolRequired {
+		t.Fatal("direct workspace request was incorrectly converted to required")
+	}
+	if !workspaceToolRequest(o.Messages, o.Tools) {
 		t.Fatal("direct workspace request was lost after an internal user item")
 	}
 }
@@ -161,6 +164,19 @@ func TestResponsesInstructionsAndCustomExecPolicyAreSystemMessages(t *testing.T)
 	for _, want := range []string{"caller-provided shell contract is authoritative", "does not mean", "remote container"} {
 		if !strings.Contains(policy, want) {
 			t.Fatalf("custom exec policy missing %q: %q", want, policy)
+		}
+	}
+}
+
+func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
+	for _, want := range []string{
+		"Desktop, Downloads, or Documents",
+		"resolve that exact folder",
+		"never silently substitute the workspace",
+		"requested desktop UI, browser, or computer-use action occurred",
+	} {
+		if !strings.Contains(customExecWorkspaceInstruction, want) {
+			t.Fatalf("custom exec policy missing %q", want)
 		}
 	}
 }

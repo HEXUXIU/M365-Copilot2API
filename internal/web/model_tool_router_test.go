@@ -27,6 +27,9 @@ func TestExplicitToolRequestOnlyChecksLatestUserMessage(t *testing.T) {
 	if !explicitToolRequest([]oaiMsg{{Role: "user", Content: "You must actually call the terminal tool."}}) {
 		t.Fatal("explicit English tool request was not detected")
 	}
+	if !explicitToolRequest([]oaiMsg{{Role: "user", Content: "在当前目录创建 1.txt，必须实际调用 apply_patch 工具。"}}) {
+		t.Fatal("explicit named tool request was not detected")
+	}
 	if explicitToolRequest([]oaiMsg{{Role: "user", Content: "必须调用工具"}, {Role: "assistant", Content: "ok"}, {Role: "user", Content: "现在直接回答问题"}}) {
 		t.Fatal("stale tool request affected the latest user turn")
 	}
@@ -164,6 +167,23 @@ func TestModelToolRouterPromptMarksCompletedResults(t *testing.T) {
 tool[call_x]: 2026-07-18`, testTools(), "auto")
 	if !strings.Contains(p, "Completed evidence must not be repeated") || !strings.Contains(p, "tool[call_x]: 2026-07-18") || !strings.Contains(p, "unfinished work remains") {
 		t.Fatalf("missing multi-turn evidence constraint: %s", p)
+	}
+}
+
+func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing.T) {
+	p := modelToolRouterPromptWithIntent("[user] 在桌面创建 report.txt", testTools(), "auto", true)
+	for _, want := range []string{
+		"MODE: auto",
+		"requested a real local or external action",
+		"Select a compatible declared tool now",
+		"do not invent a tool or claim the action happened",
+	} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("router prompt missing execution-intent rule %q: %s", want, p)
+		}
+	}
+	if strings.Contains(p, "MODE requires a tool call") {
+		t.Fatalf("implicit execution intent became required: %s", p)
 	}
 }
 

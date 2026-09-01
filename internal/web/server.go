@@ -1994,7 +1994,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", err.Error())
 		return
 	}
-	explicitToolRequired := body.ExplicitToolRequired || explicitToolRequirementFromContext(r.Context()) || explicitToolRequest(body.Messages) || workspaceToolRequest(body.Messages, body.Tools)
+	// A user who explicitly says that a tool must be called is distinct from a
+	// normal execution request (for example, create a file or search the web).
+	// The former preserves required semantics; the latter asks the planner to
+	// choose a compatible tool while retaining auto as a recoverable choice.
+	explicitToolRequired := body.ExplicitToolRequired || explicitToolRequirementFromContext(r.Context()) || explicitToolRequest(body.Messages)
+	executionRequested := workspaceToolRequest(body.Messages, body.Tools)
 	// Tool evidence and loop limits are scoped to the active user turn. Older
 	// tool history remains in the flattened conversation but must not bloat the
 	// router prompt or suppress a legitimate repeated action in a later turn.
@@ -2192,6 +2197,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		body.ToolChoice = "required"
 		log.Printf("[tool-router] id=%s explicit user tool request promoted choice=required", requestID)
 	}
+	modelToolPrompt := func(input string) string {
+		return modelToolRouterPromptWithIntent(input, toolMaps, body.ToolChoice, executionRequested)
+	}
 	var mcpServerURL string
 	if len(toolMaps) > 0 {
 		scheme := "http"
@@ -2361,8 +2369,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = routerStream.data(mustJSON(map[string]any{"error": map[string]any{"message": message, "code": "upstream_error"}}))
 			_ = routerStream.data("[DONE]")
 		}
-		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routePrompt := modelToolPrompt(routerInput + "\n" + ledger.RouterContext())
+		coldRoutePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())
 		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
 		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments, toolChoiceRequiresCall(body.ToolChoice))
 		log.Printf("[req-trace] id=%s stage=router_return elapsed_ms=%d err=%t", requestID, time.Since(startedAt).Milliseconds(), routeErr != nil)
@@ -2750,8 +2758,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// Ask the upstream model to select and validate the next tool. The gateway
 	// remains tool-agnostic; it only validates and serializes the decision.
 	if planningMode == "router" && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
-		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routePrompt := modelToolPrompt(routerInput + "\n" + ledger.RouterContext())
+		coldRoutePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())
 		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments, toolChoiceRequiresCall(body.ToolChoice))
 		decisionNeedsRepair := errors.Is(routeErr, requiredDecisionErr)
 		if routeErr != nil && !decisionNeedsRepair {
@@ -3144,7 +3152,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// Recover natural-language tool intent in native mode, and repair any
 	// structured event that failed the declared-name/schema boundary.
 	if (planningMode == "native" || invalidDetectedTool) && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
-		routePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
+		routePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())
 		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, ConversationID: res.ConversationID, SessionID: res.SessionID, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 		if routeErr == nil {
 			calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)

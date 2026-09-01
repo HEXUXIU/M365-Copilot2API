@@ -40,7 +40,7 @@ type agentLedger struct {
 }
 
 var failureSignal = regexp.MustCompile(`(?i)(exit\s*(code|status)?\s*[:=]?\s*[1-9]\d*|\berror\b|\bfailed\b|\bfailure\b|exception|traceback|timed?\s*out|permission denied|not found|refused)`)
-var unsupportedSuccess = regexp.MustCompile(`(?i)\b(installed|created|written|executed|ran|started|deployed|deleted|verified|completed|succeeded|successful(?:ly)?)\b`)
+var unsupportedSuccess = regexp.MustCompile(`(?i)\b(installed|created|written|executed|ran|started|deployed|deleted|verified|completed|succeeded|successful(?:ly)?|searched|opened|sent|interacted)\b|(?:我.{0,12})?(?:已经|已|刚刚|刚才).{0,32}(?:创建|写入|执行|运行|启动|部署|删除|验证|完成|成功|搜索|查找|打开|发送|操作|交互)`)
 
 func compactToolResult(s string, limit int) string {
 	s = strings.TrimSpace(s)

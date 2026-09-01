@@ -22,11 +22,21 @@ var (
 	workspaceEnglishActionPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:create|write|save|modify|edit|update|delete|remove|move|rename|copy|read|inspect|list|search|find|open|execute|run)(?:s|d|ing)?(?:$|[^a-z])`)
 	workspaceEnglishTargetPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:files?|director(?:y|ies)|folders?|code|projects?|repositories|repos?|commands?|scripts?|workspace)(?:$|[^a-z])`)
 	weightedTokenNoticePattern     = regexp.MustCompile(`(?i)^\s*you have [0-9]+ weighted tokens left\.?\s*$`)
+	explicitToolRequirementPattern = regexp.MustCompile(`(?i)(?:必须|务必|一定要|请务必)\s*(?:实际\s*)?(?:调用|使用).{0,64}(?:工具|tool|apply[_ -]?patch|exec(?:ute)?|terminal|shell|终端)`)
 	execNestedToolHeadingPattern   = regexp.MustCompile("(?m)^###\\s+`?([A-Za-z0-9_]+)`?\\s*$")
 	execNestedToolCallPattern      = regexp.MustCompile(`\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
 )
 
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
+	return modelToolRouterPromptWithIntent(prompt, tools, choice, false)
+}
+
+// modelToolRouterPromptWithIntent gives the planner a positive execution
+// signal without falsely changing the caller's auto choice into required.
+// This matters for ordinary file/search/browser tasks: the model should call
+// a compatible local tool, but an imperfect first routing response must not
+// trigger account failover or make the request fail as a 502.
+func modelToolRouterPromptWithIntent(prompt string, tools []map[string]any, choice any, executionRequested bool) string {
 	defs, _ := json.Marshal(compactRouterTools(tools))
 	mode := normalizedToolChoiceMode(choice)
 	rules := `- If a tool is needed, respond with: CALL_TOOL: tool_name({"arg1":"value1"})
@@ -40,6 +50,11 @@ func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) st
 	if toolChoiceRequiresCall(choice) {
 		rules += `
 - MODE requires a tool call. You must select at least one available tool; never respond with NO_TOOL_NEEDED`
+	}
+	if executionRequested && !toolChoiceRequiresCall(choice) {
+		rules += `
+- The current user requested a real local or external action. Select a compatible declared tool now when one is available.
+- If no declared tool can perform the requested action, return NO_TOOL_NEEDED; do not invent a tool or claim the action happened`
 	}
 	// Multi-turn: completed tool evidence (tool[...], tool_calls:) was already
 	// acted upon, so re-invoking those tools would duplicate work.
@@ -244,6 +259,9 @@ func explicitToolRequest(messages []oaiMsg) bool {
 			continue
 		}
 		text := strings.ToLower(strings.TrimSpace(rawText))
+		if explicitToolRequirementPattern.MatchString(text) {
+			return true
+		}
 		patterns := []string{
 			"必须实际调用工具", "必须调用工具", "务必调用工具", "必须使用工具",
 			"使用终端工具", "调用终端工具", "实际调用终端", "实际使用终端",

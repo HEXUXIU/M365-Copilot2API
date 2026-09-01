@@ -60,7 +60,7 @@ func compactRedundantProbeInstructions(r *responsesRequest) bool {
 	return true
 }
 
-const customExecWorkspaceInstruction = `You are operating through the caller's local execution bridge. Never use, request, or mention remote native tools. The only permitted execution tools are the caller-provided custom tools, including exec and apply_patch when declared. The executor starts in the project workspace selected by the caller. Use relative paths only; never guess, cd to, or write under /root, /workspace, /mnt/data, /tmp, or any other absolute project path. Use custom exec to inspect the actual working directory before changes. Do not create files outside that directory. Never claim a file was created, modified, or verified until the matching custom tool returns a successful result. After every change, use custom exec to verify the result. The caller-provided shell contract is authoritative. A command failure does not mean the workspace moved or the shell changed. Never claim execution switched to a remote container unless a matching caller tool result explicitly says so.`
+const customExecWorkspaceInstruction = `You are operating through the caller's local execution bridge. Never use, request, or mention remote native tools. The only permitted execution tools are the caller-provided custom tools, including exec and apply_patch when declared. The executor starts in the project workspace selected by the caller. Work in that workspace by default. When the user explicitly names a caller-local known folder such as Desktop, Downloads, or Documents, resolve that exact folder through the caller's declared shell and operate there; never silently substitute the workspace. Do not guess absolute paths or write under /root, /workspace, /mnt/data, /tmp, or another absolute project path that the user did not explicitly request. Use custom exec to inspect the actual working directory before workspace changes and to resolve a requested known folder before writing there. Never claim a file was created, modified, searched, sent, opened, or verified until the matching custom tool returns a successful result. After every change, use custom exec to verify the result. Do not treat a workspace listing as evidence that a requested desktop UI, browser, or computer-use action occurred. The caller-provided shell contract is authoritative. A command failure does not mean the workspace moved or the shell changed. Never claim execution switched to a remote container unless a matching caller tool result explicitly says so.`
 
 const (
 	emptyToolOutputPlaceholder   = "(no tool output)"
@@ -310,19 +310,25 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	if hasCustomExec {
 		o.Messages = append([]oaiMsg{{Role: "system", Content: customExecWorkspaceInstruction}}, o.Messages...)
 	}
-	o.ExplicitToolRequired = explicitToolRequestInResponses(o.Messages, o.Tools)
+	// A direct workspace action is strong evidence that the planner should try a
+	// compatible local tool, but it is not the caller's explicit
+	// tool_choice=required constraint. Keeping those distinct avoids turning an
+	// ordinary create/search request into a multi-account retry storm when the
+	// upstream planner emits an imperfect structured decision.
+	o.ExplicitToolRequired = explicitToolRequestInResponses(o.Messages)
 	return o, nil
 }
 
 // Responses clients may append internal user items after the application task.
-// Preserve an explicit tool requirement until the task is completed or a tool
-// result starts the continuation turn.
-func explicitToolRequestInResponses(messages []oaiMsg, tools []chathub.Tool) bool {
+// Preserve a user-stated requirement to call a tool until the task is completed
+// or a tool result starts the continuation turn. Direct execution intent is
+// tracked separately by workspaceToolRequest at routing time.
+func explicitToolRequestInResponses(messages []oaiMsg) bool {
 	required := false
 	for _, message := range messages {
 		switch strings.ToLower(strings.TrimSpace(message.Role)) {
 		case "user":
-			if explicitToolRequest([]oaiMsg{message}) || workspaceToolRequest([]oaiMsg{message}, tools) {
+			if explicitToolRequest([]oaiMsg{message}) {
 				required = true
 			}
 		case "tool":

@@ -2197,8 +2197,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		body.ToolChoice = "required"
 		log.Printf("[tool-router] id=%s explicit user tool request promoted choice=required", requestID)
 	}
+	declaredSkillRoutes := requestedDeclaredSkills(body.Messages)
+	declaredSkillGuard := declaredSkillRoutingGuard(declaredSkillRoutes)
+	withDeclaredSkillGuard := func(input string) string {
+		if declaredSkillGuard == "" || strings.Contains(input, declaredSkillRouteMarker) {
+			return input
+		}
+		return input + "\n\n" + declaredSkillGuard
+	}
 	modelToolPrompt := func(input string) string {
-		return modelToolRouterPromptWithIntent(input, toolMaps, body.ToolChoice, executionRequested)
+		return modelToolRouterPromptWithIntent(withDeclaredSkillGuard(input), toolMaps, body.ToolChoice, executionRequested)
 	}
 	var mcpServerURL string
 	if len(toolMaps) > 0 {
@@ -2214,7 +2222,20 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		for _, call := range rejected {
 			log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, call.Reason)
 		}
-		return valid, len(rejected)
+		if len(declaredSkillRoutes) == 0 {
+			return valid, len(rejected)
+		}
+		kept := valid[:0]
+		wrongSkillPaths := 0
+		for _, call := range valid {
+			if callUsesWrongDeclaredSkillPath(call, declaredSkillRoutes) {
+				wrongSkillPaths++
+				log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, "SKILL.md path does not match the caller catalog")
+				continue
+			}
+			kept = append(kept, call)
+		}
+		return kept, len(rejected) + wrongSkillPaths
 	}
 	planningMode := s.settings.get().ToolPlanningMode
 	protocolMode := s.settings.get().ToolProtocolMode
@@ -2399,7 +2420,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls, _ = validateCalls("router", calls)
 		executionNeedsRepair := executionRequested && len(calls) == 0
 		if !parsed || executionNeedsRepair {
-			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
 			if executionNeedsRepair {
 				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}
@@ -2410,7 +2431,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
 				}
 			}
-			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			coldRepairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(prompt+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
 			if executionNeedsRepair {
 				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}
@@ -2788,7 +2809,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls = filterCompletedCalls(calls, ledger)
 		executionNeedsRepair := executionRequested && len(calls) == 0
 		if decisionNeedsRepair || !parsed || executionNeedsRepair || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
-			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
 			if executionNeedsRepair {
 				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}
@@ -2799,7 +2820,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
 				}
 			}
-			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			coldRepairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(prompt+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
 			if executionNeedsRepair {
 				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}

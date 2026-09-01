@@ -3,8 +3,10 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"m365-copilot2api/internal/chathub"
 )
@@ -26,7 +28,134 @@ var (
 	explicitToolRequirementPattern = regexp.MustCompile(`(?i)(?:必须|务必|一定要|请务必)\s*(?:实际\s*)?(?:调用|使用).{0,64}(?:工具|tool|apply[_ -]?patch|exec(?:ute)?|terminal|shell|终端)`)
 	execNestedToolHeadingPattern   = regexp.MustCompile("(?m)^###\\s+`?([A-Za-z0-9_]+)`?\\s*$")
 	execNestedToolCallPattern      = regexp.MustCompile(`\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	skillRootLinePattern           = regexp.MustCompile("(?m)^-\\s+`?(r[0-9]+)`?\\s*=\\s*`?([^`\\r\\n]+)`?\\s*$")
+	skillCatalogLinePattern        = regexp.MustCompile(`(?m)^-\s+([A-Za-z0-9][A-Za-z0-9:._-]*):\s+\(file:\s+([^\r\n)]+SKILL\.md)\)\s*$`)
 )
+
+const declaredSkillRouteMarker = "DECLARED_SKILL_ROUTE_FOR_CURRENT_REQUEST"
+
+type declaredSkillRoute struct {
+	Name string
+	Path string
+}
+
+func requestedDeclaredSkills(messages []oaiMsg) []declaredSkillRoute {
+	userText := ""
+	for i := len(messages) - 1; i >= 0; i-- {
+		if strings.EqualFold(strings.TrimSpace(messages[i].Role), "user") {
+			candidate := contentToString(messages[i].Content)
+			if !weightedTokenNoticePattern.MatchString(candidate) {
+				userText = candidate
+				break
+			}
+		}
+	}
+	userPhrase := normalizeSkillPhrase(userText)
+	if userPhrase == "" {
+		return nil
+	}
+
+	var catalog strings.Builder
+	for _, message := range messages {
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if role == "system" || role == "developer" {
+			catalog.WriteString(contentToString(message.Content))
+			catalog.WriteByte('\n')
+		}
+	}
+	text := catalog.String()
+	roots := make(map[string]string)
+	for _, match := range skillRootLinePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) >= 3 {
+			roots[strings.TrimSpace(match[1])] = strings.TrimRight(strings.TrimSpace(match[2]), "/\\")
+		}
+	}
+
+	routes := make([]declaredSkillRoute, 0, 2)
+	seen := make(map[string]struct{})
+	for _, match := range skillCatalogLinePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) < 3 || !skillNameMentioned(userPhrase, match[1]) {
+			continue
+		}
+		skillPath := strings.TrimSpace(match[2])
+		slashPath := strings.ReplaceAll(skillPath, "\\", "/")
+		if split := strings.IndexByte(slashPath, '/'); split > 0 {
+			if root, ok := roots[slashPath[:split]]; ok {
+				slashPath = strings.TrimRight(strings.ReplaceAll(root, "\\", "/"), "/") + "/" + slashPath[split+1:]
+			}
+		}
+		slashPath = path.Clean(slashPath)
+		key := strings.ToLower(match[1] + "\x00" + slashPath)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		routes = append(routes, declaredSkillRoute{Name: match[1], Path: slashPath})
+		if len(routes) == 4 {
+			break
+		}
+	}
+	return routes
+}
+
+func normalizeSkillPhrase(value string) string {
+	var b strings.Builder
+	space := false
+	for _, r := range strings.ToLower(value) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			b.WriteRune(r)
+			space = false
+		} else if !space {
+			b.WriteByte(' ')
+			space = true
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+func skillNameMentioned(userPhrase, catalogName string) bool {
+	for _, part := range strings.Split(catalogName, ":") {
+		candidate := normalizeSkillPhrase(part)
+		if len(candidate) >= 4 && strings.Contains(userPhrase, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func declaredSkillRoutingGuard(routes []declaredSkillRoute) string {
+	if len(routes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(declaredSkillRouteMarker)
+	b.WriteString(": the caller explicitly named these catalog skills. Use one exact path below; aliases have already been expanded. Do not guess or shorten the path.\n")
+	for _, route := range routes {
+		fmt.Fprintf(&b, "- skill=%q exact_skill_md=%q\n", route.Name, route.Path)
+	}
+	b.WriteString("If the matching SKILL.md has not been returned yet, the next exec call must read the complete exact_skill_md file through the caller-declared shell. Do not inspect MCP, ALL_TOOLS, or the workspace first.")
+	return b.String()
+}
+
+func callUsesWrongDeclaredSkillPath(call detectedToolCall, routes []declaredSkillRoute) bool {
+	if !strings.EqualFold(call.Name, "exec") || len(routes) == 0 {
+		return false
+	}
+	var arguments map[string]any
+	if json.Unmarshal(call.Arguments, &arguments) != nil {
+		return false
+	}
+	input := strings.ReplaceAll(strings.ToLower(fmt.Sprint(arguments["input"])), "\\", "/")
+	if !strings.Contains(input, "skill.md") {
+		return false
+	}
+	for _, route := range routes {
+		if strings.Contains(input, strings.ToLower(strings.ReplaceAll(route.Path, "\\", "/"))) {
+			return false
+		}
+	}
+	return true
+}
 
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
 	return modelToolRouterPromptWithIntent(prompt, tools, choice, false)

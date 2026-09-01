@@ -132,6 +132,69 @@ func TestWorkspaceToolRequestUnderstandsCodexSkillsAndHostActions(t *testing.T) 
 	}
 }
 
+func TestRequestedDeclaredSkillsExpandsCallerCatalogAlias(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "system", Content: `## Skills
+### Skill roots
+- ` + "`r0` = `C:/Users/Test/.codex/skills`" + `
+- ` + "`r22` = `C:/Users/Test/.codex/plugins/openai-bundled`" + `
+### Available skills
+- computer-use:computer-use: (file: r22/computer-use/26.727.51351/skills/computer-use/SKILL.md)
+- documents:documents: (file: r0/documents/SKILL.md)`},
+		{Role: "user", Content: "你使用 computer use 技能打开桌面应用"},
+	}
+	routes := requestedDeclaredSkills(messages)
+	if len(routes) != 1 {
+		t.Fatalf("routes=%#v", routes)
+	}
+	if routes[0].Name != "computer-use:computer-use" || routes[0].Path != "C:/Users/Test/.codex/plugins/openai-bundled/computer-use/26.727.51351/skills/computer-use/SKILL.md" {
+		t.Fatalf("route=%#v", routes[0])
+	}
+	guard := declaredSkillRoutingGuard(routes)
+	for _, want := range []string{declaredSkillRouteMarker, routes[0].Path, "aliases have already been expanded", "Do not inspect MCP"} {
+		if !strings.Contains(guard, want) {
+			t.Fatalf("guard missing %q: %s", want, guard)
+		}
+	}
+}
+
+func TestRequestedDeclaredSkillsUsesCallerSpecificRoots(t *testing.T) {
+	windows := []oaiMsg{
+		{Role: "system", Content: "- `r5` = `C:/Codex/Desktop`\n- computer-use:computer-use: (file: r5/computer-use/SKILL.md)"},
+		{Role: "user", Content: "use computer-use now"},
+	}
+	linux := []oaiMsg{
+		{Role: "system", Content: "- `r2` = `/opt/codex-cli`\n- computer-use:computer-use: (file: r2/computer-use/SKILL.md)"},
+		{Role: "user", Content: "use computer-use now"},
+	}
+	if got := requestedDeclaredSkills(windows); len(got) != 1 || got[0].Path != "C:/Codex/Desktop/computer-use/SKILL.md" {
+		t.Fatalf("windows routes=%#v", got)
+	}
+	if got := requestedDeclaredSkills(linux); len(got) != 1 || got[0].Path != "/opt/codex-cli/computer-use/SKILL.md" {
+		t.Fatalf("linux routes=%#v", got)
+	}
+	withoutSkill := []oaiMsg{{Role: "system", Content: "- `r2` = `/opt/codex-cli`"}, {Role: "user", Content: "use computer-use now"}}
+	if got := requestedDeclaredSkills(withoutSkill); len(got) != 0 {
+		t.Fatalf("undeclared CLI skill was invented: %#v", got)
+	}
+}
+
+func TestDeclaredSkillPathValidationRejectsGuessedAlias(t *testing.T) {
+	routes := []declaredSkillRoute{{Name: "computer-use:computer-use", Path: "C:/Codex/plugins/computer-use/SKILL.md"}}
+	call := func(input string) detectedToolCall {
+		return detectedToolCall{Name: "exec", Arguments: json.RawMessage(mustJSON(map[string]any{"input": input}))}
+	}
+	if !callUsesWrongDeclaredSkillPath(call(`await tools.shell_command({command:"Get-Content -Raw 'r0/computer-use/SKILL.md'"})`), routes) {
+		t.Fatal("guessed alias path was accepted")
+	}
+	if callUsesWrongDeclaredSkillPath(call(`await tools.shell_command({command:"Get-Content -Raw 'C:/Codex/plugins/computer-use/SKILL.md'"})`), routes) {
+		t.Fatal("exact catalog path was rejected")
+	}
+	if callUsesWrongDeclaredSkillPath(call(`await tools.shell_command({command:"Get-Location"})`), routes) {
+		t.Fatal("non-skill exec call was rejected by the path guard")
+	}
+}
+
 func TestExecutionToolRequestPendingTracksFailedContinuation(t *testing.T) {
 	tools := workspaceTestTools("exec")
 	failed := []oaiMsg{

@@ -2393,10 +2393,18 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = routerStream.data("[DONE]")
 		}
 		toolResponseID := ""
+		routerPreambleEmitted := false
 		if executionRequested || explicitToolRequired || toolChoiceRequiresCall(body.ToolChoice) {
 			toolResponseID = "chatcmpl-" + uuid.NewString()
-			progress := toolProgressText(prompt, nil)
-			_ = routerStream.data(mustJSON(map[string]any{"id": toolResponseID, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": firstNonEmpty(body.Model, defaultPublicModelName), "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": progress}, "finish_reason": nil}}}))
+			// Responses owns its own progress event stream. Emitting this Chat
+			// preamble there would make the adapter store it once here and once
+			// again with the final tool-call frame, breaking its continuation
+			// prefix. Direct Chat clients retain the immediate first-text cue.
+			if !responsesAdapterFromContext(r.Context()) {
+				progress := toolProgressText(prompt, nil)
+				_ = routerStream.data(mustJSON(map[string]any{"id": toolResponseID, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": firstNonEmpty(body.Model, defaultPublicModelName), "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": progress}, "finish_reason": nil}}}))
+				routerPreambleEmitted = true
+			}
 		}
 		routePrompt := modelToolPrompt(routerInput + "\n" + ledger.RouterContext())
 		coldRoutePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())
@@ -2466,7 +2474,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if toolResponseID == "" {
 				toolResponseID = "chatcmpl-" + uuid.NewString()
 			}
-			_ = writeToolResponseWithProgress(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), toolProgressText(prompt, calls))
+			progress := toolProgressText(prompt, calls)
+			if routerPreambleEmitted {
+				progress = ""
+			}
+			_ = writeToolResponseWithProgress(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), progress)
 			return
 		}
 		stopRouterHeartbeat()

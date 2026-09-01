@@ -105,6 +105,50 @@ func TestWorkspaceToolRequestPromotesDirectExecution(t *testing.T) {
 	}
 }
 
+func TestWorkspaceToolRequestUnderstandsCodexSkillsAndHostActions(t *testing.T) {
+	tools := workspaceTestTools("exec")
+	for _, request := range []string{
+		"你使用 computer use 技能去打开我的微信，给文件传输助手发消息。",
+		"你给他跑起来做一次全量验证。用你的内置浏览器，你自己去操作。",
+		"去网上搜索 Rick Astley 的官方资料并核实作者。",
+		"使用 documents:documents 技能整理这个文档。",
+		"请用 frontend-design 技能修改当前网页。",
+		"Use the browser skill to interact with the local page.",
+		"Open Notepad and type a meaningful test note.",
+	} {
+		if !workspaceToolRequest([]oaiMsg{{Role: "user", Content: request}}, tools) {
+			t.Fatalf("Codex skill/host action was not detected: %q", request)
+		}
+	}
+	for _, request := range []string{
+		"怎么打开微信？",
+		"请解释一下 computer-use 技能。",
+		"What does the browser skill do?",
+		"不要打开微信，只解释步骤。",
+	} {
+		if workspaceToolRequest([]oaiMsg{{Role: "user", Content: request}}, tools) {
+			t.Fatalf("skill question was mistaken for execution: %q", request)
+		}
+	}
+}
+
+func TestExecutionToolRequestPendingTracksFailedContinuation(t *testing.T) {
+	tools := workspaceTestTools("exec")
+	failed := []oaiMsg{
+		{Role: "user", Content: "用内置浏览器打开本地网页并完成交互验证"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_1", "type": "function", "function": map[string]any{"name": "exec", "arguments": `{"input":"bad"}`}}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "Script failed: invalid browser arguments"},
+	}
+	if !executionToolRequestPending(failed, tools, buildAgentLedger(activeMessages(failed))) {
+		t.Fatal("failed real action did not remain pending")
+	}
+	succeeded := append([]oaiMsg(nil), failed...)
+	succeeded[len(succeeded)-1].Content = "Script completed: browser interaction verified"
+	if executionToolRequestPending(succeeded, tools, buildAgentLedger(activeMessages(succeeded))) {
+		t.Fatal("successful real action remained pending")
+	}
+}
+
 func TestWorkspaceToolRequestAvoidsQuestionsAndNegation(t *testing.T) {
 	tools := workspaceTestTools("apply_patch")
 	for _, request := range []string{
@@ -175,7 +219,9 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 	for _, want := range []string{
 		"MODE: auto",
 		"requested a real local or external action",
-		"Select a compatible declared tool now",
+		"at least one compatible declared top-level tool",
+		"Skills are instruction bundles, not callable tool names",
+		"ALL_TOOLS metadata",
 		"do not invent a tool or claim the action happened",
 	} {
 		if !strings.Contains(p, want) {
@@ -184,6 +230,15 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 	}
 	if strings.Contains(p, "MODE requires a tool call") {
 		t.Fatalf("implicit execution intent became required: %s", p)
+	}
+}
+
+func TestExecutionRepairRequiresProgressWithoutChangingChoice(t *testing.T) {
+	p := modelToolExecutionRepairPrompt("[user] 使用 browser 技能操作页面", "NO_TOOL_NEEDED", testTools(), "auto")
+	for _, want := range []string{"TOOL_CHOICE: auto", "unfinished real action", "at least one valid declared top-level tool", "Do not return an empty calls array"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("execution repair prompt missing %q: %s", want, p)
+		}
 	}
 }
 

@@ -174,6 +174,11 @@ func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
 		"resolve that exact folder",
 		"never silently substitute the workspace",
 		"requested desktop UI, browser, or computer-use action occurred",
+		"skills are instruction bundles, not callable tool names",
+		"resolve its root alias",
+		"ALL_TOOLS",
+		"Set-Content -LiteralPath $path -Value 'text' -Encoding utf8",
+		"must never be used to open a URL",
 	} {
 		if !strings.Contains(customExecWorkspaceInstruction, want) {
 			t.Fatalf("custom exec policy missing %q", want)

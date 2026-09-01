@@ -1999,11 +1999,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// The former preserves required semantics; the latter asks the planner to
 	// choose a compatible tool while retaining auto as a recoverable choice.
 	explicitToolRequired := body.ExplicitToolRequired || explicitToolRequirementFromContext(r.Context()) || explicitToolRequest(body.Messages)
-	executionRequested := workspaceToolRequest(body.Messages, body.Tools)
 	// Tool evidence and loop limits are scoped to the active user turn. Older
 	// tool history remains in the flattened conversation but must not bloat the
 	// router prompt or suppress a legitimate repeated action in a later turn.
 	ledger := buildAgentLedger(activeMessages(body.Messages))
+	executionRequested := executionToolRequestPending(body.Messages, body.Tools, ledger)
 	if err := ledger.CanContinue(maxToolRounds()); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
@@ -2397,12 +2397,23 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
 		calls, _ = validateCalls("router", calls)
-		if !parsed {
+		executionNeedsRepair := executionRequested && len(calls) == 0
+		if !parsed || executionNeedsRepair {
 			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			if executionNeedsRepair {
+				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			}
 			if reuseRouterConversation && routerConversation.active() {
-				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
+				if executionNeedsRepair {
+					repairPrompt = `The real action requested above is unfinished. Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Select at least one valid declared top-level tool; do not return an empty calls array.`
+				} else {
+					repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
+				}
 			}
 			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			if executionNeedsRepair {
+				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			}
 			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
@@ -2775,12 +2786,23 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
-		if decisionNeedsRepair || !parsed || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
+		executionNeedsRepair := executionRequested && len(calls) == 0
+		if decisionNeedsRepair || !parsed || executionNeedsRepair || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
 			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			if executionNeedsRepair {
+				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			}
 			if reuseRouterConversation && routerConversation.active() {
-				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
+				if executionNeedsRepair {
+					repairPrompt = `The real action requested above is unfinished. Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Select at least one valid declared top-level tool; do not return an empty calls array.`
+				} else {
+					repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
+				}
 			}
 			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			if executionNeedsRepair {
+				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			}
 			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)

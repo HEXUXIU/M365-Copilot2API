@@ -19,8 +19,9 @@ const (
 var (
 	workspaceFilenamePattern       = regexp.MustCompile(`(?i)\b[[:alnum:]_.-]+\.[a-z0-9]{1,12}\b`)
 	workspaceToolDescriptorPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:exec(?:ute)?|shell|terminal|command|powershell|bash|files?|filesystem|workspace|apply[_ -]?patch|editor|directory)(?:$|[^a-z0-9])`)
-	workspaceEnglishActionPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:create|write|save|modify|edit|update|delete|remove|move|rename|copy|read|inspect|list|search|find|open|execute|run)(?:s|d|ing)?(?:$|[^a-z])`)
-	workspaceEnglishTargetPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:files?|director(?:y|ies)|folders?|code|projects?|repositories|repos?|commands?|scripts?|workspace)(?:$|[^a-z])`)
+	workspaceEnglishActionPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:create|write|save|modify|edit|update|delete|remove|move|rename|copy|read|inspect|list|search|find|open|launch|start|execute|run|use|control|send|click|type|interact|browse|test|verify|download|upload|convert)(?:s|d|ing)?(?:$|[^a-z])`)
+	workspaceEnglishImperative     = regexp.MustCompile(`(?i)^\s*(?:please\s+)?(?:create|write|save|modify|edit|update|delete|remove|move|rename|copy|read|inspect|list|search|find|open|launch|start|execute|run|use|control|send|click|type|interact|browse|test|verify|download|upload|convert)\b`)
+	workspaceEnglishTargetPattern  = regexp.MustCompile(`(?i)(?:^|[^a-z])(?:files?|documents?|director(?:y|ies)|folders?|code|projects?|repositories|repos?|commands?|scripts?|workspace|desktop|downloads?|browsers?|websites?|pages?|apps?|applications?|windows?|messages?|skills?|plugins?|tools?|computer[ -]?use)(?:$|[^a-z])`)
 	weightedTokenNoticePattern     = regexp.MustCompile(`(?i)^\s*you have [0-9]+ weighted tokens left\.?\s*$`)
 	explicitToolRequirementPattern = regexp.MustCompile(`(?i)(?:必须|务必|一定要|请务必)\s*(?:实际\s*)?(?:调用|使用).{0,64}(?:工具|tool|apply[_ -]?patch|exec(?:ute)?|terminal|shell|终端)`)
 	execNestedToolHeadingPattern   = regexp.MustCompile("(?m)^###\\s+`?([A-Za-z0-9_]+)`?\\s*$")
@@ -53,8 +54,13 @@ func modelToolRouterPromptWithIntent(prompt string, tools []map[string]any, choi
 	}
 	if executionRequested && !toolChoiceRequiresCall(choice) {
 		rules += `
-- The current user requested a real local or external action. Select a compatible declared tool now when one is available.
-- If no declared tool can perform the requested action, return NO_TOOL_NEEDED; do not invent a tool or claim the action happened`
+- The current user requested a real local or external action and it is still unfinished, or the latest tool attempt failed. Advance it with at least one compatible declared top-level tool now; do not return NO_TOOL_NEEDED while exec or another action-capable tool is available.
+- The top-level exec tool is the caller's local orchestration bridge. Use it for its listed nested tools; it is not a remote shell.
+- Skills are instruction bundles, not callable tool names. If the request names a skill or plugin, resolve its root alias from the supplied skill catalog, use exec to read the complete SKILL.md, read any required referenced resources, and then follow its runtime instructions. Invoke the resulting host tools through exec; never invent tools.<skill-name> or replace the skill with a directory listing.
+- When a skill requires a deferred nested tool, use the exec runtime's ALL_TOOLS metadata to locate its exact declared name and contract before calling it.
+- For browser or desktop-UI work, use the Browser or Computer Use runtime named by the request. Never substitute codex_app__navigate_to_codex_page, which only navigates among Codex tasks, and never treat a workspace listing as UI execution.
+- If the latest tool result failed, correct the arguments, syntax, or tool selection and retry with a changed strategy. Do not stop after the first recoverable error.
+- If no declared tool can advance the action, do not invent a tool or claim the action happened`
 	}
 	// Multi-turn: completed tool evidence (tool[...], tool_calls:) was already
 	// acted upon, so re-invoking those tools would duplicate work.
@@ -154,7 +160,7 @@ func compactExecRouterDescription(description string) string {
 		available[name] = true
 	}
 	var summary strings.Builder
-	summary.WriteString("Run raw JavaScript in an async module. Call only listed nested tools as await tools.<name>(...). Emit returned results with text(result). Available nested tools: ")
+	summary.WriteString("This top-level exec is the caller's local orchestration bridge. Run raw JavaScript in an async module, call only listed nested tools as await tools.<name>(...), and emit every returned result with text(result). Skills are instruction bundles, not tool names: resolve the catalog root alias, read the complete SKILL.md through shell_command, read its required references, then invoke the host tools it specifies. Use ALL_TOOLS metadata to locate deferred nested tools. For browser or desktop-UI work, use the requested Browser or Computer Use runtime; never substitute a workspace listing or codex_app__navigate_to_codex_page. After a failed result, correct the syntax or tool selection and retry with a changed strategy. Available nested tools: ")
 	summary.WriteString(strings.Join(names, ", "))
 	summary.WriteString(".")
 	if available["apply_patch"] {
@@ -302,6 +308,34 @@ func workspaceToolRequest(messages []oaiMsg, tools []chathub.Tool) bool {
 	return false
 }
 
+// executionToolRequestPending carries a real action across its tool-result
+// continuation without turning a successful action into another forced call.
+// This keeps auto recoverable while making one failed local/browser attempt
+// eligible for a corrected call on the same account.
+func executionToolRequestPending(messages []oaiMsg, tools []chathub.Tool, ledger agentLedger) bool {
+	if !hasWorkspaceTool(tools) || !latestUserActionRequest(messages) {
+		return false
+	}
+	if len(ledger.Completed) == 0 {
+		return true
+	}
+	return ledger.Completed[len(ledger.Completed)-1].Failed
+}
+
+func latestUserActionRequest(messages []oaiMsg) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if strings.ToLower(strings.TrimSpace(messages[i].Role)) != "user" {
+			continue
+		}
+		text := contentToString(messages[i].Content)
+		if weightedTokenNoticePattern.MatchString(text) {
+			continue
+		}
+		return workspaceActionRequestText(text)
+	}
+	return false
+}
+
 func hasWorkspaceTool(tools []chathub.Tool) bool {
 	for _, tool := range tools {
 		var definition struct {
@@ -329,20 +363,20 @@ func workspaceActionRequestText(raw string) bool {
 	// exclusions tied to the action so phrases such as "不要只解释，直接创建"
 	// remain executable.
 	for _, phrase := range []string{
-		"不要创建", "不要新建", "不要写入", "不要修改", "不要删除", "不要执行", "不要运行",
-		"别创建", "别新建", "别写入", "别修改", "别删除", "别执行", "别运行",
+		"不要创建", "不要新建", "不要写入", "不要修改", "不要删除", "不要执行", "不要运行", "不要打开", "不要发送", "不要操作", "不要搜索",
+		"别创建", "别新建", "别写入", "别修改", "别删除", "别执行", "别运行", "别打开", "别发送", "别操作", "别搜索",
 		"无需创建", "无需写入", "无需修改", "无需执行", "不必创建", "不必写入", "不必执行",
-		"do not create", "do not write", "do not edit", "do not modify", "do not delete", "do not run", "do not execute",
-		"don't create", "don't write", "don't edit", "don't delete", "don't run", "don't execute",
+		"do not create", "do not write", "do not edit", "do not modify", "do not delete", "do not run", "do not execute", "do not open", "do not send", "do not search", "do not interact",
+		"don't create", "don't write", "don't edit", "don't delete", "don't run", "don't execute", "don't open", "don't send", "don't search", "don't interact",
 	} {
 		if strings.Contains(text, phrase) {
 			return false
 		}
 	}
 	for _, phrase := range []string{
-		"如何创建", "怎么创建", "怎样创建", "如何写入", "怎么写入", "如何修改", "怎么修改", "如何执行", "怎么执行",
+		"如何创建", "怎么创建", "怎样创建", "如何写入", "怎么写入", "如何修改", "怎么修改", "如何执行", "怎么执行", "如何打开", "怎么打开", "如何搜索", "怎么搜索", "如何使用", "怎么使用",
 		"是什么意思", "请解释", "解释一下", "举例", "示例", "教程",
-		"how to create", "how to write", "how to edit", "how to modify", "how to run", "how to execute",
+		"how to create", "how to write", "how to edit", "how to modify", "how to run", "how to execute", "how to open", "how to search", "how to use",
 		"explain how", "what does", "example of", "tutorial",
 	} {
 		if strings.Contains(text, phrase) {
@@ -363,12 +397,13 @@ func workspaceActionRequestText(raw string) bool {
 
 	actions := []string{
 		"创建", "新建", "写入", "写到", "保存", "修改", "编辑", "更新", "删除", "移除", "移动", "重命名", "复制",
-		"读取", "查看", "检查", "列出", "搜索", "查找", "打开", "执行", "运行",
+		"读取", "查看", "检查", "列出", "搜索", "查找", "打开", "启动", "执行", "运行", "使用", "调用", "发送", "点击", "输入", "操作", "交互", "试玩", "验证", "整理", "转换", "生成", "下载", "上传",
 		"作成", "書き込", "編集", "削除", "読み取", "実行",
 		"생성", "작성", "수정", "삭제", "읽기", "실행",
 	}
 	targets := []string{
-		"文件", "目录", "文件夹", "代码", "项目", "仓库", "命令", "脚本", "当前目录", "工作区",
+		"文件", "文档", "目录", "文件夹", "代码", "项目", "仓库", "命令", "脚本", "当前目录", "工作区", "桌面", "下载",
+		"浏览器", "网页", "网站", "页面", "网上", "联网", "互联网", "资料", "信息", "本地服务", "应用", "程序", "窗口", "微信", "消息", "文件传输助手", "技能", "工具", "插件", "computer use", "computer-use", "browser",
 		"ファイル", "ディレクトリ", "フォルダ", "コード", "コマンド",
 		"파일", "디렉터리", "폴더", "코드", "명령",
 	}
@@ -383,6 +418,9 @@ func workspaceActionRequestText(raw string) bool {
 		return false
 	}
 	if workspaceFilenamePattern.MatchString(text) {
+		return true
+	}
+	if workspaceEnglishImperative.MatchString(text) {
 		return true
 	}
 	if workspaceEnglishTargetPattern.MatchString(text) {
@@ -409,6 +447,22 @@ FUNCTION_DEFINITIONS:
 %s
 
 INVALID_ROUTER_OUTPUT:
+%s`, normalizedToolChoiceMode(choice), prompt, defs, compactToolResult(invalid, 6000))
+}
+
+func modelToolExecutionRepairPrompt(prompt, invalid string, tools []map[string]any, choice any) string {
+	defs, _ := json.Marshal(compactRouterTools(tools))
+	return fmt.Sprintf(`The previous routing answer failed to advance an unfinished real action. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}.
+Select at least one valid declared top-level tool now. The exec tool is the caller-local orchestration bridge for its nested tools. If a skill is named, the next call should read its SKILL.md or follow the skill's already returned instructions. If a prior tool failed, change the arguments, syntax, or tool selection. Never use codex_app__navigate_to_codex_page for a URL or desktop application. Do not return an empty calls array.
+
+TOOL_CHOICE: %s
+APPLICATION_REQUEST_AND_EVIDENCE:
+%s
+
+FUNCTION_DEFINITIONS:
+%s
+
+PREVIOUS_ROUTER_OUTPUT:
 %s`, normalizedToolChoiceMode(choice), prompt, defs, compactToolResult(invalid, 6000))
 }
 

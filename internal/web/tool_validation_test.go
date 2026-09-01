@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -98,8 +99,13 @@ Run a shell command.`,
 		},
 	}}
 
-	invalid := []detectedToolCall{{Name: "exec", Type: "custom", Arguments: json.RawMessage(`{"input":"const r = await tools.exec_command({command: 'pwd'}); text(r);"}`)}}
-	valid, rejected := validateDetectedToolCalls(invalid, tools, "required")
+	aliased := []detectedToolCall{{Name: "exec", Type: "custom", Arguments: json.RawMessage(`{"input":"const r = await tools.exec_command({command: 'pwd'}); text(r);"}`)}}
+	valid, rejected := validateDetectedToolCalls(aliased, tools, "required")
+	if len(valid) != 1 || len(rejected) != 0 || !strings.Contains(string(valid[0].Arguments), "tools.shell_command") {
+		t.Fatalf("declared shell alias was not repaired: valid=%#v rejected=%#v", valid, rejected)
+	}
+	unknown := []detectedToolCall{{Name: "exec", Type: "custom", Arguments: json.RawMessage(`{"input":"const r = await tools.unknown_tool({}); text(r);"}`)}}
+	valid, rejected = validateDetectedToolCalls(unknown, tools, "required")
 	if len(valid) != 0 || len(rejected) != 1 || rejected[0].Reason != "exec input references an unavailable nested tool" {
 		t.Fatalf("unknown nested tool escaped: valid=%#v rejected=%#v", valid, rejected)
 	}

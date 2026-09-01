@@ -91,3 +91,14 @@ func TestToolStreamEmitsStandardUsageOnlyChunk(t *testing.T) {
 		t.Fatalf("usage-only chunk order is invalid: finish=%d usage=%d body=%s", finishChunk, usageChunk, rr.Body.String())
 	}
 }
+
+func TestToolResponseIncludesProgressWhenProvided(t *testing.T) {
+	rr := httptest.NewRecorder()
+	calls := []detectedToolCall{{ID: "call_exec", Type: "custom", Name: "exec", Arguments: json.RawMessage(`{"input":"Get-Location"}`)}}
+	if err := writeToolResponseWithProgress(rr, "chatcmpl_test", "gpt-test", false, true, calls, chathub.Result{}, nil, "我先检查当前环境并执行这一步。"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rr.Body.String(), "我先检查当前环境并执行这一步") {
+		t.Fatalf("progress was not included in tool response: %s", rr.Body.String())
+	}
+}

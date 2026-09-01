@@ -2392,6 +2392,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = routerStream.data(mustJSON(map[string]any{"error": map[string]any{"message": message, "code": "upstream_error"}}))
 			_ = routerStream.data("[DONE]")
 		}
+		toolResponseID := ""
+		if executionRequested || explicitToolRequired || toolChoiceRequiresCall(body.ToolChoice) {
+			toolResponseID = "chatcmpl-" + uuid.NewString()
+			progress := toolProgressText(prompt, nil)
+			_ = routerStream.data(mustJSON(map[string]any{"id": toolResponseID, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": firstNonEmpty(body.Model, defaultPublicModelName), "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": progress}, "finish_reason": nil}}}))
+		}
 		routePrompt := modelToolPrompt(routerInput + "\n" + ledger.RouterContext())
 		coldRoutePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())
 		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
@@ -2457,7 +2463,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			routeRes.Reasoning = ""
 			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
 			stopRouterHeartbeat()
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
+			if toolResponseID == "" {
+				toolResponseID = "chatcmpl-" + uuid.NewString()
+			}
+			_ = writeToolResponseWithProgress(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), toolProgressContinuation(prompt))
 			return
 		}
 		stopRouterHeartbeat()
@@ -2749,7 +2758,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			usage := s.bindConversation(acc, &body, r, toolResult, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, answerPrompt, startedAt, affinityState)
 			s.storeConvCache(acc.ID, convCacheModel, toolResult, tone, body.Messages, convReused)
-			_ = writeToolResponse(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage), toolProgressText(prompt, calls))
 			return
 		}
 		if err := emitText(pending.String()); err != nil {
@@ -2855,7 +2864,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			routeRes.Reasoning = ""
 			routerUsage := bindRouterCalls(routeRes, calls, routePrompt)
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
+			_ = writeToolResponseWithProgress(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), toolProgressText(prompt, calls))
 			return
 		}
 		if reuseRouterConversation {
@@ -3157,7 +3166,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			res.Reasoning = ""
 			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), toolProgressText(prompt, calls))
 			return
 		}
 	}
@@ -3172,7 +3181,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			res.Reasoning = ""
 			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), toolProgressText(prompt, calls))
 			return
 		}
 	}
@@ -3191,7 +3200,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			res.Reasoning = ""
 			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), toolProgressText(prompt, calls))
 			return
 		}
 	}
@@ -3219,7 +3228,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				routeRes.Reasoning = ""
 				usage := bindResult(routeRes, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 				setSessionHeader(routeRes)
-				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(usage))
+				_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(usage), toolProgressText(prompt, calls))
 				return
 			}
 		}

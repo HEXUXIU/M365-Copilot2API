@@ -200,6 +200,7 @@ func modelToolRouterPromptWithIntent(prompt string, tools []map[string]any, choi
 		rules += `
 - The current user requested a real local or external action and it is still unfinished, or the latest tool attempt failed. Advance it with at least one compatible declared top-level tool now; do not return NO_TOOL_NEEDED while exec or another action-capable tool is available.
 - The top-level exec tool is the caller's local orchestration bridge. Use it for its listed nested tools; it is not a remote shell.
+- Inside exec, use the exact nested name from the available catalog. If a runtime example says exec_command but shell_command is declared, call shell_command.
 - Skills are instruction bundles, not callable tool names. If the request names a skill or plugin, resolve its root alias from the supplied skill catalog and make the next exec call read that exact complete SKILL.md. The catalog is already the authoritative path map: do not query MCP resources, ALL_TOOLS, or the workspace to locate a listed skill. Read any required referenced resources, then follow the skill's runtime instructions. Invoke the resulting host tools through exec; never invent tools.<skill-name> or replace the skill with a directory listing.
 - Only after reading a skill, when it requires a deferred nested tool, inspect the exec runtime's ALL_TOOLS array of {name, description} entries to locate the exact declared name and contract before calling it. Search with ALL_TOOLS.filter(tool => ...tool.name...).
 - For mcp__node_repl__js, its code must emit textual return values with nodeRepl.write(value) or images with await nodeRepl.emitImage(value). A bare final JavaScript expression is not returned by this runtime. In particular, write the results of sky.documentation before continuing.
@@ -306,7 +307,7 @@ func compactExecRouterDescription(description string) string {
 		available[name] = true
 	}
 	var summary strings.Builder
-	summary.WriteString("This top-level exec is the caller's local orchestration bridge. Run raw JavaScript in an async module, call only listed nested tools as await tools.<name>(...), and emit every returned result with text(result). Skills are instruction bundles, not tool names: resolve the exact path from the catalog root alias and immediately read the complete SKILL.md through shell_command; do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill. Read its required references, then invoke the host tools it specifies. Only after reading the skill, use the ALL_TOOLS array of {name, description} entries to locate deferred nested tools, for example ALL_TOOLS.filter(tool => tool.name.includes('browser')). Code sent to mcp__node_repl__js must emit text with nodeRepl.write(value) or images with await nodeRepl.emitImage(value); bare final expressions return no output, so explicitly write sky.documentation results. Capabilities are caller-specific: Computer Use is typically present in Codex Desktop but absent from CLI, so use Browser or Computer Use only when this request's catalog or ALL_TOOLS declares it and never invent a desktop runtime. Never substitute a workspace listing or codex_app__navigate_to_codex_page for UI work. After a failed result, correct the syntax or tool selection and retry with a changed strategy. Available nested tools: ")
+	summary.WriteString("This top-level exec is the caller's local orchestration bridge. Run raw JavaScript in an async module, call only listed nested tools as await tools.<name>(...), and emit every returned result with text(result). Use the exact nested name from this catalog; when an example says exec_command but shell_command is listed, call shell_command. Skills are instruction bundles, not tool names: resolve the exact path from the catalog root alias and immediately read the complete SKILL.md through shell_command; do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill. Read its required references, then invoke the host tools it specifies. Only after reading the skill, use the ALL_TOOLS array of {name, description} entries to locate deferred nested tools, for example ALL_TOOLS.filter(tool => tool.name.includes('browser')). Code sent to mcp__node_repl__js must emit text with nodeRepl.write(value) or images with await nodeRepl.emitImage(value); bare final expressions return no output, so explicitly write sky.documentation results. Capabilities are caller-specific: Computer Use is typically present in Codex Desktop but absent from CLI, so use Browser or Computer Use only when this request's catalog or ALL_TOOLS declares it and never invent a desktop runtime. Never substitute a workspace listing or codex_app__navigate_to_codex_page for UI work. After a failed result, correct the syntax or tool selection and retry with a changed strategy. Available nested tools: ")
 	summary.WriteString(strings.Join(names, ", "))
 	summary.WriteString(".")
 	if available["apply_patch"] {
@@ -343,6 +344,37 @@ func execInputReferencesUnavailableTool(input, description string) bool {
 		}
 	}
 	return false
+}
+
+// normalizeExecNestedToolInput repairs the one compatibility mismatch that
+// appears across local runtimes: several callers expose shell_command while
+// their model-side examples still use exec_command. The top-level exec call is
+// still validated against the caller's declaration after this narrow rewrite.
+func normalizeExecNestedToolInput(input, description string) (string, bool) {
+	if input == "" || description == "" {
+		return input, false
+	}
+	names := execNestedToolNames(description)
+	declared := make(map[string]bool, len(names))
+	for _, name := range names {
+		declared[strings.ToLower(name)] = true
+	}
+	aliases := map[string]string{
+		"exec_command": "shell_command",
+		"execCommand":  "shell_command",
+		"shellCommand": "shell_command",
+		"applyPatch":   "apply_patch",
+		"viewImage":    "view_image",
+	}
+	changed := false
+	for alias, target := range aliases {
+		if !declared[strings.ToLower(target)] || !strings.Contains(input, "tools."+alias) {
+			continue
+		}
+		input = strings.ReplaceAll(input, "tools."+alias, "tools."+target)
+		changed = true
+	}
+	return input, changed
 }
 
 func compactRouterSchema(value any, depth int) any {

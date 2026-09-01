@@ -213,6 +213,19 @@ func TestNodeReplDocumentationRequiresExplicitOutput(t *testing.T) {
 	}
 }
 
+func TestNormalizeExecNestedToolInputRepairsShellAlias(t *testing.T) {
+	description := "Run JavaScript.\n### shell_command\nRun a command.\n### apply_patch\nApply a patch."
+	input := `const r = await tools.exec_command({command: "Get-Location"}); text(r);`
+	got, changed := normalizeExecNestedToolInput(input, description)
+	if !changed || !strings.Contains(got, "tools.shell_command") || strings.Contains(got, "tools.exec_command") {
+		t.Fatalf("shell alias was not normalized: changed=%t input=%q", changed, got)
+	}
+	unchanged, changed := normalizeExecNestedToolInput(`const r = await tools.unknown_tool({}); text(r);`, description)
+	if changed || unchanged == "" {
+		t.Fatalf("unknown nested tool was unexpectedly rewritten: changed=%t input=%q", changed, unchanged)
+	}
+}
+
 func TestExecutionToolRequestPendingTracksFailedContinuation(t *testing.T) {
 	tools := workspaceTestTools("exec")
 	failed := []oaiMsg{

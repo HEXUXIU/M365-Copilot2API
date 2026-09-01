@@ -81,6 +81,11 @@ func validateDetectedToolCalls(calls []detectedToolCall, tools []map[string]any,
 			}
 			if call.Name == "exec" {
 				description, _ := fn["description"].(string)
+				if normalized, changed := normalizeExecNestedToolInput(input, description); changed {
+					input = normalized
+					args["input"] = normalized
+					call.Arguments, _ = json.Marshal(args)
+				}
 				if execInputReferencesUnavailableTool(input, description) {
 					rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: "exec input references an unavailable nested tool"})
 					continue

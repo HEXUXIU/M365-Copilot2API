@@ -3,14 +3,24 @@ package web
 import (
 	"m365-copilot2api/internal/chathub"
 	"net/http"
+	"strings"
 	"time"
 	"unicode/utf8"
 )
 
 func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsage bool, calls []detectedToolCall, res chathub.Result, usageOverride map[string]any) error {
+	return writeToolResponseWithProgress(w, id, model, stream, sendUsage, calls, res, usageOverride, "")
+}
+
+func writeToolResponseWithProgress(w http.ResponseWriter, id, model string, stream, sendUsage bool, calls []detectedToolCall, res chathub.Result, usageOverride map[string]any, progress string) error {
 	// Usage is always emitted for tool streams; Codex relies on a terminal usage frame.
 	toolCalls := toolCallMaps(calls)
-	msg := map[string]any{"role": "assistant", "content": nil, "tool_calls": toolCalls}
+	progress = sanitizePublicAssistantText(strings.TrimSpace(progress))
+	content := any(nil)
+	if progress != "" {
+		content = progress
+	}
+	msg := map[string]any{"role": "assistant", "content": content, "tool_calls": toolCalls}
 	if res.Reasoning != "" {
 		if reasoning := sanitizePublicReasoningText(res.Reasoning); reasoning != "" {
 			msg["reasoning_content"] = reasoning
@@ -35,7 +45,7 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsag
 		base := func(delta map[string]any, finish any) map[string]any {
 			return map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}}
 		}
-		firstDelta := map[string]any{"role": "assistant", "content": nil}
+		firstDelta := map[string]any{"role": "assistant", "content": content}
 		if reasoning := sanitizePublicReasoningText(res.Reasoning); reasoning != "" {
 			firstDelta["reasoning_content"] = reasoning
 		}

@@ -261,6 +261,25 @@ func TestNormalizeExecNestedToolInputRepairsRuntimeArgumentShapes(t *testing.T) 
 	}
 }
 
+func TestEscapeInvalidJSLiteralNewlines(t *testing.T) {
+	input := "const patch = \"*** Begin Patch\n+OK\n*** End Patch\";\n" +
+		"const single = 'line one\r\nline two';\n" +
+		"const template = `line one\nline two`; // comment \" stays literal\n" +
+		"text(patch + single + template);"
+	got, changed := escapeInvalidJSLiteralNewlines(input)
+	if !changed {
+		t.Fatal("literal newlines were not escaped")
+	}
+	for _, want := range []string{`"*** Begin Patch\n+OK\n*** End Patch"`, `'line one\r\nline two'`, "`line one\nline two`", "// comment \" stays literal\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("normalized JavaScript missing %q: %q", want, got)
+		}
+	}
+	if strings.Count(got, "\n") != 4 {
+		t.Fatalf("statement/template/comment newlines changed: %q", got)
+	}
+}
+
 func TestExecutionToolRequestPendingTracksFailedContinuation(t *testing.T) {
 	tools := workspaceTestTools("exec")
 	failed := []oaiMsg{

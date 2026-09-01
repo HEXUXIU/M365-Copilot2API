@@ -418,6 +418,10 @@ func normalizeExecNestedToolInput(input, description string) (string, bool) {
 			}
 		}
 	}
+	if normalized, escaped := escapeInvalidJSLiteralNewlines(input); escaped {
+		input = normalized
+		changed = true
+	}
 	return input, changed
 }
 
@@ -439,6 +443,97 @@ func unwrapExecApplyPatchLiteral(input string, pattern *regexp.Regexp) string {
 		}
 		return parts[1] + value + parts[3]
 	})
+}
+
+// JavaScript single- and double-quoted strings cannot contain literal CR/LF.
+// Tool-planning JSON occasionally decodes patch "\\n" sequences into real
+// newlines before the custom exec input reaches the caller. Escape only those
+// invalid in-string newlines; keep statement, comment, and template-literal
+// newlines unchanged.
+func escapeInvalidJSLiteralNewlines(input string) (string, bool) {
+	var out strings.Builder
+	out.Grow(len(input))
+	var quote byte
+	inTemplate := false
+	inLineComment := false
+	inBlockComment := false
+	changed := false
+	for i := 0; i < len(input); i++ {
+		c := input[i]
+		if quote != 0 {
+			switch c {
+			case '\\':
+				out.WriteByte(c)
+				if i+1 < len(input) {
+					i++
+					out.WriteByte(input[i])
+				}
+			case quote:
+				out.WriteByte(c)
+				quote = 0
+			case '\r':
+				out.WriteString(`\r`)
+				changed = true
+			case '\n':
+				out.WriteString(`\n`)
+				changed = true
+			default:
+				out.WriteByte(c)
+			}
+			continue
+		}
+		if inTemplate {
+			out.WriteByte(c)
+			if c == '\\' && i+1 < len(input) {
+				i++
+				out.WriteByte(input[i])
+			} else if c == '`' {
+				inTemplate = false
+			}
+			continue
+		}
+		if inLineComment {
+			out.WriteByte(c)
+			if c == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			out.WriteByte(c)
+			if c == '*' && i+1 < len(input) && input[i+1] == '/' {
+				i++
+				out.WriteByte('/')
+				inBlockComment = false
+			}
+			continue
+		}
+		if c == '/' && i+1 < len(input) {
+			switch input[i+1] {
+			case '/':
+				out.WriteString("//")
+				i++
+				inLineComment = true
+				continue
+			case '*':
+				out.WriteString("/*")
+				i++
+				inBlockComment = true
+				continue
+			}
+		}
+		switch c {
+		case '\'', '"':
+			quote = c
+		case '`':
+			inTemplate = true
+		}
+		out.WriteByte(c)
+	}
+	if !changed {
+		return input, false
+	}
+	return out.String(), true
 }
 
 func compactRouterSchema(value any, depth int) any {

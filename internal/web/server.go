@@ -2256,7 +2256,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		retryableRouterFailure := func(routeErr error) bool {
-			if isRetryableAccountFailure(routeErr) || errors.Is(routeErr, requiredDecisionErr) {
+			// A malformed/empty required-tool decision is a model-output quality
+			// issue, not evidence that the account is unhealthy. Let the caller
+			// issue one structured repair on the same conversation before any
+			// account failover; otherwise a single bad decision fans out into
+			// three expensive cross-account requests.
+			if isRetryableAccountFailure(routeErr) {
 				return true
 			}
 			return errors.Is(routeErr, context.DeadlineExceeded) && routerCtx.Err() == nil && r.Context().Err() == nil
@@ -2748,7 +2753,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		routePrompt := modelToolRouterPrompt(routerInput+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		coldRoutePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments, toolChoiceRequiresCall(body.ToolChoice))
-		if routeErr != nil {
+		decisionNeedsRepair := errors.Is(routeErr, requiredDecisionErr)
+		if routeErr != nil && !decisionNeedsRepair {
 			msg := upstreamError(routeErr)
 			if IsRateLimited(routeErr) {
 				msg = "upstream is rate limiting; try again shortly"
@@ -2756,9 +2762,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", msg)
 			return
 		}
+		if decisionNeedsRepair {
+			log.Printf("[tool-router] id=%s required decision invalid; repairing on the same account", requestID)
+		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
-		if !parsed {
+		if decisionNeedsRepair || !parsed || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
 			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			if reuseRouterConversation && routerConversation.active() {
 				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
@@ -2777,6 +2786,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		calls = filterCompletedCalls(calls, ledger)
 		calls, _ = validateCalls("router", calls)
+		if toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0 {
+			writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", "upstream did not return a valid required tool call")
+			return
+		}
 		if len(calls) > 0 {
 			scope := fmt.Sprintf("%d:%v", len(body.Messages), completedCallIDs(ledger))
 			for i := range calls {

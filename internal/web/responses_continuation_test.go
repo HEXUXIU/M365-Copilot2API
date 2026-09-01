@@ -83,3 +83,15 @@ func TestResponseToolProgressDoesNotBreakAffinityPrefix(t *testing.T) {
 		t.Fatalf("tool continuation prefix=%d, want %d", got, len(bindingHistory))
 	}
 }
+
+func TestResponseAffinityProgressKeepsLiteralPublicProgress(t *testing.T) {
+	r := carryResponsesAdapter(httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	assistant := responseAffinityAssistantHistory(r, "internal router framing", oaiMsg{
+		Role:      "assistant",
+		Content:   "\u6211\u5148\u5904\u7406\u8fd9\u4e00\u6b65\uff0c\u5e76\u6838\u5bf9\u8fd4\u56de\u7ed3\u679c\u3002",
+		ToolCalls: []map[string]any{{"id": "call_1", "type": "function", "function": map[string]any{"name": "inspect", "arguments": `{}`}}},
+	})
+	if got, want := contentToString(assistant.Content), "\u6211\u5148\u5904\u7406\u8fd9\u4e00\u6b65\uff0c\u5e76\u6838\u5bf9\u8fd4\u56de\u7ed3\u679c\u3002"; got != want {
+		t.Fatalf("public progress changed: got=%q want=%q", got, want)
+	}
+}

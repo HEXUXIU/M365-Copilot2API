@@ -668,6 +668,10 @@ func (s *Server) runOpenAIAdapter(r *http.Request, o oaiReq) (map[string]any, []
 	b, _ := json.Marshal(o)
 	r2 := r.Clone(r.Context())
 	r2 = carryExplicitToolRequirement(r2, o.ExplicitToolRequired)
+	// A non-streaming Responses request reaches the same Chat adapter as an
+	// SSE request. Preserve that origin so tool-call affinity records the exact
+	// public progress turn retained by Responses state.
+	r2 = carryResponsesAdapter(r2)
 	r2.Method = http.MethodPost
 	r2.Body = io.NopCloser(bytes.NewReader(b))
 	r2.ContentLength = int64(len(b))

@@ -2350,7 +2350,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if body.User != "" && res.ConversationID != "" {
 			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
-		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, routePrompt, startedAt, affinityState)
+		usage := s.bindConversation(acc, &body, r, res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, prompt, startedAt, affinityState)
 		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 		if res.ConversationID != "" {
 			resolved := s.sessionResolver.Resolve(r, &body)
@@ -2466,7 +2466,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if toolResponseID == "" {
 				toolResponseID = "chatcmpl-" + uuid.NewString()
 			}
-			_ = writeToolResponseWithProgress(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), toolProgressContinuation(prompt))
+			_ = writeToolResponseWithProgress(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), toolProgressText(prompt, calls))
 			return
 		}
 		stopRouterHeartbeat()
@@ -2756,7 +2756,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if body.User != "" && toolResult.ConversationID != "" {
 				s.userSessions.Put(tenantFromRequest(r), body.User, toolResult.ConversationID, toolResult.SessionID, acc.ID)
 			}
-			usage := s.bindConversation(acc, &body, r, toolResult, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, answerPrompt, startedAt, affinityState)
+			usage := s.bindConversation(acc, &body, r, toolResult, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, prompt, startedAt, affinityState)
 			s.storeConvCache(acc.ID, convCacheModel, toolResult, tone, body.Messages, convReused)
 			_ = writeToolResponseWithProgress(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage), toolProgressText(prompt, calls))
 			return
@@ -3487,6 +3487,12 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 // are left untouched because this only runs for the Responses adapter.
 func responseAffinityAssistantHistory(r *http.Request, prompt string, assistant oaiMsg) oaiMsg {
 	if r == nil || !responsesAdapterFromContext(r.Context()) || len(assistant.ToolCalls) == 0 {
+		return assistant
+	}
+	// Prefer the literal progress already selected by the response path. This
+	// makes the affinity digest match the Responses state byte-for-byte even if
+	// an internal router prompt has different language or framing.
+	if strings.TrimSpace(contentToString(assistant.Content)) != "" {
 		return assistant
 	}
 	calls := make([]detectedToolCall, 0, len(assistant.ToolCalls))

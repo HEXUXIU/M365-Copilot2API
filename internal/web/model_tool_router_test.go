@@ -221,7 +221,9 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 		"requested a real local or external action",
 		"at least one compatible declared top-level tool",
 		"Skills are instruction bundles, not callable tool names",
-		"ALL_TOOLS metadata",
+		"catalog is already the authoritative path map",
+		"ALL_TOOLS array of {name, description}",
+		"Computer Use is typically available in Codex Desktop but absent from CLI environments",
 		"do not invent a tool or claim the action happened",
 	} {
 		if !strings.Contains(p, want) {
@@ -235,7 +237,7 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 
 func TestExecutionRepairRequiresProgressWithoutChangingChoice(t *testing.T) {
 	p := modelToolExecutionRepairPrompt("[user] 使用 browser 技能操作页面", "NO_TOOL_NEEDED", testTools(), "auto")
-	for _, want := range []string{"TOOL_CHOICE: auto", "unfinished real action", "at least one valid declared top-level tool", "Do not return an empty calls array"} {
+	for _, want := range []string{"TOOL_CHOICE: auto", "unfinished real action", "at least one valid declared top-level tool", "read that exact SKILL.md", "ALL_TOOLS array", "Do not return an empty calls array"} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("execution repair prompt missing %q: %s", want, p)
 		}
@@ -314,6 +316,15 @@ Run a PowerShell command in the workspace.`
 	got := compact[0]["function"].(map[string]any)["description"].(string)
 	if !strings.Contains(got, "tools.apply_patch") || !strings.Contains(got, "tools.shell_command") {
 		t.Fatalf("exec catalog was lost: %q", got)
+	}
+	for _, want := range []string{
+		"do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill",
+		"ALL_TOOLS array of {name, description}",
+		"Computer Use is typically present in Codex Desktop but absent from CLI",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("exec skill contract missing %q: %q", want, got)
+		}
 	}
 	if strings.Contains(got, "tools.exec_command") {
 		t.Fatalf("stale undeclared example survived compaction: %q", got)

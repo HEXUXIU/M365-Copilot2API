@@ -175,8 +175,9 @@ func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
 		"never silently substitute the workspace",
 		"requested desktop UI, browser, or computer-use action occurred",
 		"skills are instruction bundles, not callable tool names",
-		"resolve its root alias",
-		"ALL_TOOLS",
+		"authoritative path map",
+		"ALL_TOOLS array of {name, description}",
+		"Computer Use is typically available in Codex Desktop but absent from CLI environments",
 		"Set-Content -LiteralPath $path -Value 'text' -Encoding utf8",
 		"must never be used to open a URL",
 	} {

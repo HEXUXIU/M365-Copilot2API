@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,6 +13,39 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 )
+
+func TestResponseStateWireCompressionAndLegacyJSON(t *testing.T) {
+	node := &RespNode{
+		At: time.Now().UTC(), Tenant: "tenant", SessionID: "session", Version: 2,
+		Messages:   []oaiMsg{{Role: "user", Content: strings.Repeat("stable cache prefix ", 2000)}},
+		ReplayBody: []byte(`{"ok":true}`),
+	}
+	encoded, err := encodeResponseState(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := json.Marshal(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) >= len(plain) {
+		t.Fatalf("compressed state did not shrink: encoded=%d plain=%d", len(encoded), len(plain))
+	}
+	var decoded RespNode
+	if err := decodeResponseState(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Tenant != node.Tenant || len(decoded.Messages) != 1 || decoded.Messages[0].Content != node.Messages[0].Content {
+		t.Fatalf("decoded state mismatch: %#v", decoded)
+	}
+	var legacy RespNode
+	if err := decodeResponseState(plain, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Version != node.Version || string(legacy.ReplayBody) != string(node.ReplayBody) {
+		t.Fatalf("legacy state mismatch: %#v", legacy)
+	}
+}
 
 func newResponseStateTestServer(config affinityConfig) *Server {
 	if config.TTL == 0 {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -92,5 +93,40 @@ func TestRequestGateMiddlewareOnlyGatesAPIWork(t *testing.T) {
 	case <-called:
 	case <-time.After(time.Second):
 		t.Fatal("non-API request was not passed through")
+	}
+}
+
+func TestRequestGateWeightedPermitsProtectLongRequests(t *testing.T) {
+	g := newRequestGate(4, 4)
+	first, err := g.AcquireWeighted(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := g.AcquireWeighted(ctx, 2); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("weighted acquire=%v, want deadline exceeded", err)
+	}
+	if got := g.Snapshot()["active"].(int); got != 3 {
+		t.Fatalf("active permits=%d, want 3", got)
+	}
+	first()
+	second, err := g.AcquireWeighted(context.Background(), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second()
+}
+
+func TestRequestWeightUsesContentLength(t *testing.T) {
+	// Keep the fixture inside the production-supported 16 KiB minimum unit.
+	// A sub-minimum value must fall back to the safe default rather than make
+	// every ordinary request consume an excessive number of permits.
+	t.Setenv("M365_REQUEST_WEIGHT_BYTES", "16384")
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(strings.Repeat("x", 40000)))
+	request.ContentLength = 40000
+	if got := requestWeight(request); got != 3 {
+		t.Fatalf("request weight=%d, want 3", got)
 	}
 }

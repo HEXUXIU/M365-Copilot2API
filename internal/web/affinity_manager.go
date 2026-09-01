@@ -51,7 +51,7 @@ func loadAffinityConfig() affinityConfig {
 		Mode:                    mode,
 		RedisURL:                strings.TrimSpace(os.Getenv("M365_REDIS_URL")),
 		RedisPoolSize:           affinityEnvInt("M365_REDIS_POOL_SIZE", 256),
-		TTL:                     time.Duration(affinityEnvInt("M365_AFFINITY_TTL_MINUTES", 120)) * time.Minute,
+		TTL:                     time.Duration(affinityEnvInt("M365_AFFINITY_TTL_MINUTES", 30)) * time.Minute,
 		MaxSessions:             affinityEnvInt("M365_AFFINITY_MAX_SESSIONS", 10000),
 		LockTTL:                 time.Duration(affinityEnvInt("M365_SESSION_LOCK_TTL_SECONDS", 180)) * time.Second,
 		LockWait:                time.Duration(affinityEnvInt("M365_SESSION_LOCK_WAIT_SECONDS", 120)) * time.Second,
@@ -315,6 +315,13 @@ func (m *affinityManager) begin(ctx context.Context, tenant string, body *oaiReq
 		if binding, ok, err := state.store.GetBinding(ctx, lockID); err == nil && ok && binding.TenantHash == state.key.TenantHash {
 			state.binding, state.hasBinding = binding, true
 			state.prefixCount = contextPrefixCountForBinding(binding, body.Messages)
+			if state.key.BindingID == "" && state.prefixCount == 0 {
+				// Another request advanced this history binding while we waited.
+				// Fork the divergent branch instead of overwriting the hot binding.
+				state.binding = affinityBinding{}
+				state.hasBinding = false
+				state.incremental = false
+			}
 		}
 	}
 
@@ -540,6 +547,10 @@ func (state *affinityRequest) complete(ctx context.Context, body *oaiReq, accoun
 	}
 	confirmed := state.enforced && state.hasBinding && state.incremental && state.migrationReason == "" &&
 		state.binding.AccountID == accountID && state.binding.ConversationID == body.ConversationID && state.prefixCount > 0
+	missReason := ""
+	if !confirmed {
+		missReason = state.cacheMissReason(accountID, body)
+	}
 	if confirmed {
 		prefixPrompt, _ := flattenPromptMessages(body.Messages[:state.prefixCount], nil)
 		usage.CachedTokens = EstimateTokens(strings.TrimSpace(prefixPrompt))
@@ -585,8 +596,36 @@ func (state *affinityRequest) complete(ctx context.Context, body *oaiReq, accoun
 		_ = fallback.SetAccount(ctx, state.key.TenantHash, state.key.Hash, accountID, state.manager.config.TTL)
 		state.store = fallback
 	}
-	log.Printf("[affinity] mode=%s reason=%s account=%s binding=%s cache_hit=%t cached_tokens=%d migration=%s", state.manager.config.Mode, state.key.Reason, accountID, shortPrefix(bindingID), usage.Confirmed, usage.CachedTokens, state.migrationReason)
+	log.Printf("[affinity] mode=%s reason=%s account=%s binding=%s cache_hit=%t cached_tokens=%d miss_reason=%s migration=%s", state.manager.config.Mode, state.key.Reason, accountID, shortPrefix(bindingID), usage.Confirmed, usage.CachedTokens, missReason, state.migrationReason)
 	return usage
+}
+
+func (state *affinityRequest) cacheMissReason(accountID string, body *oaiReq) string {
+	if state == nil || state.manager == nil || state.manager.config.Mode == affinityOff {
+		return "affinity_off"
+	}
+	if !state.enforced {
+		return "affinity_not_enforced"
+	}
+	if !state.hasBinding {
+		return "binding_miss"
+	}
+	if state.prefixCount <= 0 {
+		return "prefix_mismatch"
+	}
+	if !state.incremental {
+		return "incremental_unavailable"
+	}
+	if state.migrationReason != "" {
+		return "migration_" + state.migrationReason
+	}
+	if state.binding.AccountID != accountID {
+		return "account_changed"
+	}
+	if body == nil || state.binding.ConversationID != body.ConversationID {
+		return "conversation_mismatch"
+	}
+	return "unconfirmed"
 }
 
 func shortPrefix(value string) string {
@@ -616,11 +655,8 @@ func affinityTenantIdentity(r *http.Request) string {
 }
 
 func affinityTenantIdentityWithScope(r *http.Request, scope string) string {
-	if key := strings.TrimSpace(r.Header.Get("X-API-Key")); key != "" {
-		return hashString(key)
-	}
-	if authHeader := strings.TrimSpace(r.Header.Get("Authorization")); strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-		return hashString(strings.TrimSpace(authHeader[7:]))
+	if tenant := tenantFromRequest(r); tenant != "" {
+		return tenant
 	}
 	if scope == "global" {
 		return hashString("anonymous")

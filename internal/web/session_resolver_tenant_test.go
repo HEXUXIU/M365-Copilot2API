@@ -1,11 +1,36 @@
 package web
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 )
+
+func signProxyTenant(secret, tenant string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(tenant))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestTenantFromRequestAcceptsOnlySignedProxyTenant(t *testing.T) {
+	t.Setenv("M365_AFFINITY_PROXY_SECRET", "proxy-test-secret")
+	request := tenantReq("shared-upstream-key", "203.0.113.9", "same-ua")
+	request.Header.Set(affinityProxyTenantHeader, "apikey:17")
+	request.Header.Set(affinityProxySignatureHeader, signProxyTenant("proxy-test-secret", "apikey:17"))
+	trusted := tenantFromRequest(request)
+	if trusted == "" || trusted == keyHash("shared-upstream-key") {
+		t.Fatalf("signed proxy tenant was not selected: %q", trusted)
+	}
+
+	request.Header.Set(affinityProxySignatureHeader, signProxyTenant("wrong-secret", "apikey:17"))
+	if fallback := tenantFromRequest(request); fallback != keyHash("shared-upstream-key") {
+		t.Fatalf("invalid signature did not fall back to API key tenant: %q", fallback)
+	}
+}
 
 // tenantReq builds a chat request that carries an API key (so it maps to a
 // tenant) plus a fixed IP/UA, so the only thing that differs between two

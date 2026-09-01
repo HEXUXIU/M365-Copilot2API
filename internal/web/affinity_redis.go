@@ -157,6 +157,8 @@ func (s *redisAffinityStore) FindHistory(ctx context.Context, tenantHash string,
 	if err != nil {
 		return affinityBinding{}, 0, false, err
 	}
+	bestIndex := -1
+	var best affinityBinding
 	for i, raw := range rawBindings {
 		text, ok := raw.(string)
 		if !ok || text == "" {
@@ -166,9 +168,15 @@ func (s *redisAffinityStore) FindHistory(ctx context.Context, tenantHash string,
 		if err := json.Unmarshal([]byte(text), &binding); err != nil {
 			return affinityBinding{}, 0, false, err
 		}
-		if binding.ID != "" && binding.TenantHash == tenantHash {
-			return binding, positions[i], true, nil
+		if binding.ID != "" && binding.TenantHash == tenantHash &&
+			(bestIndex < 0 || positions[i] < bestIndex ||
+				(positions[i] == bestIndex && binding.LastUsedAt.After(best.LastUsedAt))) {
+			best = binding
+			bestIndex = positions[i]
 		}
+	}
+	if bestIndex >= 0 {
+		return best, bestIndex, true, nil
 	}
 	return affinityBinding{}, 0, false, nil
 }

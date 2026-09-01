@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -13,6 +15,7 @@ var errRequestQueueFull = errors.New("request queue is full")
 type requestGateWaiter struct {
 	ready   chan struct{}
 	granted bool
+	weight  int
 }
 
 // requestGate bounds active API work and keeps a FIFO wait queue. The gate is
@@ -37,25 +40,33 @@ func newRequestGate(limit, maxQueue int) *requestGate {
 }
 
 func (g *requestGate) promoteLocked() {
-	for g.active < g.limit && len(g.waiters) > 0 {
+	for len(g.waiters) > 0 {
 		w := g.waiters[0]
+		if g.active+w.weight > g.limit {
+			break
+		}
 		g.waiters = g.waiters[1:]
 		if w.granted {
 			continue
 		}
 		w.granted = true
-		g.active++
+		g.active += w.weight
 		close(w.ready)
 	}
 }
 
-func (g *requestGate) release() func() {
+func (g *requestGate) release(weight int) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			g.mu.Lock()
-			if g.active > 0 {
-				g.active--
+			if weight < 1 {
+				weight = 1
+			}
+			if g.active >= weight {
+				g.active -= weight
+			} else {
+				g.active = 0
 			}
 			g.promoteLocked()
 			g.mu.Unlock()
@@ -64,15 +75,28 @@ func (g *requestGate) release() func() {
 }
 
 func (g *requestGate) Acquire(ctx context.Context) (func(), error) {
+	return g.AcquireWeighted(ctx, 1)
+}
+
+// AcquireWeighted charges large request bodies more permits than small ones.
+// The public limit remains a concurrency setting for ordinary requests while
+// long-context and multimodal requests are naturally serialized under load.
+func (g *requestGate) AcquireWeighted(ctx context.Context, weight int) (func(), error) {
 	if g == nil {
 		return func() {}, nil
 	}
-	w := &requestGateWaiter{ready: make(chan struct{})}
+	if weight < 1 {
+		weight = 1
+	}
 	g.mu.Lock()
-	if g.active < g.limit && len(g.waiters) == 0 {
-		g.active++
+	if weight > g.limit {
+		weight = g.limit
+	}
+	w := &requestGateWaiter{ready: make(chan struct{}), weight: weight}
+	if g.active+weight <= g.limit && len(g.waiters) == 0 {
+		g.active += weight
 		g.mu.Unlock()
-		return g.release(), nil
+		return g.release(weight), nil
 	}
 	if g.maxQueue > 0 && len(g.waiters) >= g.maxQueue {
 		g.mu.Unlock()
@@ -82,12 +106,12 @@ func (g *requestGate) Acquire(ctx context.Context) (func(), error) {
 	g.mu.Unlock()
 	select {
 	case <-w.ready:
-		return g.release(), nil
+		return g.release(weight), nil
 	case <-ctx.Done():
 		g.mu.Lock()
 		if w.granted {
 			g.mu.Unlock()
-			return g.release(), nil
+			return g.release(weight), nil
 		}
 		for i, queued := range g.waiters {
 			if queued == w {
@@ -98,6 +122,32 @@ func (g *requestGate) Acquire(ctx context.Context) (func(), error) {
 		g.mu.Unlock()
 		return nil, ctx.Err()
 	}
+}
+
+const defaultRequestWeightBytes = 128 * 1024
+
+func requestWeightBytes() int64 {
+	if raw := strings.TrimSpace(os.Getenv("M365_REQUEST_WEIGHT_BYTES")); raw != "" {
+		if n, err := strconv.ParseInt(raw, 10, 64); err == nil && n >= 16*1024 && n <= 4*1024*1024 {
+			return n
+		}
+	}
+	return defaultRequestWeightBytes
+}
+
+func requestWeight(r *http.Request) int {
+	if r == nil || r.ContentLength <= 0 {
+		return 1
+	}
+	unit := requestWeightBytes()
+	weight := (r.ContentLength + unit - 1) / unit
+	if weight < 1 {
+		return 1
+	}
+	if weight > int64(^uint(0)>>1) {
+		return int(^uint(0) >> 1)
+	}
+	return int(weight)
 }
 
 func (g *requestGate) SetLimits(limit, maxQueue int) {
@@ -126,7 +176,7 @@ func (s *Server) requestGateMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		release, err := s.requestGate.Acquire(r.Context())
+		release, err := s.requestGate.AcquireWeighted(r.Context(), requestWeight(r))
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				writeOpenAIError(w, http.StatusRequestTimeout, "request_timeout", "request left the queue before an execution slot was available")

@@ -2,10 +2,12 @@ package web
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -16,6 +18,51 @@ import (
 )
 
 const redisResponsesStatePrefix = "m365:responses-state:v1:"
+
+// responseStateWireVersion is deliberately kept out of the Redis key so old
+// state remains readable during a rolling deployment. New values are gzip
+// compressed; loadResponseNodeLocked accepts both the compressed form and the
+// historical plain JSON form.
+const responseStateWireVersion = byte(0x1f)
+
+func encodeResponseState(node *RespNode) ([]byte, error) {
+	raw, err := json.Marshal(node)
+	if err != nil {
+		return nil, err
+	}
+	var out bytes.Buffer
+	zw := gzip.NewWriter(&out)
+	if _, err := zw.Write(raw); err != nil {
+		_ = zw.Close()
+		return nil, err
+	}
+	if err := zw.Close(); err != nil {
+		return nil, err
+	}
+	compressed := out.Bytes()
+	// Small states are cheaper to keep as JSON. The marker is the first gzip
+	// magic byte, so the decoder can distinguish either representation.
+	if len(compressed)+1 >= len(raw) {
+		return raw, nil
+	}
+	return append([]byte{responseStateWireVersion}, compressed...), nil
+}
+
+func decodeResponseState(raw []byte, node *RespNode) error {
+	if len(raw) > 1 && raw[0] == responseStateWireVersion && len(raw) >= 3 && raw[1] == 0x1f && raw[2] == 0x8b {
+		zr, err := gzip.NewReader(bytes.NewReader(raw[1:]))
+		if err != nil {
+			return err
+		}
+		defer zr.Close()
+		decoded, err := io.ReadAll(io.LimitReader(zr, 32<<20))
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(decoded, node)
+	}
+	return json.Unmarshal(raw, node)
+}
 
 type responseReplay struct {
 	Status int
@@ -95,7 +142,7 @@ func (s *Server) loadResponseNodeLocked(ctx context.Context, namespace, response
 	if errors.Is(err, redis.Nil) {
 		if bucket := s.responseMessages[namespace]; bucket != nil {
 			if node := bucket[responseID]; node != nil && time.Since(node.At) <= s.responseStateTTL() {
-				if encoded, encodeErr := json.Marshal(node); encodeErr == nil {
+				if encoded, encodeErr := encodeResponseState(node); encodeErr == nil {
 					_ = store.client.Set(ctx, responseStateKey(namespace, responseID), encoded, s.responseStateTTL()).Err()
 				}
 				return node, true
@@ -108,7 +155,7 @@ func (s *Server) loadResponseNodeLocked(ctx context.Context, namespace, response
 		return nil, false
 	}
 	var node RespNode
-	if err := json.Unmarshal(raw, &node); err != nil {
+	if err := decodeResponseState(raw, &node); err != nil {
 		log.Printf("[responses-state] invalid persisted state key=%s: %v", shortPrefix(hashString(responseID)), err)
 		return nil, false
 	}
@@ -150,7 +197,7 @@ func (s *Server) persistResponseNodeLocked(ctx context.Context, namespace, respo
 	if store == nil {
 		return
 	}
-	raw, err := json.Marshal(node)
+	raw, err := encodeResponseState(node)
 	if err == nil {
 		err = store.client.Set(ctx, responseStateKey(namespace, responseID), raw, s.responseStateTTL()).Err()
 	}

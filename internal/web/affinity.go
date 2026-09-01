@@ -10,11 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"m365-copilot2api/internal/auth"
+	"m365-copilot2api/internal/chathub"
 )
 
 const previousResponseHeader = "X-M365-Previous-Response-Id"
@@ -118,7 +120,7 @@ func deriveAffinityKey(tenant string, body *oaiReq, r *http.Request) affinityKey
 		FirstUser any    `json:"first_user"`
 		Tools     any    `json:"tools"`
 		Choice    any    `json:"tool_choice"`
-	}{Model: body.Model, Tools: body.Tools, Choice: body.ToolChoice}
+	}{Model: body.Model, Tools: canonicalToolSchemas(body.Tools), Choice: canonicalAffinityToolChoice(body.ToolChoice, len(body.Tools) > 0)}
 	for _, msg := range body.Messages {
 		switch msg.Role {
 		case "system", "developer":
@@ -132,6 +134,56 @@ func deriveAffinityKey(tenant string, body *oaiReq, r *http.Request) affinityKey
 	b, _ := json.Marshal(seed)
 	h := hashString(tenantHash + "\x00content\x00" + string(b))
 	return affinityKey{TenantHash: tenantHash, Hash: h, Reason: "content_seed"}
+}
+
+// canonicalToolSchemas makes the logical cache key independent of client tool
+// ordering and JSON whitespace. Tool order is not semantically meaningful to
+// the upstream router, but some SDKs rebuild the declaration slice each turn.
+// Keeping it out of the affinity key avoids needless cold conversations while
+// preserving the complete schema and descriptions.
+func canonicalToolSchemas(tools []chathub.Tool) []any {
+	if len(tools) == 0 {
+		return nil
+	}
+	encoded := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		var function any
+		if err := json.Unmarshal(tool.Function, &function); err != nil {
+			function = strings.TrimSpace(string(tool.Function))
+		}
+		value := map[string]any{
+			"type":     strings.ToLower(strings.TrimSpace(tool.Type)),
+			"function": canonicalContentValue(function),
+		}
+		raw, _ := json.Marshal(value)
+		encoded = append(encoded, string(raw))
+	}
+	sort.Strings(encoded)
+	out := make([]any, 0, len(encoded))
+	for _, raw := range encoded {
+		var value any
+		if json.Unmarshal([]byte(raw), &value) == nil {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func canonicalAffinityToolChoice(value any, hasTools bool) any {
+	if value == nil {
+		if hasTools {
+			return "auto"
+		}
+		return nil
+	}
+	if text, ok := value.(string); ok {
+		text = strings.ToLower(strings.TrimSpace(text))
+		if text == "" || text == "auto" {
+			return "auto"
+		}
+		return text
+	}
+	return canonicalContentValue(value)
 }
 
 func canonicalMessage(msg oaiMsg) map[string]any {
@@ -615,10 +667,16 @@ func (s *memoryAffinityStore) FindHistory(_ context.Context, tenantHash string, 
 		if len(ids) == 0 {
 			continue
 		}
+		var newest affinityBinding
+		foundNewest := false
 		for _, id := range ids {
 			value, ok := s.bindings[id]
 			if ok && now.Before(value.ExpiresAt) {
-				return value.Value, index, true, nil
+				if !foundNewest || value.Value.LastUsedAt.After(newest.LastUsedAt) {
+					newest = value.Value
+					foundNewest = true
+				}
+				continue
 			}
 			if ok {
 				delete(s.bindings, id)
@@ -626,6 +684,9 @@ func (s *memoryAffinityStore) FindHistory(_ context.Context, tenantHash string, 
 				continue
 			}
 			s.removeHistoryBindingLocked(affinityBinding{ID: id, TenantHash: tenantHash, HistoryDigest: digest})
+		}
+		if foundNewest {
+			return newest, index, true, nil
 		}
 	}
 	return affinityBinding{}, 0, false, nil

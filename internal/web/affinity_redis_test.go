@@ -132,6 +132,29 @@ func TestRedisAffinityHistoryKeepsConcurrentEqualDigests(t *testing.T) {
 	}
 }
 
+func TestRedisHistoryLookupPrefersMostRecentlyUsedBinding(t *testing.T) {
+	mr := miniredis.RunT(t)
+	store, err := newRedisAffinityStore("redis://"+mr.Addr()+"/0", 4, time.Hour, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	first := affinityBinding{ID: "older", TenantHash: "tenant", HistoryDigest: "same", HistoryCount: 2}
+	second := affinityBinding{ID: "newer", TenantHash: "tenant", HistoryDigest: "same", HistoryCount: 2}
+	if err := store.PutBinding(ctx, first, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Millisecond)
+	if err := store.PutBinding(ctx, second, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	got, _, ok, err := store.FindHistory(ctx, "tenant", []string{"same"})
+	if err != nil || !ok || got.ID != second.ID {
+		t.Fatalf("newest Redis history binding not selected: got=%+v ok=%t err=%v", got, ok, err)
+	}
+}
+
 func TestRedisAffinityEvictionIsBatchedAndBounded(t *testing.T) {
 	mr := miniredis.RunT(t)
 	store, err := newRedisAffinityStore("redis://"+mr.Addr()+"/0", 4, time.Hour, 2)

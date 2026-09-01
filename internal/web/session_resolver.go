@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+)
+
+const (
+	affinityProxyTenantHeader    = "X-M365-Affinity-Tenant"
+	affinityProxySignatureHeader = "X-M365-Affinity-Signature"
 )
 
 // sessionBinding 璁板綍涓€娆″唴瀹归敭澶嶇敤鐨勪細璇濄€侷dentity 瀛楁锛圛P/user锛変粎浣?
@@ -619,10 +625,35 @@ func cloneMessages(msgs []oaiMsg) []oaiMsg {
 
 func explicitKey(tenant, id string) string { return tenant + "\x00" + id }
 
+func trustedProxyTenantFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	secret := strings.TrimSpace(os.Getenv("M365_AFFINITY_PROXY_SECRET"))
+	tenant := strings.TrimSpace(r.Header.Get(affinityProxyTenantHeader))
+	signature := strings.TrimSpace(r.Header.Get(affinityProxySignatureHeader))
+	if secret == "" || tenant == "" || signature == "" || len(tenant) > 256 {
+		return ""
+	}
+	provided, err := hex.DecodeString(signature)
+	if err != nil || len(provided) != sha256.Size {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(tenant))
+	if !hmac.Equal(provided, mac.Sum(nil)) {
+		return ""
+	}
+	return keyHash("trusted-proxy:" + tenant)
+}
+
 // tenantFromRequest derives a stable, non-reversible tenant identifier from the
 // caller's API key so per-caller session state is isolated. Returns "" when no
 // key is present; an empty tenant never matches a stored (keyed) binding.
 func tenantFromRequest(r *http.Request) string {
+	if tenant := trustedProxyTenantFromRequest(r); tenant != "" {
+		return tenant
+	}
 	raw := rawAPIKey(r)
 	if raw == "" {
 		return ""

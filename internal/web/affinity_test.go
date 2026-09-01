@@ -2,12 +2,14 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
 	"m365-copilot2api/internal/auth"
+	"m365-copilot2api/internal/chathub"
 )
 
 func TestAffinityKeyIsDeterministicAndTenantIsolated(t *testing.T) {
@@ -41,6 +43,31 @@ func TestExplicitSessionTakesPriorityOverContentSeed(t *testing.T) {
 	}
 	if key.BindingID == "" {
 		t.Fatal("explicit session must produce a stable binding id")
+	}
+}
+
+func TestAffinityKeyIgnoresToolDeclarationOrder(t *testing.T) {
+	toolA := chathub.Tool{Type: "function", Function: json.RawMessage(`{"name":"alpha","description":"a","parameters":{"type":"object"}}`)}
+	toolB := chathub.Tool{Type: "function", Function: json.RawMessage(`{"name":"beta","description":"b","parameters":{"type":"object"}}`)}
+	base := []oaiMsg{{Role: "system", Content: "use declared tools"}, {Role: "user", Content: "inspect the project"}}
+	a := &oaiReq{Model: "gpt-5.6-terra", Messages: base, Tools: []chathub.Tool{toolA, toolB}}
+	b := &oaiReq{Model: "gpt-5.6-terra", Messages: base, Tools: []chathub.Tool{toolB, toolA}}
+	keyA := deriveAffinityKey("tenant-a", a, httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	keyB := deriveAffinityKey("tenant-a", b, httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	if keyA.Hash != keyB.Hash {
+		t.Fatalf("tool declaration order changed affinity key: %q != %q", keyA.Hash, keyB.Hash)
+	}
+}
+
+func TestAffinityKeyNormalizesImplicitAutoToolChoice(t *testing.T) {
+	tool := chathub.Tool{Type: "function", Function: json.RawMessage(`{"name":"inspect","parameters":{"type":"object"}}`)}
+	base := []oaiMsg{{Role: "user", Content: "inspect the project"}}
+	a := &oaiReq{Model: "gpt-5.6-sol", Messages: base, Tools: []chathub.Tool{tool}}
+	b := &oaiReq{Model: "gpt-5.6-sol", Messages: base, Tools: []chathub.Tool{tool}, ToolChoice: "auto"}
+	keyA := deriveAffinityKey("tenant-a", a, httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	keyB := deriveAffinityKey("tenant-a", b, httptest.NewRequest("POST", "/v1/chat/completions", nil))
+	if keyA.Hash != keyB.Hash {
+		t.Fatalf("implicit and explicit auto tool choice changed affinity key: %q != %q", keyA.Hash, keyB.Hash)
 	}
 }
 
@@ -83,6 +110,33 @@ func TestHistoryLookupRequiresAssistantBearingExactPrefix(t *testing.T) {
 	userOnly := []oaiMsg{{Role: "user", Content: "hello"}, {Role: "user", Content: "continue"}}
 	if _, _, ok, err := resolveHistoryBinding(ctx, store, tenant, userOnly, 64); err != nil || ok {
 		t.Fatalf("assistant-free prefix must not resolve: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestMemoryHistoryLookupPrefersMostRecentlyUsedBinding(t *testing.T) {
+	store := newMemoryAffinityStore(time.Hour, 100)
+	ctx := context.Background()
+	tenant := hashString("tenant-a")
+	older := affinityBinding{ID: "older", TenantHash: tenant, HistoryDigest: "same", HistoryCount: 2, LastUsedAt: time.Now().Add(-time.Hour)}
+	newer := affinityBinding{ID: "newer", TenantHash: tenant, HistoryDigest: "same", HistoryCount: 2, LastUsedAt: time.Now()}
+	if err := store.PutBinding(ctx, older, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutBinding(ctx, newer, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	// PutBinding refreshes timestamps; make the intended order explicit.
+	store.mu.Lock()
+	oldValue := store.bindings[older.ID]
+	oldValue.Value.LastUsedAt = time.Now().Add(-time.Minute)
+	store.bindings[older.ID] = oldValue
+	newValue := store.bindings[newer.ID]
+	newValue.Value.LastUsedAt = time.Now()
+	store.bindings[newer.ID] = newValue
+	store.mu.Unlock()
+	got, _, ok, err := store.FindHistory(ctx, tenant, []string{"same"})
+	if err != nil || !ok || got.ID != newer.ID {
+		t.Fatalf("newest history binding not selected: got=%+v ok=%t err=%v", got, ok, err)
 	}
 }
 

@@ -1,6 +1,10 @@
 package web
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
 
 func TestMergeResponsesContinuationKeepsToolOutputAdjacent(t *testing.T) {
 	policy := oaiMsg{Role: "system", Content: customExecEffectiveInstruction}
@@ -53,5 +57,29 @@ func TestMergeResponsesContinuationPreservesPolicyOrder(t *testing.T) {
 	})
 	if len(merged) != 3 || contentToString(merged[0].Content) != "first" || contentToString(merged[1].Content) != "second" {
 		t.Fatalf("policy order changed: %#v", merged)
+	}
+}
+
+func TestResponseToolProgressDoesNotBreakAffinityPrefix(t *testing.T) {
+	policy := oaiMsg{Role: "system", Content: "caller-local tool policy"}
+	calls := []map[string]any{{
+		"id": "call_1", "type": "function",
+		"function": map[string]any{"name": "inspect", "arguments": `{"path":"/etc/os-release"}`},
+	}}
+	base := []oaiMsg{policy, {Role: "user", Content: "inspect the runtime"}}
+	r := carryResponsesAdapter(httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	assistant := responseAffinityAssistantHistory(r, "inspect the runtime", oaiMsg{Role: "assistant", ToolCalls: calls})
+	bindingHistory := affinityBindingHistory(base, assistant)
+	stored := appendResponsesAssistantHistory(base, toolProgressText("inspect the runtime", []detectedToolCall{{Name: "inspect"}}), calls)
+	if got, want := contentToString(stored[len(stored)-1].Content), contentToString(assistant.Content); got != want {
+		t.Fatalf("stored progress=%q, affinity progress=%q", got, want)
+	}
+	continued := mergeResponsesContinuation(stored, []oaiMsg{
+		policy,
+		{Role: "tool", ToolCallID: "call_1", Content: "PRETTY_NAME=Ubuntu"},
+	})
+	binding := affinityBinding{HistoryCount: len(bindingHistory), HistoryDigest: historyDigest(bindingHistory)}
+	if got := contextPrefixCountForBinding(binding, continued); got != len(bindingHistory) {
+		t.Fatalf("tool continuation prefix=%d, want %d", got, len(bindingHistory))
 	}
 }

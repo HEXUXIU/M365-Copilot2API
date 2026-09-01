@@ -3426,6 +3426,7 @@ const sessionHeaderName = "X-M365-Session-Id"
 // 路径共用。会话为内容键，云端的对话由 auto_cleanup 按 2h 闲置窗口回收，
 // 这里不再做"用完即删"，否则复用永远不可能命中。
 func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.Request, res chathub.Result, assistantMsg oaiMsg, prompt string, startedAt time.Time, affinityState *affinityRequest) reuseUsage {
+	assistantMsg = responseAffinityAssistantHistory(r, prompt, assistantMsg)
 	fullPrompt, _ := flattenPromptMessages(body.Messages, nil)
 	promptTokens := EstimateTokens(strings.TrimSpace(fullPrompt))
 	completionText := contentToString(assistantMsg.Content)
@@ -3477,6 +3478,27 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 		Status:       200,
 	})
 	return usage
+}
+
+// responseAffinityAssistantHistory mirrors the public progress text generated
+// for a gateway-planned tool call. Responses state persists that visible text,
+// so its affinity binding must retain the same assistant turn or the next tool
+// output has a different history digest. Genuine upstream mixed text/tool turns
+// are left untouched because this only runs for the Responses adapter.
+func responseAffinityAssistantHistory(r *http.Request, prompt string, assistant oaiMsg) oaiMsg {
+	if r == nil || !responsesAdapterFromContext(r.Context()) || len(assistant.ToolCalls) == 0 {
+		return assistant
+	}
+	calls := make([]detectedToolCall, 0, len(assistant.ToolCalls))
+	for _, call := range assistant.ToolCalls {
+		fn, _ := call["function"].(map[string]any)
+		calls = append(calls, detectedToolCall{
+			Type: fmt.Sprint(call["type"]),
+			Name: strings.TrimSpace(fmt.Sprint(fn["name"])),
+		})
+	}
+	assistant.Content = sanitizePublicAssistantText(strings.TrimSpace(toolProgressText(prompt, calls)))
+	return assistant
 }
 
 func cacheSource(usage reuseUsage) string {

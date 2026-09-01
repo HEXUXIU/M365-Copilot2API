@@ -2222,12 +2222,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		for _, call := range rejected {
 			log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, call.Reason)
 		}
-		if len(declaredSkillRoutes) == 0 {
-			return valid, len(rejected)
-		}
 		kept := valid[:0]
 		wrongSkillPaths := 0
 		for _, call := range valid {
+			if callOmitsNodeReplDocumentationOutput(call) {
+				wrongSkillPaths++
+				log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, "node_repl documentation result is not emitted with nodeRepl.write")
+				continue
+			}
 			if callUsesWrongDeclaredSkillPath(call, declaredSkillRoutes) {
 				wrongSkillPaths++
 				log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, "SKILL.md path does not match the caller catalog")
@@ -2417,9 +2419,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
-		calls, _ = validateCalls("router", calls)
+		calls, rejectedDecision := validateCalls("router", calls)
 		executionNeedsRepair := executionRequested && len(calls) == 0
-		if !parsed || executionNeedsRepair {
+		if !parsed || rejectedDecision > 0 || executionNeedsRepair {
 			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
 			if executionNeedsRepair {
 				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
@@ -2807,8 +2809,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
+		calls, rejectedDecision := validateCalls("router", calls)
 		executionNeedsRepair := executionRequested && len(calls) == 0
-		if decisionNeedsRepair || !parsed || executionNeedsRepair || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
+		if decisionNeedsRepair || !parsed || rejectedDecision > 0 || executionNeedsRepair || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
 			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
 			if executionNeedsRepair {
 				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)

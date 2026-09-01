@@ -151,7 +151,7 @@ func TestResponsesInstructionsAndCustomExecPolicyAreSystemMessages(t *testing.T)
 	if len(o.Messages) != 3 {
 		t.Fatalf("messages=%#v", o.Messages)
 	}
-	if o.Messages[0].Role != "system" || o.Messages[0].Content != customExecWorkspaceInstruction {
+	if o.Messages[0].Role != "system" || o.Messages[0].Content != customExecEffectiveInstruction {
 		t.Fatalf("missing custom exec policy: %#v", o.Messages[0])
 	}
 	if o.Messages[1].Role != "system" || o.Messages[1].Content != r.Instructions {
@@ -177,11 +177,12 @@ func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
 		"skills are instruction bundles, not callable tool names",
 		"authoritative path map",
 		"ALL_TOOLS array of {name, description}",
+		"nodeRepl.write(value)",
 		"Computer Use is typically available in Codex Desktop but absent from CLI environments",
 		"Set-Content -LiteralPath $path -Value 'text' -Encoding utf8",
 		"must never be used to open a URL",
 	} {
-		if !strings.Contains(customExecWorkspaceInstruction, want) {
+		if !strings.Contains(customExecEffectiveInstruction, want) {
 			t.Fatalf("custom exec policy missing %q", want)
 		}
 	}

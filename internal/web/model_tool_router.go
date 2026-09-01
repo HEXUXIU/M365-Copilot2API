@@ -157,6 +157,21 @@ func callUsesWrongDeclaredSkillPath(call detectedToolCall, routes []declaredSkil
 	return true
 }
 
+func callOmitsNodeReplDocumentationOutput(call detectedToolCall) bool {
+	if !strings.EqualFold(call.Name, "exec") {
+		return false
+	}
+	var arguments map[string]any
+	if json.Unmarshal(call.Arguments, &arguments) != nil {
+		return false
+	}
+	input := strings.ToLower(fmt.Sprint(arguments["input"]))
+	if !strings.Contains(input, "mcp__node_repl__js") || !strings.Contains(input, "sky.documentation") {
+		return false
+	}
+	return !strings.Contains(input, "noderepl.write") && !strings.Contains(input, "noderepl.emitimage")
+}
+
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
 	return modelToolRouterPromptWithIntent(prompt, tools, choice, false)
 }
@@ -187,6 +202,7 @@ func modelToolRouterPromptWithIntent(prompt string, tools []map[string]any, choi
 - The top-level exec tool is the caller's local orchestration bridge. Use it for its listed nested tools; it is not a remote shell.
 - Skills are instruction bundles, not callable tool names. If the request names a skill or plugin, resolve its root alias from the supplied skill catalog and make the next exec call read that exact complete SKILL.md. The catalog is already the authoritative path map: do not query MCP resources, ALL_TOOLS, or the workspace to locate a listed skill. Read any required referenced resources, then follow the skill's runtime instructions. Invoke the resulting host tools through exec; never invent tools.<skill-name> or replace the skill with a directory listing.
 - Only after reading a skill, when it requires a deferred nested tool, inspect the exec runtime's ALL_TOOLS array of {name, description} entries to locate the exact declared name and contract before calling it. Search with ALL_TOOLS.filter(tool => ...tool.name...).
+- For mcp__node_repl__js, its code must emit textual return values with nodeRepl.write(value) or images with await nodeRepl.emitImage(value). A bare final JavaScript expression is not returned by this runtime. In particular, write the results of sky.documentation before continuing.
 - Runtime capabilities are caller-specific. Computer Use is typically available in Codex Desktop but absent from CLI environments. Use Browser or Computer Use only when the current skill catalog or ALL_TOOLS actually declares it; otherwise use only the CLI tools that are declared and never invent a desktop runtime.
 - For browser or desktop-UI work with a declared Browser or Computer Use runtime, follow that runtime. Never substitute codex_app__navigate_to_codex_page, which only navigates among Codex tasks, and never treat a workspace listing as UI execution.
 - If the latest tool result failed, correct the arguments, syntax, or tool selection and retry with a changed strategy. Do not stop after the first recoverable error.
@@ -290,7 +306,7 @@ func compactExecRouterDescription(description string) string {
 		available[name] = true
 	}
 	var summary strings.Builder
-	summary.WriteString("This top-level exec is the caller's local orchestration bridge. Run raw JavaScript in an async module, call only listed nested tools as await tools.<name>(...), and emit every returned result with text(result). Skills are instruction bundles, not tool names: resolve the exact path from the catalog root alias and immediately read the complete SKILL.md through shell_command; do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill. Read its required references, then invoke the host tools it specifies. Only after reading the skill, use the ALL_TOOLS array of {name, description} entries to locate deferred nested tools, for example ALL_TOOLS.filter(tool => tool.name.includes('browser')). Capabilities are caller-specific: Computer Use is typically present in Codex Desktop but absent from CLI, so use Browser or Computer Use only when this request's catalog or ALL_TOOLS declares it and never invent a desktop runtime. Never substitute a workspace listing or codex_app__navigate_to_codex_page for UI work. After a failed result, correct the syntax or tool selection and retry with a changed strategy. Available nested tools: ")
+	summary.WriteString("This top-level exec is the caller's local orchestration bridge. Run raw JavaScript in an async module, call only listed nested tools as await tools.<name>(...), and emit every returned result with text(result). Skills are instruction bundles, not tool names: resolve the exact path from the catalog root alias and immediately read the complete SKILL.md through shell_command; do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill. Read its required references, then invoke the host tools it specifies. Only after reading the skill, use the ALL_TOOLS array of {name, description} entries to locate deferred nested tools, for example ALL_TOOLS.filter(tool => tool.name.includes('browser')). Code sent to mcp__node_repl__js must emit text with nodeRepl.write(value) or images with await nodeRepl.emitImage(value); bare final expressions return no output, so explicitly write sky.documentation results. Capabilities are caller-specific: Computer Use is typically present in Codex Desktop but absent from CLI, so use Browser or Computer Use only when this request's catalog or ALL_TOOLS declares it and never invent a desktop runtime. Never substitute a workspace listing or codex_app__navigate_to_codex_page for UI work. After a failed result, correct the syntax or tool selection and retry with a changed strategy. Available nested tools: ")
 	summary.WriteString(strings.Join(names, ", "))
 	summary.WriteString(".")
 	if available["apply_patch"] {

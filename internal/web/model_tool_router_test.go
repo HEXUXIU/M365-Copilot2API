@@ -195,6 +195,24 @@ func TestDeclaredSkillPathValidationRejectsGuessedAlias(t *testing.T) {
 	}
 }
 
+func TestNodeReplDocumentationRequiresExplicitOutput(t *testing.T) {
+	call := func(input string) detectedToolCall {
+		return detectedToolCall{Name: "exec", Arguments: json.RawMessage(mustJSON(map[string]any{"input": input}))}
+	}
+	bare := call(`const r = await tools.mcp__node_repl__js({code: "const guidance = await sky.documentation('guidance'); ({guidance});"}); text(r);`)
+	if !callOmitsNodeReplDocumentationOutput(bare) {
+		t.Fatal("bare Node REPL documentation expression was accepted")
+	}
+	written := call(`const r = await tools.mcp__node_repl__js({code: "const guidance = await sky.documentation('guidance'); nodeRepl.write(guidance);"}); text(r);`)
+	if callOmitsNodeReplDocumentationOutput(written) {
+		t.Fatal("explicit nodeRepl.write was rejected")
+	}
+	unrelated := call(`const r = await tools.mcp__node_repl__js({code: "nodeRepl.write(42);"}); text(r);`)
+	if callOmitsNodeReplDocumentationOutput(unrelated) {
+		t.Fatal("non-documentation Node REPL call was rejected")
+	}
+}
+
 func TestExecutionToolRequestPendingTracksFailedContinuation(t *testing.T) {
 	tools := workspaceTestTools("exec")
 	failed := []oaiMsg{
@@ -286,6 +304,7 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 		"Skills are instruction bundles, not callable tool names",
 		"catalog is already the authoritative path map",
 		"ALL_TOOLS array of {name, description}",
+		"nodeRepl.write(value)",
 		"Computer Use is typically available in Codex Desktop but absent from CLI environments",
 		"do not invent a tool or claim the action happened",
 	} {
@@ -383,6 +402,7 @@ Run a PowerShell command in the workspace.`
 	for _, want := range []string{
 		"do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill",
 		"ALL_TOOLS array of {name, description}",
+		"nodeRepl.write(value)",
 		"Computer Use is typically present in Codex Desktop but absent from CLI",
 	} {
 		if !strings.Contains(got, want) {

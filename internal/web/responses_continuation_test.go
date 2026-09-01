@@ -3,7 +3,7 @@ package web
 import "testing"
 
 func TestMergeResponsesContinuationKeepsToolOutputAdjacent(t *testing.T) {
-	policy := oaiMsg{Role: "system", Content: customExecWorkspaceInstruction}
+	policy := oaiMsg{Role: "system", Content: customExecEffectiveInstruction}
 	parent := []oaiMsg{
 		policy,
 		{Role: "user", Content: "create a file"},

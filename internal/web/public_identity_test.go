@@ -12,6 +12,7 @@ import (
 
 func TestMain(m *testing.M) {
 	_ = os.Setenv("M365_PUBLIC_IDENTITY_POLICY", "true")
+	_ = os.Setenv("M365_PUBLIC_REASONING_OUTPUT", "true")
 	os.Exit(m.Run())
 }
 
@@ -36,6 +37,83 @@ func TestPublicReasoningFilterCanRunWithoutIdentityPolicy(t *testing.T) {
 	}
 }
 
+func TestPublicReasoningOutputDefaultsOff(t *testing.T) {
+	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "false")
+	t.Setenv("M365_PUBLIC_REASONING_OUTPUT", "")
+	t.Setenv("M365_PUBLIC_REASONING_FILTER", "false")
+	if publicReasoningOutputEnabled() {
+		t.Fatal("reasoning output should require an explicit opt-in")
+	}
+	if got := sanitizePublicReasoningText("internal reasoning"); got != "" {
+		t.Fatalf("reasoning was exposed by default: %q", got)
+	}
+	gate := newPublicReasoningGate()
+	if got := gate.PushReasoning("before content"); got != "" {
+		t.Fatalf("stream reasoning was exposed by default: %q", got)
+	}
+	if got := gate.StartContent(); got != "" {
+		t.Fatalf("buffered reasoning was exposed by default: %q", got)
+	}
+	filter := newPublicReasoningStreamFilter()
+	if got := filter.Push("stream fragment"); got != "" {
+		t.Fatalf("reasoning filter exposed a fragment by default: %q", got)
+	}
+	if got := filter.Flush(); got != "" {
+		t.Fatalf("reasoning filter exposed a flush by default: %q", got)
+	}
+}
+
+func TestPublicReasoningOutputOffAcrossProtocols(t *testing.T) {
+	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "false")
+	t.Setenv("M365_PUBLIC_REASONING_OUTPUT", "false")
+	t.Setenv("M365_PUBLIC_REASONING_FILTER", "false")
+
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "chat_json", true: "chat_sse"}[stream], func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			calls := []detectedToolCall{{ID: "call_test", Name: "lookup", Arguments: json.RawMessage(`{}`)}}
+			if err := writeToolResponseWithProgress(rr, "chatcmpl_test", "gpt-5.6-sol", stream, true, calls, chathub.Result{Reasoning: "private thought"}, nil, "I’ll check this now."); err != nil {
+				t.Fatal(err)
+			}
+			body := rr.Body.String()
+			if strings.Contains(body, "reasoning_content") || strings.Contains(body, "private thought") {
+				t.Fatalf("Chat exposed reasoning while disabled: %s", body)
+			}
+			if !strings.Contains(body, "check this now") {
+				t.Fatalf("tool progress was removed with reasoning: %s", body)
+			}
+		})
+
+		t.Run(map[bool]string{false: "responses_json", true: "responses_sse"}[stream], func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			writeResponsesResult(rr, "gpt-5.6-sol", stream, map[string]any{
+				"choices": []any{map[string]any{"message": map[string]any{"content": "final answer", "reasoning_content": "private thought"}}},
+			})
+			body := rr.Body.String()
+			if strings.Contains(body, `"type":"reasoning"`) || strings.Contains(body, "response.reasoning_summary") || strings.Contains(body, "private thought") {
+				t.Fatalf("Responses exposed reasoning while disabled: %s", body)
+			}
+			if !strings.Contains(body, "final answer") {
+				t.Fatalf("Responses final answer was damaged: %s", body)
+			}
+		})
+
+		t.Run(map[bool]string{false: "anthropic_json", true: "anthropic_sse"}[stream], func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			writeAnthropicResult(rr, "claude-sonnet", stream, map[string]any{
+				"choices": []any{map[string]any{"message": map[string]any{"content": "final answer", "reasoning_content": "private thought"}}},
+			}, nil, "")
+			body := rr.Body.String()
+			if strings.Contains(body, `"type":"thinking"`) || strings.Contains(body, "thinking_delta") || strings.Contains(body, "private thought") {
+				t.Fatalf("Anthropic exposed thinking while disabled: %s", body)
+			}
+			if !strings.Contains(body, "final answer") {
+				t.Fatalf("Anthropic final answer was damaged: %s", body)
+			}
+		})
+	}
+}
+
 func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 	prompt := "[user]\nWhat model are you?"
 
@@ -50,6 +128,7 @@ func TestApplyPublicIdentityPolicyPreservesPromptAndIsIdempotent(t *testing.T) {
 
 func TestPublicIdentityPolicyCanBeDisabledForRawUpstreamResponses(t *testing.T) {
 	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "false")
+	t.Setenv("M365_PUBLIC_REASONING_OUTPUT", "true")
 
 	if got, detected := publicIdentityAnswer([]oaiMsg{{Role: "user", Content: "你是什么模型？"}}, "gpt-5.6-sol"); detected || got != "" {
 		t.Fatalf("identity shortcut remained enabled: answer=%q detected=%t", got, detected)

@@ -19,6 +19,14 @@ func publicIdentityPolicyEnabled() bool {
 	return publicPolicyEnvEnabled("M365_PUBLIC_IDENTITY_POLICY")
 }
 
+// Reasoning remains available to the upstream model and internal continuation
+// logic, but is not part of the public response unless an operator explicitly
+// opts in. This prevents provider chain-of-thought cards from being projected
+// as OpenAI reasoning_content, Responses summaries, or Anthropic thinking.
+func publicReasoningOutputEnabled() bool {
+	return publicPolicyEnvEnabled("M365_PUBLIC_REASONING_OUTPUT")
+}
+
 func publicReasoningFilterEnabled() bool {
 	return publicIdentityPolicyEnabled() || publicPolicyEnvEnabled("M365_PUBLIC_REASONING_FILTER")
 }
@@ -250,6 +258,9 @@ func sanitizePublicInternalText(text string) string {
 }
 
 func sanitizePublicReasoningText(text string) string {
+	if !publicReasoningOutputEnabled() {
+		return ""
+	}
 	if !publicReasoningFilterEnabled() {
 		return text
 	}
@@ -293,6 +304,9 @@ func (g *publicReasoningGate) PushReasoning(fragment string) string {
 	if g == nil || fragment == "" {
 		return ""
 	}
+	if !publicReasoningOutputEnabled() {
+		return ""
+	}
 	if !publicReasoningFilterEnabled() {
 		g.published.WriteString(fragment)
 		return fragment
@@ -310,6 +324,9 @@ func (g *publicReasoningGate) StartContent() string {
 		return ""
 	}
 	g.contentStarted = true
+	if !publicReasoningOutputEnabled() {
+		return ""
+	}
 	if !publicReasoningFilterEnabled() {
 		return ""
 	}
@@ -317,7 +334,7 @@ func (g *publicReasoningGate) StartContent() string {
 }
 
 func (g *publicReasoningGate) Finish() string {
-	if g == nil || !publicReasoningFilterEnabled() || g.contentStarted {
+	if g == nil || !publicReasoningOutputEnabled() || !publicReasoningFilterEnabled() || g.contentStarted {
 		return ""
 	}
 	return g.publishPending()
@@ -658,6 +675,9 @@ func (f *publicReasoningStreamFilter) Push(fragment string) string {
 	if f == nil {
 		return sanitizePublicReasoningText(fragment)
 	}
+	if !publicReasoningOutputEnabled() {
+		return ""
+	}
 	if !publicReasoningFilterEnabled() {
 		return fragment
 	}
@@ -667,6 +687,10 @@ func (f *publicReasoningStreamFilter) Push(fragment string) string {
 
 func (f *publicReasoningStreamFilter) Flush() string {
 	if f == nil {
+		return ""
+	}
+	if !publicReasoningOutputEnabled() {
+		f.pending = ""
 		return ""
 	}
 	if !publicReasoningFilterEnabled() {

@@ -226,6 +226,32 @@ func TestNormalizeExecNestedToolInputRepairsShellAlias(t *testing.T) {
 	}
 }
 
+func TestNormalizeExecNestedToolInputRepairsRuntimeArgumentShapes(t *testing.T) {
+	description := "Run JavaScript.\n### shell_command\nRun a command.\n### apply_patch\nApply a patch."
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{`const r = await tools.shell_command({cmd: "Get-Location"}); text(r);`, `tools.shell_command({command: "Get-Location"})`},
+		{`const r = await tools.shell_command({commandLine: "pwd"}); text(r);`, `tools.shell_command({command: "pwd"})`},
+		{`const cmd = "pwd"; const r = await tools.shell_command({cmd}); text(r);`, `tools.shell_command({command: cmd})`},
+		{`const patch = "*** Begin Patch"; const r = await tools.apply_patch({patch}); text(r);`, `tools.apply_patch(patch)`},
+		{`const patchText = "*** Begin Patch"; const r = await tools.apply_patch({patch: patchText}); text(r);`, `tools.apply_patch(patchText)`},
+	}
+	for _, tc := range tests {
+		got, changed := normalizeExecNestedToolInput(tc.input, description)
+		if !changed || !strings.Contains(got, tc.want) {
+			t.Fatalf("runtime arguments were not normalized: input=%q got=%q want=%q", tc.input, got, tc.want)
+		}
+	}
+
+	withoutPatch := "Run JavaScript.\n### shell_command\nRun a command."
+	input := `const r = await tools.apply_patch({patch}); text(r);`
+	if got, changed := normalizeExecNestedToolInput(input, withoutPatch); changed || got != input {
+		t.Fatalf("undeclared apply_patch was rewritten: changed=%t got=%q", changed, got)
+	}
+}
+
 func TestExecutionToolRequestPendingTracksFailedContinuation(t *testing.T) {
 	tools := workspaceTestTools("exec")
 	failed := []oaiMsg{
@@ -240,6 +266,42 @@ func TestExecutionToolRequestPendingTracksFailedContinuation(t *testing.T) {
 	succeeded[len(succeeded)-1].Content = "Script completed: browser interaction verified"
 	if executionToolRequestPending(succeeded, tools, buildAgentLedger(activeMessages(succeeded))) {
 		t.Fatal("successful real action remained pending")
+	}
+}
+
+func TestExecutionToolRequestPendingContinuesAfterPreparation(t *testing.T) {
+	tools := workspaceTestTools("exec")
+	for _, arguments := range []string{
+		`{"input":"const r = await tools.shell_command({command: 'Get-Content computer-use/SKILL.md'}); text(r);"}`,
+		`{"input":"text(ALL_TOOLS.filter(tool => tool.name.includes('computer')));"}`,
+		`{"input":"const r = await tools.shell_command({command: 'Get-Location; Get-ChildItem'}); text(r);"}`,
+	} {
+		messages := []oaiMsg{
+			{Role: "user", Content: "用 Computer Use 打开微信并发送消息"},
+			{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_prepare", "type": "custom", "function": map[string]any{"name": "exec", "arguments": arguments}}}},
+			{Role: "tool", ToolCallID: "call_prepare", Content: "Script completed: documentation returned"},
+		}
+		if !executionToolRequestPending(messages, tools, buildAgentLedger(activeMessages(messages))) {
+			t.Fatalf("preparation was mistaken for completed UI work: %s", arguments)
+		}
+	}
+
+	completed := []oaiMsg{
+		{Role: "user", Content: "用 Computer Use 打开微信并发送消息"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_action", "type": "custom", "function": map[string]any{"name": "exec", "arguments": `{"input":"const r = await tools.mcp__node_repl__js({code: 'await computer.click(sendButton)'}); text(r);"}`}}}},
+		{Role: "tool", ToolCallID: "call_action", Content: "Message sent and verified"},
+	}
+	if executionToolRequestPending(completed, tools, buildAgentLedger(activeMessages(completed))) {
+		t.Fatal("verified Computer Use action remained pending")
+	}
+
+	listed := []oaiMsg{
+		{Role: "user", Content: "请列出当前目录里的文件"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "call_list", "type": "custom", "function": map[string]any{"name": "exec", "arguments": `{"input":"const r = await tools.shell_command({command: 'Get-ChildItem'}); text(r);"}`}}}},
+		{Role: "tool", ToolCallID: "call_list", Content: "go.mod\ninternal"},
+	}
+	if executionToolRequestPending(listed, tools, buildAgentLedger(activeMessages(listed))) {
+		t.Fatal("a completed directory listing was treated as preparation")
 	}
 }
 

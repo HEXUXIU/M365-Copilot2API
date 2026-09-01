@@ -33,6 +33,7 @@ services:
       M365_TOKEN_PRE_REFRESH_CONCURRENCY: "4"
       M365_PROXY_HEALTH_URL: "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration"
       M365_PUBLIC_IDENTITY_POLICY: "${M365_PUBLIC_IDENTITY_POLICY:-false}"
+      M365_PUBLIC_REASONING_OUTPUT: "${M365_PUBLIC_REASONING_OUTPUT:-false}"
       M365_PUBLIC_REASONING_FILTER: "${M365_PUBLIC_REASONING_FILTER:-false}"
     volumes:
       - ./data:/data

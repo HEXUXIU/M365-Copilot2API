@@ -32,6 +32,9 @@ var (
 	execShellArgShorthandPattern   = regexp.MustCompile(`(\btools\.shell_command\s*\(\s*\{\s*)cmd(\s*[,}])`)
 	execApplyPatchShortPattern     = regexp.MustCompile(`(\btools\.apply_patch\s*\(\s*)\{\s*(patch|input)\s*\}(\s*\))`)
 	execApplyPatchNamedPattern     = regexp.MustCompile(`(\btools\.apply_patch\s*\(\s*)\{\s*(?:"patch"|'patch'|patch|input)\s*:\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\}(\s*\))`)
+	execApplyPatchDoublePattern    = regexp.MustCompile(`(?s)(\btools\.apply_patch\s*\(\s*)\{\s*(?:"patch"|'patch'|patch|input)\s*:\s*("(?:\\.|[^"\\])*")\s*\}(\s*\))`)
+	execApplyPatchSinglePattern    = regexp.MustCompile(`(?s)(\btools\.apply_patch\s*\(\s*)\{\s*(?:"patch"|'patch'|patch|input)\s*:\s*('(?:\\.|[^'\\])*')\s*\}(\s*\))`)
+	execApplyPatchTemplatePattern  = regexp.MustCompile("(?s)(\\btools\\.apply_patch\\s*\\(\\s*)\\{\\s*(?:\"patch\"|'patch'|patch|input)\\s*:\\s*(`(?:\\\\.|[^`\\\\])*`)\\s*\\}(\\s*\\))")
 	skillRootLinePattern           = regexp.MustCompile("(?m)^-\\s+`?(r[0-9]+)`?\\s*=\\s*`?([^`\\r\\n]+)`?\\s*$")
 	skillCatalogLinePattern        = regexp.MustCompile(`(?m)^-\s+([A-Za-z0-9][A-Za-z0-9:._-]*):\s+\(file:\s+([^\r\n)]+SKILL\.md)\)\s*$`)
 )
@@ -408,8 +411,34 @@ func normalizeExecNestedToolInput(input, description string) (string, bool) {
 			input = normalized
 			changed = true
 		}
+		for _, pattern := range []*regexp.Regexp{execApplyPatchDoublePattern, execApplyPatchSinglePattern, execApplyPatchTemplatePattern} {
+			if normalized := unwrapExecApplyPatchLiteral(input, pattern); normalized != input {
+				input = normalized
+				changed = true
+			}
+		}
 	}
 	return input, changed
+}
+
+func unwrapExecApplyPatchLiteral(input string, pattern *regexp.Regexp) string {
+	if input == "" || pattern == nil {
+		return input
+	}
+	return pattern.ReplaceAllStringFunc(input, func(match string) string {
+		parts := pattern.FindStringSubmatch(match)
+		if len(parts) != 4 {
+			return match
+		}
+		value := parts[2]
+		if len(value) >= 2 && (value[0] == '"' || value[0] == '\'') {
+			body := value[1 : len(value)-1]
+			body = strings.ReplaceAll(body, "\r", `\r`)
+			body = strings.ReplaceAll(body, "\n", `\n`)
+			value = value[:1] + body + value[len(value)-1:]
+		}
+		return parts[1] + value + parts[3]
+	})
 }
 
 func compactRouterSchema(value any, depth int) any {

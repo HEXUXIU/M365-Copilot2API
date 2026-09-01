@@ -239,6 +239,9 @@ func TestNormalizeExecNestedToolInputRepairsRuntimeArgumentShapes(t *testing.T) 
 		{`const patch = "*** Begin Patch"; const r = await tools.apply_patch({patch}); text(r);`, `tools.apply_patch(patch)`},
 		{`const patch = "*** Begin Patch"; const r = await apply_patch({patch}); text(r);`, `await tools.apply_patch(patch)`},
 		{`const patchText = "*** Begin Patch"; const r = await tools.apply_patch({patch: patchText}); text(r);`, `tools.apply_patch(patchText)`},
+		{"const r = await tools.apply_patch({patch:\"*** Begin Patch\n*** Add File: proof.txt\n+OK\n*** End Patch\"}); text(r);", `tools.apply_patch("*** Begin Patch\n*** Add File: proof.txt\n+OK\n*** End Patch")`},
+		{"const r = await tools.apply_patch({input:'*** Begin Patch\n*** Add File: proof.txt\n+OK\n*** End Patch'}); text(r);", `tools.apply_patch('*** Begin Patch\n*** Add File: proof.txt\n+OK\n*** End Patch')`},
+		{"const r = await tools.apply_patch({patch:`*** Begin Patch\n*** Add File: proof.txt\n+OK\n*** End Patch`}); text(r);", "tools.apply_patch(`*** Begin Patch\n*** Add File: proof.txt\n+OK\n*** End Patch`)"},
 	}
 	for _, tc := range tests {
 		got, changed := normalizeExecNestedToolInput(tc.input, description)

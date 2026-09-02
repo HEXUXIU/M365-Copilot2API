@@ -2284,6 +2284,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			calls = filterCompletedCalls(calls, ledger)
 			calls, _ = validateCalls("router-required", calls)
 			if !parsed || len(calls) == 0 {
+				if strings.EqualFold(strings.TrimSpace(os.Getenv("M365_DEBUG_TOOL_DECISION")), "true") {
+					log.Printf("[tool-router] id=%s required_decision parsed=%t calls=%d raw=%q", requestID, parsed, len(calls), compactToolResult(result.Text, 1200))
+				}
 				return requiredDecisionErr
 			}
 			return nil

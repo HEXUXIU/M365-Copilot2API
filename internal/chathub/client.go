@@ -276,19 +276,6 @@ func canRecoverIncompleteNormalClose(err error, final string, streamedLen, reaso
 
 var chTrace = os.Getenv("M365_TRACE") == "1"
 
-func commonPrefixLen(a, b string) int {
-	n := len(a)
-	if len(b) < n {
-		n = len(b)
-	}
-	for i := 0; i < n; i++ {
-		if a[i] != b[i] {
-			return i
-		}
-	}
-	return n
-}
-
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -771,12 +758,11 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 		}
 		return IsContentPolicyBlock(text)
 	}
-	// skippedSnapshots counts non-prefix rewrites dropped by emitSnapshot.
-	// Upstream interleaves per-token writeAtCursor fragments with cumulative
-	// snapshots, so bursts of skips are normal; the dropped text is
-	// reconciled against the authoritative final message on completion
-	// (see finalizeText). Logged once as a summary instead of per frame.
+	// The messages[].text channel is the authoritative cumulative stream. The
+	// writeAtCursor channel is redundant and is intentionally not concatenated
+	// with snapshots; doing so is the source of repeated public paragraphs.
 	skippedSnapshots := 0
+	var snapshots snapshotReconciler
 	emitSnapshot := func(snapshot string) error {
 		if snapshot == "" {
 			return nil
@@ -793,25 +779,17 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 		if contentPolicyDetected(snapshot) {
 			return ErrOffensiveContent
 		}
-		cur := streamed.String()
-		if cur == "" {
-			return emitDelta(snapshot)
-		}
-		if strings.HasPrefix(snapshot, cur) {
-			return emitDelta(snapshot[len(cur):])
-		}
-		if len(snapshot) <= len(cur) {
+		suffix, ok := snapshots.Apply(snapshot)
+		if !ok {
+			if snapshots.seen {
+				skippedSnapshots++
+			}
+			if chTrace {
+				log.Printf("[trace:emitSnapshot] skip: accepted=%d snapshot=%d (duplicate, shorter, or non-prefix)", len(snapshots.last), len(snapshot))
+			}
 			return nil
 		}
-		overlap := commonPrefixLen(cur, snapshot)
-		if overlap > 0 {
-			return emitDelta(snapshot[overlap:])
-		}
-		skippedSnapshots++
-		if chTrace {
-			log.Printf("[trace:emitSnapshot] skip: cur=%d snapshot=%d (non-prefix rewrite)", len(cur), len(snapshot))
-		}
-		return nil
+		return emitDelta(suffix)
 	}
 	var final string
 	var throttling any
@@ -1110,23 +1088,8 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 							suggestions = append(suggestions, parseSuggestedResponse(sr))
 						}
 					}
-					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame {
-						// HAR report 05 §3: writeAtCursor is a pure append
-						// fragment (cursor p=-1, 12/12 samples). Once a text
-						// baseline exists, forward it as a delta immediately
-						// for token-level streaming granularity; the next
-						// cumulative snapshot prefix-matches and dedupes.
-						// Treating it as a snapshot (old behavior) collapsed
-						// 33-47 upstream frames into 2-3 giant SSE chunks.
-						if streamed.Len() > 0 {
-							if err := emitDelta(w); err != nil {
-								returnConn = false
-								return Result{}, err
-							}
-						} else if err := emitSnapshot(w); err != nil {
-							returnConn = false
-							return Result{}, err
-						}
+					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame && chTrace {
+						log.Printf("[trace:writeAtCursor] ignored redundant delta len=%d snapshot_seen=%t", len(w), snapshots.seen)
 					}
 					if patches, ok := arg["patches"].([]any); ok {
 						for _, praw := range patches {

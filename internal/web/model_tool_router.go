@@ -418,11 +418,129 @@ func normalizeExecNestedToolInput(input, description string) (string, bool) {
 			}
 		}
 	}
+	if normalized, repaired := normalizeExecOutputHelper(input); repaired {
+		input = normalized
+		changed = true
+	}
 	if normalized, escaped := escapeInvalidJSLiteralNewlines(input); escaped {
 		input = normalized
 		changed = true
 	}
 	return input, changed
+}
+
+// The outer exec isolate emits values with text(...). Models occasionally copy
+// nodeRepl.write(...) from the nested mcp__node_repl__js contract, or use
+// console.log(...). Repair only executable outer code; quoted nested Node REPL
+// programs, templates, and comments must remain byte-for-byte unchanged.
+func normalizeExecOutputHelper(input string) (string, bool) {
+	var out strings.Builder
+	out.Grow(len(input))
+	changed := false
+	var quote byte
+	inTemplate := false
+	inLineComment := false
+	inBlockComment := false
+
+	for i := 0; i < len(input); {
+		c := input[i]
+		if quote != 0 {
+			out.WriteByte(c)
+			i++
+			if c == '\\' && i < len(input) {
+				out.WriteByte(input[i])
+				i++
+			} else if c == quote {
+				quote = 0
+			}
+			continue
+		}
+		if inTemplate {
+			out.WriteByte(c)
+			i++
+			if c == '\\' && i < len(input) {
+				out.WriteByte(input[i])
+				i++
+			} else if c == '`' {
+				inTemplate = false
+			}
+			continue
+		}
+		if inLineComment {
+			out.WriteByte(c)
+			i++
+			if c == '\n' {
+				inLineComment = false
+			}
+			continue
+		}
+		if inBlockComment {
+			out.WriteByte(c)
+			i++
+			if c == '*' && i < len(input) && input[i] == '/' {
+				out.WriteByte('/')
+				i++
+				inBlockComment = false
+			}
+			continue
+		}
+
+		if c == '/' && i+1 < len(input) {
+			switch input[i+1] {
+			case '/':
+				out.WriteString("//")
+				i += 2
+				inLineComment = true
+				continue
+			case '*':
+				out.WriteString("/*")
+				i += 2
+				inBlockComment = true
+				continue
+			}
+		}
+		if c == '\'' || c == '"' {
+			quote = c
+			out.WriteByte(c)
+			i++
+			continue
+		}
+		if c == '`' {
+			inTemplate = true
+			out.WriteByte(c)
+			i++
+			continue
+		}
+
+		replaced := false
+		for _, helper := range []string{"nodeRepl.write", "console.log"} {
+			if !strings.HasPrefix(input[i:], helper) || (i > 0 && isJSIdentifierByte(input[i-1])) {
+				continue
+			}
+			end := i + len(helper)
+			for end < len(input) && (input[end] == ' ' || input[end] == '\t' || input[end] == '\r' || input[end] == '\n') {
+				end++
+			}
+			if end >= len(input) || input[end] != '(' {
+				continue
+			}
+			out.WriteString("text")
+			i += len(helper)
+			changed = true
+			replaced = true
+			break
+		}
+		if replaced {
+			continue
+		}
+		out.WriteByte(c)
+		i++
+	}
+	return out.String(), changed
+}
+
+func isJSIdentifierByte(c byte) bool {
+	return c == '_' || c == '$' || c == '.' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
 }
 
 func unwrapExecApplyPatchLiteral(input string, pattern *regexp.Regexp) string {

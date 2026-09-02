@@ -261,6 +261,25 @@ func TestNormalizeExecNestedToolInputRepairsRuntimeArgumentShapes(t *testing.T) 
 	}
 }
 
+func TestNormalizeExecNestedToolInputRepairsOuterOutputHelpers(t *testing.T) {
+	description := "Run JavaScript.\n### shell_command\nRun a command."
+	input := `nodeRepl.write(JSON.stringify(ALL_TOOLS)); console.log("done");`
+	got, changed := normalizeExecNestedToolInput(input, description)
+	if !changed || got != `text(JSON.stringify(ALL_TOOLS)); text("done");` {
+		t.Fatalf("outer output helpers were not normalized: changed=%t got=%q", changed, got)
+	}
+}
+
+func TestNormalizeExecOutputHelperPreservesNestedProgramsAndComments(t *testing.T) {
+	input := "const r = await tools.mcp__node_repl__js({code: \"nodeRepl.write('ok'); console.log('debug');\"}); " +
+		"const note = `nodeRepl.write('template')`; // nodeRepl.write('comment')\n" +
+		"/* console.log('block') */ text(r);"
+	got, changed := normalizeExecOutputHelper(input)
+	if changed || got != input {
+		t.Fatalf("nested output helpers changed: changed=%t got=%q", changed, got)
+	}
+}
+
 func TestEscapeInvalidJSLiteralNewlines(t *testing.T) {
 	input := "const patch = \"*** Begin Patch\n+OK\n*** End Patch\";\n" +
 		"const single = 'line one\r\nline two';\n" +

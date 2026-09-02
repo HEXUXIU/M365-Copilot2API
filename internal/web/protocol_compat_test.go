@@ -180,6 +180,9 @@ func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
 		"nodeRepl.write(value)",
 		"Computer Use is optional and never a prerequisite",
 		"Set-Content -LiteralPath $path -Value 'text' -Encoding utf8",
+		"port-opening requests are multi-layer operations",
+		"verify both the listener and a real connection",
+		"merely starting a process is not completion",
 		"must never be used to open a URL",
 	} {
 		if !strings.Contains(customExecEffectiveInstruction, want) {

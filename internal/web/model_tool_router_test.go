@@ -468,6 +468,8 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 		"Computer Use is optional, never a prerequisite",
 		"missing Computer Use entry is a routing fact",
 		"Never infer the /mnt/data sandbox",
+		"service exposure or port-opening requests",
+		"verify both the listener and an actual connection",
 		"do not invent a tool or claim the action happened",
 	} {
 		if !strings.Contains(p, want) {
@@ -481,7 +483,7 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 
 func TestExecutionRepairRequiresProgressWithoutChangingChoice(t *testing.T) {
 	p := modelToolExecutionRepairPrompt("[user] 使用 browser 技能操作页面", "NO_TOOL_NEEDED", testTools(), "auto")
-	for _, want := range []string{"TOOL_CHOICE: auto", "unfinished real action", "at least one valid declared top-level tool", "read that exact SKILL.md", "ALL_TOOLS array", "Do not return an empty calls array"} {
+	for _, want := range []string{"TOOL_CHOICE: auto", "unfinished real action", "at least one valid declared top-level tool", "read that exact SKILL.md", "ALL_TOOLS array", "port-opening work remains unfinished", "real connection checks", "Do not return an empty calls array"} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("execution repair prompt missing %q: %s", want, p)
 		}

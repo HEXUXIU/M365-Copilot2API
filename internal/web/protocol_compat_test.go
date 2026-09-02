@@ -183,6 +183,8 @@ func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
 		"port-opening requests are multi-layer operations",
 		"verify both the listener and a real connection",
 		"merely starting a process is not completion",
+		"keep it running after verification",
+		"do not kill, stop, remove, or roll it back",
 		"must never be used to open a URL",
 	} {
 		if !strings.Contains(customExecEffectiveInstruction, want) {

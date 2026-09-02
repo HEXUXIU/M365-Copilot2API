@@ -178,7 +178,7 @@ func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
 		"authoritative path map",
 		"ALL_TOOLS array of {name, description}",
 		"nodeRepl.write(value)",
-		"Computer Use is typically available in Codex Desktop but absent from CLI environments",
+		"Computer Use is optional and never a prerequisite",
 		"Set-Content -LiteralPath $path -Value 'text' -Encoding utf8",
 		"must never be used to open a URL",
 	} {

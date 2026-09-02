@@ -250,6 +250,13 @@ var sandboxHallucinationPatterns = []string{
 	"I don't have SSH access tools",
 	"I don't have any tools",
 	"none of which can reach",
+	"只有隔离环境",
+	"只能访问隔离环境",
+	"真实桌面目录",
+	"真实桌面环境",
+	"无法触达你的真实桌面",
+	"没有挂载 Windows",
+	"没有 Windows 的",
 }
 
 func isSandboxHallucination(text string) bool {

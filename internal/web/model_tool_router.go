@@ -215,10 +215,11 @@ func modelToolRouterPromptWithIntent(prompt string, tools []map[string]any, choi
 - Only after reading a skill, when it requires a deferred nested tool, inspect the exec runtime's ALL_TOOLS array of {name, description} entries to locate the exact declared name and contract before calling it. Search with ALL_TOOLS.filter(tool => ...tool.name...).
 - Reading SKILL.md, querying documentation, listing ALL_TOOLS, and inspecting the workspace are preparation only. They do not complete a requested file, browser, desktop, send, or interaction task. On the following turn, invoke the discovered runtime and perform the requested action.
 - For mcp__node_repl__js, its code must emit textual return values with nodeRepl.write(value) or images with await nodeRepl.emitImage(value). A bare final JavaScript expression is not returned by this runtime. In particular, write the results of sky.documentation before continuing.
-- Runtime capabilities are caller-specific. Computer Use is typically available in Codex Desktop but absent from CLI environments. Use Browser or Computer Use only when the current skill catalog or ALL_TOOLS actually declares it; otherwise use only the CLI tools that are declared and never invent a desktop runtime.
+- Runtime capabilities are caller-specific. Computer Use is optional, never a prerequisite for completing an action. Use Browser or Computer Use only when the current skill catalog or ALL_TOOLS actually declares it; otherwise use the declared caller-local exec bridge and its available nested tools. A missing Computer Use entry is a routing fact, not a reason to stop, claim the task is impossible, or switch to a sandbox.
+- Never infer the /mnt/data sandbox, an isolated container, or a disconnected desktop from a failed command or a permission prompt. The caller shell contract is authoritative: preserve its operating system, shell, paths, and separators exactly, and call the declared tool so the caller can decide access.
 - For browser or desktop-UI work with a declared Browser or Computer Use runtime, follow that runtime. Never substitute codex_app__navigate_to_codex_page, which only navigates among Codex tasks, and never treat a workspace listing as UI execution.
 - If the latest tool result failed, correct the arguments, syntax, or tool selection and retry with a changed strategy. Do not stop after the first recoverable error.
-- If no declared tool can advance the action, do not invent a tool or claim the action happened`
+- If no declared tool can advance the action, return a precise tool-routing error; do not invent a tool or claim the action happened; do not describe an imagined sandbox`
 	}
 	// Multi-turn: completed tool evidence (tool[...], tool_calls:) was already
 	// acted upon, so re-invoking those tools would duplicate work.
@@ -318,7 +319,7 @@ func compactExecRouterDescription(description string) string {
 		available[name] = true
 	}
 	var summary strings.Builder
-	summary.WriteString("Caller-local exec orchestration bridge. Run async-module JavaScript; call only listed await tools.<name>(...) functions and emit results with text(result). Use exact catalog names; map stale exec_command examples to declared shell_command. Skills are instructions, not tools: resolve the catalog alias and read the complete SKILL.md through shell_command; do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill. After reading it, inspect the ALL_TOOLS array of {name, description} only for deferred runtime tools and then invoke them. SKILL.md, documentation, ALL_TOOLS, and workspace metadata are preparation, not completion of a file, browser, desktop, send, or interaction task. mcp__node_repl__js must emit text with nodeRepl.write(value) or images with await nodeRepl.emitImage(value); explicitly write sky.documentation results. Computer Use is typically present in Codex Desktop but absent from CLI; use it only when declared. Never substitute a workspace listing or codex_app__navigate_to_codex_page for UI work. Correct and retry recoverable tool failures with a changed strategy. Available nested tools: ")
+	summary.WriteString("Caller-local exec orchestration bridge. Run async-module JavaScript; call only listed await tools.<name>(...) functions and emit results with text(result). Use exact catalog names; map stale exec_command examples to declared shell_command. Skills are instructions, not tools: resolve the catalog alias and read the complete SKILL.md through shell_command; do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill. After reading it, inspect the ALL_TOOLS array of {name, description} only for deferred runtime tools and then invoke them. SKILL.md, documentation, ALL_TOOLS, and workspace metadata are preparation, not completion of a file, browser, desktop, send, or interaction task. mcp__node_repl__js must emit text with nodeRepl.write(value) or images with await nodeRepl.emitImage(value); explicitly write sky.documentation results. Computer Use is optional and never a prerequisite; use it only when declared, otherwise continue with the declared local bridge and nested tools. Never infer /mnt/data or an isolated sandbox from a command error, and never substitute a workspace listing or codex_app__navigate_to_codex_page for UI work. Correct and retry recoverable tool failures with a changed strategy. Available nested tools: ")
 	summary.WriteString(strings.Join(names, ", "))
 	summary.WriteString(".")
 	if available["apply_patch"] {
@@ -1020,6 +1021,25 @@ FUNCTION_DEFINITIONS:
 
 PREVIOUS_ROUTER_OUTPUT:
 %s`, normalizedToolChoiceMode(choice), prompt, defs, compactToolResult(invalid, 6000))
+}
+
+// modelToolSandboxRepairPrompt converts an environment hallucination into a
+// concrete retry against the tools the caller actually declared.  It avoids
+// hard-coding a bash/PowerShell runtime, which was the source of the issue #73
+// /mnt/data misrouting when the caller used a different shell or bridge.
+func modelToolSandboxRepairPrompt(prompt, invalid string, tools []map[string]any, choice any) string {
+	defs, _ := json.Marshal(compactRouterTools(tools))
+	return fmt.Sprintf(`The previous answer incorrectly described an imagined sandbox or unavailable desktop. Continue the unfinished request by calling a declared top-level tool; do not discuss runtime availability. Preserve the caller-provided shell and path contract exactly. If the declared tool is custom exec, call one of its listed nested tools with tools.<name>(...) and emit the result with text(result). Select the smallest concrete action that advances the user's request, then return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}.
+
+TOOL_CHOICE: %s
+APPLICATION_REQUEST:
+%s
+
+DECLARED_TOOLS:
+%s
+
+PREVIOUS_OUTPUT:
+%s`, normalizedToolChoiceMode(choice), prompt, defs, compactToolResult(invalid, 4000))
 }
 
 func toolChoiceRequiresCall(choice any) bool {

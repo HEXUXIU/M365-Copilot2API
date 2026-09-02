@@ -6,6 +6,33 @@ import (
 	"testing"
 )
 
+func TestSandboxHallucinationRecognizesWindowsDesktopFallbackText(t *testing.T) {
+	text := "执行环境仍然没有挂载 Windows 的 C: 盘，因此只能访问隔离环境 /mnt/data，无法触达你的真实桌面目录。"
+	if !isSandboxHallucination(text) {
+		t.Fatal("sandbox fallback text was not recognized")
+	}
+}
+
+func TestSandboxRepairPromptUsesDeclaredRuntimeContract(t *testing.T) {
+	tools := []map[string]any{{
+		"type": "custom",
+		"function": map[string]any{
+			"name":        "exec",
+			"description": "Run JavaScript.\n### shell_command\nRuns the caller's PowerShell command.",
+			"parameters":  map[string]any{"type": "object"},
+		},
+	}}
+	p := modelToolSandboxRepairPrompt("在桌面创建 report.txt", "只能访问 /mnt/data", tools, "auto")
+	for _, want := range []string{"declared top-level tool", "caller-provided shell", "tools.<name>(...)", "PowerShell command"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("sandbox repair prompt missing %q: %s", want, p)
+		}
+	}
+	if strings.Contains(strings.ToLower(p), "bash tool") || strings.Contains(p, "Windows PowerShell 5.1") {
+		t.Fatalf("sandbox repair prompt hard-coded a runtime: %s", p)
+	}
+}
+
 func TestValidateDetectedToolCallsRejectsUndeclaredName(t *testing.T) {
 	calls := []detectedToolCall{{
 		ID:        "tool_call_0",

@@ -2441,9 +2441,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls = filterCompletedCalls(calls, ledger)
 		calls, rejectedDecision := validateCalls("router", calls)
 		executionNeedsRepair := executionRequested && len(calls) == 0
-		if !parsed || rejectedDecision > 0 || executionNeedsRepair {
+		sandboxNeedsRepair := isSandboxHallucination(routeRes.Text) && len(calls) == 0
+		if !parsed || rejectedDecision > 0 || executionNeedsRepair || sandboxNeedsRepair {
 			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if executionNeedsRepair {
+			if sandboxNeedsRepair {
+				repairPrompt = modelToolSandboxRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			} else if executionNeedsRepair {
 				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}
 			if reuseRouterConversation && routerConversation.active() {
@@ -2454,7 +2457,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			coldRepairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(prompt+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if executionNeedsRepair {
+			if sandboxNeedsRepair {
+				coldRepairPrompt = modelToolSandboxRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			} else if executionNeedsRepair {
 				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}
 			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
@@ -2835,9 +2840,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		calls = filterCompletedCalls(calls, ledger)
 		calls, rejectedDecision := validateCalls("router", calls)
 		executionNeedsRepair := executionRequested && len(calls) == 0
-		if decisionNeedsRepair || !parsed || rejectedDecision > 0 || executionNeedsRepair || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
+		sandboxNeedsRepair := isSandboxHallucination(routeRes.Text) && len(calls) == 0
+		if decisionNeedsRepair || !parsed || rejectedDecision > 0 || executionNeedsRepair || sandboxNeedsRepair || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
 			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if executionNeedsRepair {
+			if sandboxNeedsRepair {
+				repairPrompt = modelToolSandboxRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			} else if executionNeedsRepair {
 				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}
 			if reuseRouterConversation && routerConversation.active() {
@@ -2848,7 +2856,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			coldRepairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(prompt+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if executionNeedsRepair {
+			if sandboxNeedsRepair {
+				coldRepairPrompt = modelToolSandboxRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
+			} else if executionNeedsRepair {
 				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			}
 			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
@@ -3163,8 +3173,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(toolMaps) > 0 && isSandboxHallucination(res.Text) {
-		log.Printf("[sandbox-eject] model used code interpreter/sandbox, retrying with explicit tool instruction")
-		correction := "CRITICAL: You must NOT use any built-in code interpreter, Python sandbox, or cloud execution environment. The caller has provided a bash tool that runs Windows PowerShell 5.1 on their local machine — use it to execute any commands or code. Do NOT say you cannot run code. Do NOT say you only have a Linux container. Do NOT say you have no Windows execution channel. You DO have a bash tool that runs on Windows. Call the bash tool NOW with the appropriate PowerShell command.\n\nUser request:\n" + prompt
+		log.Printf("[sandbox-eject] model described an imagined sandbox, retrying against declared tools")
+		correction := modelToolSandboxRepairPrompt(prompt, res.Text, toolMaps, body.ToolChoice)
 		res2, err2 := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: correction, Tone: tone, ConversationID: res.ConversationID, SessionID: res.SessionID, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 		if err2 == nil && !isSandboxHallucination(res2.Text) {
 			res = res2

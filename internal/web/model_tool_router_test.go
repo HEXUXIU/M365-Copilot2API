@@ -465,7 +465,9 @@ func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing
 		"catalog is already the authoritative path map",
 		"ALL_TOOLS array of {name, description}",
 		"nodeRepl.write(value)",
-		"Computer Use is typically available in Codex Desktop but absent from CLI environments",
+		"Computer Use is optional, never a prerequisite",
+		"missing Computer Use entry is a routing fact",
+		"Never infer the /mnt/data sandbox",
 		"do not invent a tool or claim the action happened",
 	} {
 		if !strings.Contains(p, want) {
@@ -563,7 +565,8 @@ Run a PowerShell command in the workspace.`
 		"do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill",
 		"ALL_TOOLS array of {name, description}",
 		"nodeRepl.write(value)",
-		"Computer Use is typically present in Codex Desktop but absent from CLI",
+		"Computer Use is optional and never a prerequisite",
+		"Never infer /mnt/data or an isolated sandbox",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("exec skill contract missing %q: %q", want, got)

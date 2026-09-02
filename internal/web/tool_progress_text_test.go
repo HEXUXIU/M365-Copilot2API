@@ -26,7 +26,7 @@ func TestToolProgressUsesActionSpecificTextAndLocale(t *testing.T) {
 }
 
 func TestModelAuthoredToolStatusIsExtractedAndIgnoredByParser(t *testing.T) {
-	raw := "STATUS: 我先读取项目配置，确认当前环境后再执行请求。\nCALL_TOOL: exec({\"input\":\"Get-Location\"})"
+	raw := "**STATUS:** 我先读取项目配置，确认当前环境后再执行请求。\nI am ready.\nCALL_TOOL: exec({\"input\":\"Get-Location\"})"
 	if got := toolDecisionStatus(raw); got != "我先读取项目配置，确认当前环境后再执行请求。" {
 		t.Fatalf("status=%q", got)
 	}

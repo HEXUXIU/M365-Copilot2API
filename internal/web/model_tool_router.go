@@ -1059,7 +1059,8 @@ func effectiveToolChoiceForTurn(messages []oaiMsg, choice any) any {
 func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]detectedToolCall, bool) {
 	text = strings.TrimSpace(stripToolDecisionStatus(text))
 	// Try the new natural language format first: CALL_TOOL: name({...})
-	if strings.HasPrefix(text, "CALL_TOOL:") || strings.HasPrefix(text, "call_tool:") {
+	if marker := strings.Index(strings.ToLower(text), "call_tool:"); marker >= 0 {
+		text = strings.TrimSpace(text[marker:])
 		parts := strings.SplitN(text, ":", 2)
 		if len(parts) == 2 {
 			rest := strings.TrimSpace(parts[1])
@@ -1124,7 +1125,7 @@ func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]
 // 进度/计划 line can cross this boundary.
 func toolDecisionStatus(text string) string {
 	for _, raw := range strings.Split(text, "\n") {
-		line := strings.TrimSpace(raw)
+		line := strings.TrimSpace(strings.TrimLeft(raw, "`*_#>- "))
 		for _, prefix := range []string{"STATUS:", "Status:", "status:", "进度：", "进度:", "计划：", "计划:"} {
 			if !strings.HasPrefix(line, prefix) {
 				continue
@@ -1147,7 +1148,7 @@ func stripToolDecisionStatus(text string) string {
 	lines := strings.Split(text, "\n")
 	kept := lines[:0]
 	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
+		trimmed := strings.TrimSpace(strings.TrimLeft(line, "`*_#>- "))
 		if strings.HasPrefix(trimmed, "STATUS:") || strings.HasPrefix(trimmed, "Status:") || strings.HasPrefix(trimmed, "status:") || strings.HasPrefix(trimmed, "进度：") || strings.HasPrefix(trimmed, "进度:") || strings.HasPrefix(trimmed, "计划：") || strings.HasPrefix(trimmed, "计划:") {
 			continue
 		}

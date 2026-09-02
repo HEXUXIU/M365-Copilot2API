@@ -117,6 +117,57 @@ Run a shell command.`,
 	}
 }
 
+func TestValidateDetectedToolCallsAllowsActuallyDiscoveredDeferredTool(t *testing.T) {
+	tools := []map[string]any{{
+		"type": "custom",
+		"function": map[string]any{
+			"name":        "exec",
+			"description": "Run JavaScript.\n### shell_command\nRun a command.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"input": map[string]any{"type": "string"},
+				},
+				"required":             []any{"input"},
+				"additionalProperties": false,
+			},
+		},
+	}}
+	messages := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{
+			"id": "call_discover", "type": "custom", "function": map[string]any{
+				"name": "exec", "arguments": `{"input":"text(ALL_TOOLS.filter(tool => tool.name.includes('node_repl')));"}`,
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_discover", Content: `[{"name":"mcp__node_repl__js","description":"persistent JavaScript runtime"}]`},
+	}
+	deferred := discoveredExecNestedToolNames(messages)
+	calls := []detectedToolCall{{Name: "exec", Arguments: json.RawMessage(`{"input":"const r = await tools.mcp__node_repl__js({code: 'nodeRepl.write(42)'}); text(r);"}`)}}
+	valid, rejected := validateDetectedToolCallsWithDeferred(calls, tools, "required", deferred)
+	if len(valid) != 1 || len(rejected) != 0 {
+		t.Fatalf("discovered deferred tool rejected: valid=%#v rejected=%#v deferred=%#v", valid, rejected, deferred)
+	}
+	unknown := []detectedToolCall{{Name: "exec", Arguments: json.RawMessage(`{"input":"const r = await tools.mcp__invented({}); text(r);"}`)}}
+	valid, rejected = validateDetectedToolCallsWithDeferred(unknown, tools, "required", deferred)
+	if len(valid) != 0 || len(rejected) != 1 {
+		t.Fatalf("undiscovered deferred tool escaped: valid=%#v rejected=%#v", valid, rejected)
+	}
+}
+
+func TestDiscoveredExecNestedToolNamesIgnoresUnrelatedToolResult(t *testing.T) {
+	messages := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{
+			"id": "call_read", "type": "custom", "function": map[string]any{
+				"name": "exec", "arguments": `{"input":"text('ordinary result')"}`,
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_read", Content: `[{"name":"mcp__invented"}]`},
+	}
+	if got := discoveredExecNestedToolNames(messages); len(got) != 0 {
+		t.Fatalf("unrelated tool result was trusted: %#v", got)
+	}
+}
+
 func TestParseNaturalToolDecisionRejectsBadSchema(t *testing.T) {
 	calls, parsed := parseModelToolDecision(`CALL_TOOL: get_weather({"city":2})`, testTools(), "auto")
 	if parsed || len(calls) != 0 {

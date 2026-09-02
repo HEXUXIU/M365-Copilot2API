@@ -50,6 +50,10 @@ type rejectedToolCall struct {
 // routing text are both untrusted: an undeclared name such as "unknown_tool"
 // must never escape to Claude Code, Codex, or another local tool runner.
 func validateDetectedToolCalls(calls []detectedToolCall, tools []map[string]any, choice any) ([]detectedToolCall, []rejectedToolCall) {
+	return validateDetectedToolCallsWithDeferred(calls, tools, choice, nil)
+}
+
+func validateDetectedToolCallsWithDeferred(calls []detectedToolCall, tools []map[string]any, choice any, deferred map[string]bool) ([]detectedToolCall, []rejectedToolCall) {
 	valid := make([]detectedToolCall, 0, len(calls))
 	rejected := make([]rejectedToolCall, 0)
 	for _, call := range calls {
@@ -86,7 +90,7 @@ func validateDetectedToolCalls(calls []detectedToolCall, tools []map[string]any,
 					args["input"] = normalized
 					call.Arguments, _ = json.Marshal(args)
 				}
-				if execInputReferencesUnavailableTool(input, description) {
+				if execInputReferencesUnavailableToolWithDeferred(input, description, deferred) {
 					rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: "exec input references an unavailable nested tool"})
 					continue
 				}

@@ -28,6 +28,7 @@ var (
 	explicitToolRequirementPattern = regexp.MustCompile(`(?i)(?:必须|务必|一定要|请务必)\s*(?:实际\s*)?(?:调用|使用).{0,64}(?:工具|tool|apply[_ -]?patch|exec(?:ute)?|terminal|shell|终端)`)
 	execNestedToolHeadingPattern   = regexp.MustCompile("(?m)^###\\s+`?([A-Za-z0-9_]+)`?\\s*$")
 	execNestedToolCallPattern      = regexp.MustCompile(`\btools\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+	execDiscoveredToolNamePattern  = regexp.MustCompile(`"name"\s*:\s*"([A-Za-z_$][A-Za-z0-9_$]*)"`)
 	execShellArgAliasPattern       = regexp.MustCompile(`(\btools\.shell_command\s*\(\s*\{\s*)(?:"cmd"|'cmd'|cmd|commandLine)(\s*:)`)
 	execShellArgShorthandPattern   = regexp.MustCompile(`(\btools\.shell_command\s*\(\s*\{\s*)cmd(\s*[,}])`)
 	execApplyPatchShortPattern     = regexp.MustCompile(`(\btools\.apply_patch\s*\(\s*)\{\s*(patch|input)\s*\}(\s*\))`)
@@ -335,13 +336,22 @@ func compactExecRouterDescription(description string) string {
 }
 
 func execInputReferencesUnavailableTool(input, description string) bool {
+	return execInputReferencesUnavailableToolWithDeferred(input, description, nil)
+}
+
+func execInputReferencesUnavailableToolWithDeferred(input, description string, deferred map[string]bool) bool {
 	names := execNestedToolNames(description)
-	if len(names) == 0 {
+	if len(names) == 0 && len(deferred) == 0 {
 		return false
 	}
-	available := make(map[string]struct{}, len(names))
+	available := make(map[string]struct{}, len(names)+len(deferred))
 	for _, name := range names {
 		available[name] = struct{}{}
+	}
+	for name, allowed := range deferred {
+		if allowed {
+			available[name] = struct{}{}
+		}
 	}
 	for _, match := range execNestedToolCallPattern.FindAllStringSubmatch(input, -1) {
 		if len(match) < 2 {
@@ -352,6 +362,46 @@ func execInputReferencesUnavailableTool(input, description string) bool {
 		}
 	}
 	return false
+}
+
+// Deferred exec tools are absent from the initial compact tool catalog. Trust
+// one only after the caller returned that exact name from a preceding
+// model-authored ALL_TOOLS discovery call in the same request history.
+func discoveredExecNestedToolNames(messages []oaiMsg) map[string]bool {
+	discoveryCalls := make(map[string]bool)
+	discovered := make(map[string]bool)
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "assistant") {
+			for _, raw := range message.ToolCalls {
+				id, _ := raw["id"].(string)
+				function, _ := raw["function"].(map[string]any)
+				name, _ := function["name"].(string)
+				arguments := fmt.Sprint(function["arguments"])
+				if id == "" || !strings.EqualFold(strings.TrimSpace(name), "exec") {
+					continue
+				}
+				var decoded map[string]any
+				if json.Unmarshal([]byte(arguments), &decoded) != nil {
+					continue
+				}
+				input, _ := decoded["input"].(string)
+				if strings.Contains(input, "ALL_TOOLS") {
+					discoveryCalls[id] = true
+				}
+			}
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(message.Role), "tool") || !discoveryCalls[message.ToolCallID] {
+			continue
+		}
+		result := contentToString(message.Content)
+		for _, match := range execDiscoveredToolNamePattern.FindAllStringSubmatch(result, 256) {
+			if len(match) >= 2 {
+				discovered[match[1]] = true
+			}
+		}
+	}
+	return discovered
 }
 
 // normalizeExecNestedToolInput repairs narrow compatibility mismatches seen in

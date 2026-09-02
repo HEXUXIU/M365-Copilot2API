@@ -2197,6 +2197,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		body.ToolChoice = "required"
 		log.Printf("[tool-router] id=%s explicit user tool request promoted choice=required", requestID)
 	}
+	deferredExecTools := discoveredExecNestedToolNames(body.Messages)
 	declaredSkillRoutes := requestedDeclaredSkills(body.Messages)
 	declaredSkillGuard := declaredSkillRoutingGuard(declaredSkillRoutes)
 	withDeclaredSkillGuard := func(input string) string {
@@ -2218,7 +2219,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[mcp] tools=%d mcp_gateway=%s", len(toolMaps), mcpServerURL)
 	}
 	validateCalls := func(stage string, calls []detectedToolCall) ([]detectedToolCall, int) {
-		valid, rejected := validateDetectedToolCalls(calls, toolMaps, body.ToolChoice)
+		valid, rejected := validateDetectedToolCallsWithDeferred(calls, toolMaps, body.ToolChoice, deferredExecTools)
 		for _, call := range rejected {
 			log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, call.Reason)
 		}

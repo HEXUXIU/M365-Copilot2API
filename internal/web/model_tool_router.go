@@ -1068,6 +1068,14 @@ func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]
 			end := strings.LastIndex(rest, ")")
 			if start > 0 && end > start {
 				name := strings.TrimSpace(rest[:start])
+				// Some M365 turns serialize a single custom tool as
+				// CALL_TOOL: null(...). With exactly one declared tool there is
+				// no ambiguity; normalize that model quirk before schema checks.
+				if (strings.EqualFold(name, "null") || strings.EqualFold(name, "undefined")) && len(tools) == 1 {
+					if only := declaredToolName(tools[0]); only != "" {
+						name = only
+					}
+				}
 				argsStr := rest[start+1 : end]
 				var args map[string]any
 				if json.Unmarshal([]byte(argsStr), &args) == nil && toolChoiceAllows(choice, name) {
@@ -1117,6 +1125,12 @@ func parseModelToolDecision(text string, tools []map[string]any, choice any) ([]
 		out = append(out, detectedToolCall{ID: callID(c.Name, string(b), i), Type: toolType(c.Name, tools), Name: c.Name, Arguments: b})
 	}
 	return out, true
+}
+
+func declaredToolName(tool map[string]any) string {
+	function, _ := tool["function"].(map[string]any)
+	name, _ := function["name"].(string)
+	return strings.TrimSpace(name)
 }
 
 // toolDecisionStatus extracts the model-authored, user-facing action summary

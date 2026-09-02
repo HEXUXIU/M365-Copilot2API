@@ -403,6 +403,44 @@ func TestParseModelToolDecisionAutoAndParallel(t *testing.T) {
 		t.Fatalf("calls=%v ok=%v", calls, ok)
 	}
 }
+
+func TestParseModelToolDecisionNormalizesNullForSingleDeclaredTool(t *testing.T) {
+	tools := []map[string]any{{
+		"type": "custom",
+		"function": map[string]any{
+			"name": "exec",
+			"parameters": map[string]any{
+				"type":     "object",
+				"required": []any{"input"},
+				"properties": map[string]any{
+					"input": map[string]any{"type": "string"},
+				},
+			},
+		},
+	}}
+	for _, marker := range []string{"null", "undefined"} {
+		t.Run(marker, func(t *testing.T) {
+			calls, parsed := parseModelToolDecision(`CALL_TOOL: `+marker+`({"input":"pwd"})`, tools, "auto")
+			if !parsed || len(calls) != 1 || calls[0].Name != "exec" || calls[0].Type != "custom" {
+				t.Fatalf("parsed=%t calls=%#v", parsed, calls)
+			}
+		})
+	}
+}
+
+func TestParseModelToolDecisionDoesNotGuessNullWithMultipleTools(t *testing.T) {
+	tools := []map[string]any{
+		{"type": "function", "function": map[string]any{"name": "first", "parameters": map[string]any{"type": "object"}}},
+		{"type": "function", "function": map[string]any{"name": "second", "parameters": map[string]any{"type": "object"}}},
+	}
+	for _, marker := range []string{"null", "undefined"} {
+		calls, parsed := parseModelToolDecision(`CALL_TOOL: `+marker+`({})`, tools, "auto")
+		if len(calls) != 0 {
+			t.Fatalf("marker=%s parsed=%t calls=%#v", marker, parsed, calls)
+		}
+	}
+}
+
 func TestParseModelToolDecisionNoCall(t *testing.T) {
 	calls, ok := parseModelToolDecision(`{"calls":[]}`, testTools(), "auto")
 	if !ok || len(calls) != 0 {

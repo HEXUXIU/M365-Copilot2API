@@ -1994,16 +1994,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "tool_protocol_error", err.Error())
 		return
 	}
-	// A user who explicitly says that a tool must be called is distinct from a
-	// normal execution request (for example, create a file or search the web).
-	// The former preserves required semantics; the latter asks the planner to
-	// choose a compatible tool while retaining auto as a recoverable choice.
-	explicitToolRequired := body.ExplicitToolRequired || explicitToolRequirementFromContext(r.Context()) || explicitToolRequest(body.Messages)
+	explicitToolRequired := body.ExplicitToolRequired || explicitToolRequirementFromContext(r.Context()) || explicitToolRequest(body.Messages) || workspaceToolRequest(body.Messages, body.Tools)
 	// Tool evidence and loop limits are scoped to the active user turn. Older
 	// tool history remains in the flattened conversation but must not bloat the
 	// router prompt or suppress a legitimate repeated action in a later turn.
 	ledger := buildAgentLedger(activeMessages(body.Messages))
-	executionRequested := executionToolRequestPending(body.Messages, body.Tools, ledger)
 	if err := ledger.CanContinue(maxToolRounds()); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
@@ -2053,18 +2048,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if prompt == "" {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "messages required")
 		return
-	}
-	// Progress is a single public status line, not reasoning. Tie its wording
-	// to the active tool stage so a continuation never repeats the first-turn
-	// preamble that is already present in the conversation history.
-	progressText := func(calls []detectedToolCall) string {
-		return toolProgressTextForStage(prompt, calls, len(ledger.Completed))
-	}
-	progressFromDecision := func(raw string, calls []detectedToolCall) string {
-		if status := sanitizePublicAssistantText(strings.TrimSpace(toolDecisionStatus(raw))); status != "" {
-			return status
-		}
-		return progressText(calls)
 	}
 	if answer, ok := publicIdentityAnswer(body.Messages, body.Model); ok && responseFormat == nil {
 		s.writePublicIdentityChatResponse(w, r, &body, prompt, answer, startedAt)
@@ -2210,16 +2193,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[tool-router] id=%s explicit user tool request promoted choice=required", requestID)
 	}
 	deferredExecTools := discoveredExecNestedToolNames(body.Messages)
-	declaredSkillRoutes := requestedDeclaredSkills(body.Messages)
-	declaredSkillGuard := declaredSkillRoutingGuard(declaredSkillRoutes)
-	withDeclaredSkillGuard := func(input string) string {
-		if declaredSkillGuard == "" || strings.Contains(input, declaredSkillRouteMarker) {
-			return input
-		}
-		return input + "\n\n" + declaredSkillGuard
-	}
 	modelToolPrompt := func(input string) string {
-		return modelToolRouterPromptWithIntent(withDeclaredSkillGuard(input), toolMaps, body.ToolChoice, executionRequested)
+		return modelToolRouterPrompt(input, toolMaps, body.ToolChoice)
 	}
 	var mcpServerURL string
 	if len(toolMaps) > 0 {
@@ -2235,22 +2210,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		for _, call := range rejected {
 			log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, call.Reason)
 		}
-		kept := valid[:0]
-		wrongSkillPaths := 0
-		for _, call := range valid {
-			if callOmitsNodeReplDocumentationOutput(call) {
-				wrongSkillPaths++
-				log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, "node_repl documentation result is not emitted with nodeRepl.write")
-				continue
-			}
-			if callUsesWrongDeclaredSkillPath(call, declaredSkillRoutes) {
-				wrongSkillPaths++
-				log.Printf("[tool-validation] id=%s stage=%s rejected_name=%q reason=%q", requestID, stage, call.Name, "SKILL.md path does not match the caller catalog")
-				continue
-			}
-			kept = append(kept, call)
-		}
-		return kept, len(rejected) + wrongSkillPaths
+		return valid, len(rejected)
 	}
 	planningMode := s.settings.get().ToolPlanningMode
 	protocolMode := s.settings.get().ToolProtocolMode
@@ -2308,7 +2268,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			// issue one structured repair on the same conversation before any
 			// account failover; otherwise a single bad decision fans out into
 			// three expensive cross-account requests.
-			if isRetryableAccountFailure(routeErr) {
+			if isRetryableAccountFailure(routeErr) || errors.Is(routeErr, requiredDecisionErr) {
 				return true
 			}
 			return errors.Is(routeErr, context.DeadlineExceeded) && routerCtx.Err() == nil && r.Context().Err() == nil
@@ -2408,10 +2368,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			_ = routerStream.data(mustJSON(map[string]any{"error": map[string]any{"message": message, "code": "upstream_error"}}))
 			_ = routerStream.data("[DONE]")
 		}
-		toolResponseID := ""
-		if executionRequested || explicitToolRequired || toolChoiceRequiresCall(body.ToolChoice) {
-			toolResponseID = "chatcmpl-" + uuid.NewString()
-		}
+		toolResponseID := "chatcmpl-" + uuid.NewString()
 		routePrompt := modelToolPrompt(routerInput + "\n" + ledger.RouterContext())
 		coldRoutePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())
 		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
@@ -2439,29 +2396,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
-		calls, rejectedDecision := validateCalls("router", calls)
-		executionNeedsRepair := executionRequested && len(calls) == 0
-		sandboxNeedsRepair := isSandboxHallucination(routeRes.Text) && len(calls) == 0
-		if !parsed || rejectedDecision > 0 || executionNeedsRepair || sandboxNeedsRepair {
-			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if sandboxNeedsRepair {
-				repairPrompt = modelToolSandboxRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			} else if executionNeedsRepair {
-				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			}
+		calls, _ = validateCalls("router", calls)
+		if !parsed {
+			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			if reuseRouterConversation && routerConversation.active() {
-				if executionNeedsRepair {
-					repairPrompt = `The real action requested above is unfinished. Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Select at least one valid declared top-level tool; do not return an empty calls array.`
-				} else {
-					repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
-				}
+				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
 			}
-			coldRepairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(prompt+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if sandboxNeedsRepair {
-				coldRepairPrompt = modelToolSandboxRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			} else if executionNeedsRepair {
-				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			}
+			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
@@ -2480,13 +2421,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			routeRes.Reasoning = ""
-			progress := progressFromDecision(routeRes.Text, calls)
-			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, progress)
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, "")
 			stopRouterHeartbeat()
-			if toolResponseID == "" {
-				toolResponseID = "chatcmpl-" + uuid.NewString()
-			}
-			_ = writeToolResponseWithProgress(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), progress)
+			_ = writeToolResponse(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
 			return
 		}
 		stopRouterHeartbeat()
@@ -2778,7 +2715,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			usage := s.bindConversation(acc, &body, r, toolResult, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, prompt, startedAt, affinityState)
 			s.storeConvCache(acc.ID, convCacheModel, toolResult, tone, body.Messages, convReused)
-			_ = writeToolResponseWithProgress(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage), progressFromDecision(toolResult.Text, calls))
+			_ = writeToolResponse(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage))
 			return
 		}
 		if err := emitText(pending.String()); err != nil {
@@ -2824,8 +2761,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		routePrompt := modelToolPrompt(routerInput + "\n" + ledger.RouterContext())
 		coldRoutePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())
 		routeRes, routeErr := runRouter(routePrompt, routerAttachments, coldRoutePrompt, fullRouterAttachments, toolChoiceRequiresCall(body.ToolChoice))
-		decisionNeedsRepair := errors.Is(routeErr, requiredDecisionErr)
-		if routeErr != nil && !decisionNeedsRepair {
+		if routeErr != nil {
 			msg := upstreamError(routeErr)
 			if IsRateLimited(routeErr) {
 				msg = "upstream is rate limiting; try again shortly"
@@ -2833,34 +2769,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", msg)
 			return
 		}
-		if decisionNeedsRepair {
-			log.Printf("[tool-router] id=%s required decision invalid; repairing on the same account", requestID)
-		}
 		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 		calls = filterCompletedCalls(calls, ledger)
-		calls, rejectedDecision := validateCalls("router", calls)
-		executionNeedsRepair := executionRequested && len(calls) == 0
-		sandboxNeedsRepair := isSandboxHallucination(routeRes.Text) && len(calls) == 0
-		if decisionNeedsRepair || !parsed || rejectedDecision > 0 || executionNeedsRepair || sandboxNeedsRepair || (toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0) {
-			repairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(routerInput+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if sandboxNeedsRepair {
-				repairPrompt = modelToolSandboxRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			} else if executionNeedsRepair {
-				repairPrompt = modelToolExecutionRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			}
+		if !parsed {
+			repairPrompt := modelToolRepairPrompt(routerInput+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			if reuseRouterConversation && routerConversation.active() {
-				if executionNeedsRepair {
-					repairPrompt = `The real action requested above is unfinished. Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Select at least one valid declared top-level tool; do not return an empty calls array.`
-				} else {
-					repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
-				}
+				repairPrompt = `Repair the routing output immediately above. Return JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed.`
 			}
-			coldRepairPrompt := modelToolRepairPrompt(withDeclaredSkillGuard(prompt+"\n"+ledger.RouterContext()), routeRes.Text, toolMaps, body.ToolChoice)
-			if sandboxNeedsRepair {
-				coldRepairPrompt = modelToolSandboxRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			} else if executionNeedsRepair {
-				coldRepairPrompt = modelToolExecutionRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
-			}
+			coldRepairPrompt := modelToolRepairPrompt(prompt+"\n"+ledger.RouterContext(), routeRes.Text, toolMaps, body.ToolChoice)
 			repairRes, repairErr := runRouter(repairPrompt, nil, coldRepairPrompt, fullRouterAttachments, false)
 			if repairErr == nil {
 				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
@@ -2874,10 +2790,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		calls = filterCompletedCalls(calls, ledger)
 		calls, _ = validateCalls("router", calls)
-		if toolChoiceRequiresCall(body.ToolChoice) && len(calls) == 0 {
-			writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", "upstream did not return a valid required tool call")
-			return
-		}
 		if len(calls) > 0 {
 			scope := fmt.Sprintf("%d:%v", len(body.Messages), completedCallIDs(ledger))
 			for i := range calls {
@@ -2888,9 +2800,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			routeRes.Reasoning = ""
-			progress := progressFromDecision(routeRes.Text, calls)
-			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, progress)
-			_ = writeToolResponseWithProgress(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), progress)
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, "")
+			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
 			return
 		}
 		if reuseRouterConversation {
@@ -3192,7 +3103,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			res.Reasoning = ""
 			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), progressFromDecision(res.Text, calls))
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
 			return
 		}
 	}
@@ -3207,7 +3118,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			res.Reasoning = ""
 			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), progressFromDecision(res.Text, calls))
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
 			return
 		}
 	}
@@ -3226,7 +3137,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			res.Reasoning = ""
 			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), progressFromDecision(res.Text, calls))
+			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
 			return
 		}
 	}
@@ -3254,7 +3165,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				routeRes.Reasoning = ""
 				usage := bindResult(routeRes, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
 				setSessionHeader(routeRes)
-				_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(usage), progressFromDecision(routeRes.Text, calls))
+				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(usage))
 				return
 			}
 		}

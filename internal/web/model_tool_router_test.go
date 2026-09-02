@@ -457,21 +457,16 @@ tool[call_x]: 2026-07-18`, testTools(), "auto")
 
 func TestModelToolRouterPromptWithExecutionIntentKeepsAutoRecoverable(t *testing.T) {
 	p := modelToolRouterPromptWithIntent("[user] 在桌面创建 report.txt", testTools(), "auto", true)
+	baseline := modelToolRouterPrompt("[user] 在桌面创建 report.txt", testTools(), "auto")
+	if p != baseline {
+		t.Fatalf("execution hint changed the strongest planner prompt")
+	}
 	for _, want := range []string{
 		"MODE: auto",
-		"requested a real local or external action",
-		"at least one compatible declared top-level tool",
-		"Skills are instruction bundles, not callable tool names",
-		"catalog is already the authoritative path map",
-		"ALL_TOOLS array of {name, description}",
-		"nodeRepl.write(value)",
-		"Computer Use is optional, never a prerequisite",
-		"missing Computer Use entry is a routing fact",
-		"Never infer the /mnt/data sandbox",
-		"service exposure or port-opening requests",
-		"verify both the listener and an actual connection",
-		"do not kill, stop, remove, or roll it back",
-		"do not invent a tool or claim the action happened",
+		"CALL_TOOL: tool_name",
+		"NO_TOOL_NEEDED",
+		"Validate all arguments against the tool's schema",
+		"[user] 在桌面创建 report.txt",
 	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("router prompt missing execution-intent rule %q: %s", want, p)
@@ -499,9 +494,9 @@ Call run_environment_probe with command exactly "pwd && uname -s" and environmen
 [user]
 Confirm the environment.`, testTools(), map[string]any{"function": map[string]any{"name": "run_environment_probe"}})
 	for _, want := range []string{
-		"Request instructions and system/developer blocks are authoritative",
-		"Preserve exact tool names, argument values, paths, commands, literals, quoting, and separators",
-		"Never replace an explicitly supplied argument with an equivalent value",
+		"MODE: named:run_environment_probe",
+		`Call run_environment_probe with command exactly "pwd && uname -s" and environment exactly "Ubuntu Bash".`,
+		"Confirm the environment.",
 	} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("router prompt missing exact-argument rule %q: %s", want, p)
@@ -565,11 +560,10 @@ Run a PowerShell command in the workspace.`
 		t.Fatalf("exec catalog was lost: %q", got)
 	}
 	for _, want := range []string{
-		"do not query MCP, ALL_TOOLS, or the workspace to locate a listed skill",
-		"ALL_TOOLS array of {name, description}",
-		"nodeRepl.write(value)",
-		"Computer Use is optional and never a prerequisite",
-		"Never infer /mnt/data or an isolated sandbox",
+		"Run raw JavaScript in an async module",
+		"tools.apply_patch",
+		"tools.shell_command({command: COMMAND})",
+		"Run a PowerShell command in the workspace",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("exec skill contract missing %q: %q", want, got)
@@ -577,6 +571,11 @@ Run a PowerShell command in the workspace.`
 	}
 	if strings.Contains(got, "tools.exec_command") {
 		t.Fatalf("stale undeclared example survived compaction: %q", got)
+	}
+	for _, forbidden := range []string{"Computer Use", "SKILL.md", "/mnt/data", "port-opening"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("task-specific router policy leaked into tool interface: %q", got)
+		}
 	}
 	if len(got) > 2048 {
 		t.Fatalf("exec description is unbounded: %d", len(got))

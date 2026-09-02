@@ -161,35 +161,31 @@ func TestResponsesInstructionsAndCustomExecPolicyAreSystemMessages(t *testing.T)
 		t.Fatalf("input ordering changed: %#v", o.Messages[2])
 	}
 	policy := fmt.Sprint(o.Messages[0].Content)
-	for _, want := range []string{"caller-provided shell contract is authoritative", "does not mean", "remote container"} {
+	for _, want := range []string{"local execution bridge", "matching custom tool returns", "verify the result"} {
 		if !strings.Contains(policy, want) {
 			t.Fatalf("custom exec policy missing %q: %q", want, policy)
 		}
 	}
 }
 
-func TestCustomExecPolicyPreservesExplicitKnownFolders(t *testing.T) {
+func TestCustomExecPolicyMatchesStrongestBaseline(t *testing.T) {
 	for _, want := range []string{
-		"Desktop, Downloads, or Documents",
-		"resolve that exact folder",
-		"never silently substitute the workspace",
-		"requested desktop UI, browser, or computer-use action occurred",
-		"skills are instruction bundles, not callable tool names",
-		"authoritative path map",
-		"ALL_TOOLS array of {name, description}",
-		"nodeRepl.write(value)",
-		"Computer Use is optional and never a prerequisite",
-		"Set-Content -LiteralPath $path -Value 'text' -Encoding utf8",
-		"port-opening requests are multi-layer operations",
-		"verify both the listener and a real connection",
-		"merely starting a process is not completion",
-		"keep it running after verification",
-		"do not kill, stop, remove, or roll it back",
-		"must never be used to open a URL",
+		"caller-provided custom tools",
+		"project workspace selected by the caller",
+		"matching custom tool returns a successful result",
+		"use custom exec to verify the result",
 	} {
 		if !strings.Contains(customExecEffectiveInstruction, want) {
 			t.Fatalf("custom exec policy missing %q", want)
 		}
+	}
+	for _, forbidden := range []string{"Computer Use", "SKILL.md", "ALL_TOOLS", "port-opening", "codex_app__navigate_to_codex_page"} {
+		if strings.Contains(customExecEffectiveInstruction, forbidden) {
+			t.Fatalf("later task-specific policy leaked into strongest baseline: %q", forbidden)
+		}
+	}
+	if len(customExecEffectiveInstruction) > 1000 {
+		t.Fatalf("custom exec policy is oversized: %d bytes", len(customExecEffectiveInstruction))
 	}
 }
 

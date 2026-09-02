@@ -24,3 +24,20 @@ func TestToolProgressUsesActionSpecificTextAndLocale(t *testing.T) {
 		t.Fatalf("action-specific progress missing: zh=%q en=%q", zh, en)
 	}
 }
+
+func TestModelAuthoredToolStatusIsExtractedAndIgnoredByParser(t *testing.T) {
+	raw := "STATUS: 我先读取项目配置，确认当前环境后再执行请求。\nCALL_TOOL: exec({\"input\":\"Get-Location\"})"
+	if got := toolDecisionStatus(raw); got != "我先读取项目配置，确认当前环境后再执行请求。" {
+		t.Fatalf("status=%q", got)
+	}
+	calls, parsed := parseModelToolDecision(raw, []map[string]any{{
+		"type": "custom",
+		"function": map[string]any{
+			"name":       "exec",
+			"parameters": map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}, "required": []any{"input"}},
+		},
+	}}, "required")
+	if !parsed || len(calls) != 1 || calls[0].Name != "exec" {
+		t.Fatalf("parsed=%t calls=%#v", parsed, calls)
+	}
+}

@@ -2411,14 +2411,6 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		toolResponseID := ""
 		if executionRequested || explicitToolRequired || toolChoiceRequiresCall(body.ToolChoice) {
 			toolResponseID = "chatcmpl-" + uuid.NewString()
-			// Responses owns its own progress event stream. Emitting this Chat
-			// preamble there would make the adapter store it once here and once
-			// again with the final tool-call frame, breaking its continuation
-			// prefix. Direct Chat clients retain the immediate first-text cue.
-			if !responsesAdapterFromContext(r.Context()) {
-				progress := progressText(nil)
-				_ = routerStream.data(mustJSON(map[string]any{"id": toolResponseID, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": firstNonEmpty(body.Model, defaultPublicModelName), "choices": []any{map[string]any{"index": 0, "delta": map[string]any{"role": "assistant", "content": progress}, "finish_reason": nil}}}))
-			}
 		}
 		routePrompt := modelToolPrompt(routerInput + "\n" + ledger.RouterContext())
 		coldRoutePrompt := modelToolPrompt(prompt + "\n" + ledger.RouterContext())

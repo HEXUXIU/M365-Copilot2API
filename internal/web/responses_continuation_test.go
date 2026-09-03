@@ -70,7 +70,7 @@ func TestResponseToolProgressDoesNotBreakAffinityPrefix(t *testing.T) {
 	r := carryResponsesAdapter(httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
 	assistant := responseAffinityAssistantHistory(r, "inspect the runtime", oaiMsg{Role: "assistant", ToolCalls: calls})
 	bindingHistory := affinityBindingHistory(base, assistant)
-	stored := appendResponsesAssistantHistory(base, toolProgressText("inspect the runtime", []detectedToolCall{{Name: "inspect"}}), calls)
+	stored := appendResponsesAssistantHistory(base, "", calls)
 	if got, want := contentToString(stored[len(stored)-1].Content), contentToString(assistant.Content); got != want {
 		t.Fatalf("stored progress=%q, affinity progress=%q", got, want)
 	}
@@ -93,5 +93,16 @@ func TestResponseAffinityProgressKeepsLiteralPublicProgress(t *testing.T) {
 	})
 	if got, want := contentToString(assistant.Content), "\u6211\u5148\u5904\u7406\u8fd9\u4e00\u6b65\uff0c\u5e76\u6838\u5bf9\u8fd4\u56de\u7ed3\u679c\u3002"; got != want {
 		t.Fatalf("public progress changed: got=%q want=%q", got, want)
+	}
+}
+
+func TestResponseAffinityDoesNotInventGatewayProgress(t *testing.T) {
+	r := carryResponsesAdapter(httptest.NewRequest(http.MethodPost, "/v1/responses", nil))
+	assistant := responseAffinityAssistantHistoryForStage(r, "run the requested action", oaiMsg{
+		Role:      "assistant",
+		ToolCalls: []map[string]any{{"id": "call_1", "type": "function", "function": map[string]any{"name": "exec", "arguments": "{}"}}},
+	}, 1)
+	if got := contentToString(assistant.Content); got != "" {
+		t.Fatalf("gateway invented progress text: %q", got)
 	}
 }

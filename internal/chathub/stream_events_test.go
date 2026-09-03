@@ -49,6 +49,43 @@ func TestExtractToolEventsNestedAndDeduped(t *testing.T) {
 	}
 }
 
+func TestClassifyUpdateMessagesSharesToolDedupWithNestedExtractor(t *testing.T) {
+	seen := map[string]bool{}
+	arg := map[string]any{
+		"toolName":  "exec",
+		"arguments": map[string]any{"input": "Get-Location"},
+	}
+	first := extractToolEvents(arg, seen)
+	second := classifyUpdateMessagesWithSeen([]any{arg}, seen)
+	if len(first) != 1 || len(second) != 0 {
+		t.Fatalf("duplicate tool crossed event paths: first=%#v second=%#v seen=%#v", first, second, seen)
+	}
+}
+
+func TestClassifyUpdateMessagesKeepsDistinctParallelCallsWithSameArguments(t *testing.T) {
+	seen := map[string]bool{}
+	args := map[string]any{"input": "Get-Location"}
+	got := classifyUpdateMessagesWithSeen([]any{
+		map[string]any{"toolName": "exec", "callId": "call-a", "arguments": args},
+		map[string]any{"toolName": "exec", "callId": "call-b", "arguments": args},
+	}, seen)
+	if len(got) != 2 {
+		t.Fatalf("distinct parallel calls were collapsed: %#v", got)
+	}
+}
+
+func TestClassifyUpdateMessagesDeduplicatesSameCallIDAcrossRepresentations(t *testing.T) {
+	seen := map[string]bool{}
+	args := map[string]any{"input": "Get-Location"}
+	first := extractToolEvents(map[string]any{"toolName": "exec", "call_id": "call-same", "arguments": args}, seen)
+	second := classifyUpdateMessagesWithSeen([]any{
+		map[string]any{"toolName": "exec", "call_id": "call-same", "arguments": args},
+	}, seen)
+	if len(first) != 1 || len(second) != 0 {
+		t.Fatalf("same call identity was emitted twice: first=%#v second=%#v", first, second)
+	}
+}
+
 func TestParseSuggestedResponseMessageFields(t *testing.T) {
 	got := parseSuggestedResponse(map[string]any{
 		"commandText": "next",

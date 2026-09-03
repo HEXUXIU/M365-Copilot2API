@@ -115,3 +115,21 @@ func TestCompletionGuardRejectsUnsupportedSuccess(t *testing.T) {
 		}
 	}
 }
+
+func TestCompletionGuardRejectsSuccessAfterFailedToolResult(t *testing.T) {
+	l := buildAgentLedger([]oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{
+			{"id": "f1", "type": "function", "function": map[string]any{"name": "write_file", "arguments": `{"path":"report.txt"}`}},
+		}},
+		{Role: "tool", ToolCallID: "f1", Content: "permission denied: access refused"},
+	})
+	if len(l.Completed) != 1 || !l.Completed[0].Failed {
+		t.Fatalf("failed tool result was not recorded: %+v", l)
+	}
+	if completionEvidenceAllows("The file was written successfully.", l) {
+		t.Fatal("success claim was allowed after a failed tool result")
+	}
+	if !completionEvidenceAllows("The file was not written because permission was denied.", l) {
+		t.Fatal("honest failure report was rejected")
+	}
+}

@@ -19,6 +19,8 @@ import (
 
 const redisResponsesStatePrefix = "m365:responses-state:v1:"
 
+const defaultResponseStateTTL = 30 * time.Minute
+
 // responseStateWireVersion is deliberately kept out of the Redis key so old
 // state remains readable during a rolling deployment. New values are gzip
 // compressed; loadResponseNodeLocked accepts both the compressed form and the
@@ -98,10 +100,16 @@ func responseStateKey(namespace, responseID string) string {
 }
 
 func (s *Server) responseStateTTL() time.Duration {
+	ttl := defaultResponseStateTTL
 	if s.affinity != nil && s.affinity.config.TTL > 0 {
-		return s.affinity.config.TTL
+		ttl = s.affinity.config.TTL
+	} else if configured := time.Duration(affinityEnvInt("M365_AFFINITY_TTL_MINUTES", int(defaultResponseStateTTL/time.Minute))) * time.Minute; configured > 0 {
+		ttl = configured
 	}
-	return time.Hour
+	if ttl > defaultResponseStateTTL {
+		return defaultResponseStateTTL
+	}
+	return ttl
 }
 
 func (s *Server) responseLeaseTTL() time.Duration {

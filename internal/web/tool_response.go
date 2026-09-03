@@ -15,6 +15,9 @@ func writeToolResponse(w http.ResponseWriter, id, model string, stream, sendUsag
 func writeToolResponseWithProgress(w http.ResponseWriter, id, model string, stream, sendUsage bool, calls []detectedToolCall, res chathub.Result, usageOverride map[string]any, progress string) error {
 	// Usage is always emitted for tool streams; Codex relies on a terminal usage frame.
 	toolCalls := toolCallMaps(calls)
+	if strings.TrimSpace(progress) == "" {
+		progress = modelToolProgress(res.Text)
+	}
 	progress = sanitizePublicAssistantText(strings.TrimSpace(progress))
 	content := any(nil)
 	if progress != "" {

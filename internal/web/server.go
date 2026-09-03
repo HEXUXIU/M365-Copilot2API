@@ -2421,9 +2421,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			routeRes.Reasoning = ""
-			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, "")
+			routerProgress := modelToolProgress(routeRes.Text)
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, routerProgress)
 			stopRouterHeartbeat()
-			_ = writeToolResponse(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
+			_ = writeToolResponseWithProgress(w, toolResponseID, firstNonEmpty(body.Model, defaultPublicModelName), true, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), routerProgress)
 			return
 		}
 		stopRouterHeartbeat()
@@ -2713,9 +2714,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			if body.User != "" && toolResult.ConversationID != "" {
 				s.userSessions.Put(tenantFromRequest(r), body.User, toolResult.ConversationID, toolResult.SessionID, acc.ID)
 			}
-			usage := s.bindConversation(acc, &body, r, toolResult, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)}, prompt, startedAt, affinityState)
+			toolProgress := modelToolProgress(toolResult.Text)
+			usage := s.bindConversation(acc, &body, r, toolResult, oaiMsg{Role: "assistant", Content: toolProgress, ToolCalls: toolCallMessageMaps(calls)}, prompt, startedAt, affinityState)
 			s.storeConvCache(acc.ID, convCacheModel, toolResult, tone, body.Messages, convReused)
-			_ = writeToolResponse(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, true, body.shouldSendStreamUsage(), calls, toolResult, chatUsage(usage), toolProgress)
 			return
 		}
 		if err := emitText(pending.String()); err != nil {
@@ -2800,8 +2802,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			routeRes.Reasoning = ""
-			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, "")
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage))
+			routerProgress := modelToolProgress(routeRes.Text)
+			routerUsage := bindRouterCalls(routeRes, calls, routePrompt, routerProgress)
+			_ = writeToolResponseWithProgress(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, defaultPublicModelName), body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(routerUsage), routerProgress)
 			return
 		}
 		if reuseRouterConversation {
@@ -3101,9 +3104,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			res.Reasoning = ""
-			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+			toolProgress := modelToolProgress(res.Text)
+			usage := bindResult(res, oaiMsg{Role: "assistant", Content: toolProgress, ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), toolProgress)
 			return
 		}
 	}
@@ -3116,9 +3120,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			res.Reasoning = ""
-			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+			toolProgress := modelToolProgress(res.Text)
+			usage := bindResult(res, oaiMsg{Role: "assistant", Content: toolProgress, ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), toolProgress)
 			return
 		}
 	}
@@ -3135,9 +3140,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				calls = calls[:1]
 			}
 			res.Reasoning = ""
-			usage := bindResult(res, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+			toolProgress := modelToolProgress(res.Text)
+			usage := bindResult(res, oaiMsg{Role: "assistant", Content: toolProgress, ToolCalls: toolCallMessageMaps(calls)})
 			setSessionHeader(res)
-			_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage))
+			_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, res, chatUsage(usage), toolProgress)
 			return
 		}
 	}
@@ -3163,9 +3169,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				}
 				calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
 				routeRes.Reasoning = ""
-				usage := bindResult(routeRes, oaiMsg{Role: "assistant", ToolCalls: toolCallMessageMaps(calls)})
+				toolProgress := modelToolProgress(routeRes.Text)
+				usage := bindResult(routeRes, oaiMsg{Role: "assistant", Content: toolProgress, ToolCalls: toolCallMessageMaps(calls)})
 				setSessionHeader(routeRes)
-				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(usage))
+				_ = writeToolResponseWithProgress(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes, chatUsage(usage), toolProgress)
 				return
 			}
 		}
@@ -3364,6 +3371,9 @@ const sessionHeaderName = "X-M365-Session-Id"
 // 这里不再做"用完即删"，否则复用永远不可能命中。
 func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.Request, res chathub.Result, assistantMsg oaiMsg, prompt string, startedAt time.Time, affinityState *affinityRequest) reuseUsage {
 	completed := len(buildAgentLedger(activeMessages(body.Messages)).Completed)
+	if len(assistantMsg.ToolCalls) > 0 && strings.TrimSpace(contentToString(assistantMsg.Content)) == "" {
+		assistantMsg.Content = modelToolProgress(res.Text)
+	}
 	assistantMsg = responseAffinityAssistantHistoryForStage(r, prompt, assistantMsg, completed)
 	fullPrompt, _ := flattenPromptMessages(body.Messages, nil)
 	promptTokens := EstimateTokens(strings.TrimSpace(fullPrompt))
@@ -3418,16 +3428,16 @@ func (s *Server) bindConversation(acc auth.AccountToken, body *oaiReq, r *http.R
 	return usage
 }
 
-// responseAffinityAssistantHistory mirrors the public progress text generated
-// for a gateway-planned tool call. Responses state persists that visible text,
-// so its affinity binding must retain the same assistant turn or the next tool
-// output has a different history digest. Genuine upstream mixed text/tool turns
-// are left untouched because this only runs for the Responses adapter.
+// responseAffinityAssistantHistory preserves an explicitly model-authored
+// status line in a Responses tool turn. Responses state persists that visible
+// text, so its affinity binding must retain the same assistant turn or the next
+// tool output has a different history digest. No status is invented when the
+// model omitted one.
 func responseAffinityAssistantHistory(r *http.Request, prompt string, assistant oaiMsg) oaiMsg {
 	return responseAffinityAssistantHistoryForStage(r, prompt, assistant, 0)
 }
 
-func responseAffinityAssistantHistoryForStage(r *http.Request, prompt string, assistant oaiMsg, completed int) oaiMsg {
+func responseAffinityAssistantHistoryForStage(r *http.Request, _ string, assistant oaiMsg, _ int) oaiMsg {
 	if r == nil || !responsesAdapterFromContext(r.Context()) || len(assistant.ToolCalls) == 0 {
 		return assistant
 	}
@@ -3437,15 +3447,10 @@ func responseAffinityAssistantHistoryForStage(r *http.Request, prompt string, as
 	if strings.TrimSpace(contentToString(assistant.Content)) != "" {
 		return assistant
 	}
-	calls := make([]detectedToolCall, 0, len(assistant.ToolCalls))
-	for _, call := range assistant.ToolCalls {
-		fn, _ := call["function"].(map[string]any)
-		calls = append(calls, detectedToolCall{
-			Type: fmt.Sprint(call["type"]),
-			Name: strings.TrimSpace(fmt.Sprint(fn["name"])),
-		})
-	}
-	assistant.Content = sanitizePublicAssistantText(strings.TrimSpace(toolProgressTextForStage(prompt, calls, completed)))
+	// Do not synthesize a visible progress sentence. If the model did not
+	// author a status line, the assistant turn remains content-empty; inventing
+	// "step N" text changes the Responses history and is shown as duplicate
+	// progress by clients.
 	return assistant
 }
 

@@ -6,6 +6,12 @@ import (
 	"unicode"
 )
 
+// modelToolProgress returns only an explicit status line authored by the
+// upstream model. The gateway does not fabricate progress text.
+func modelToolProgress(text string) string {
+	return sanitizePublicAssistantText(strings.TrimSpace(toolDecisionStatus(text)))
+}
+
 func containsHan(text string) bool {
 	for _, r := range text {
 		if unicode.Is(unicode.Han, r) {

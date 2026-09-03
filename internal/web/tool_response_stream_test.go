@@ -102,3 +102,22 @@ func TestToolResponseIncludesProgressWhenProvided(t *testing.T) {
 		t.Fatalf("progress was not included in tool response: %s", rr.Body.String())
 	}
 }
+
+func TestToolResponseUsesOnlyModelAuthoredProgress(t *testing.T) {
+	calls := []detectedToolCall{{ID: "call_exec", Type: "custom", Name: "exec", Arguments: json.RawMessage("{\"input\":\"Get-Location\"}")}}
+	withStatus := httptest.NewRecorder()
+	if err := writeToolResponse(withStatus, "chatcmpl_test", "gpt-test", false, true, calls, chathub.Result{Text: "STATUS: I will inspect the environment first.\nCALL_TOOL: exec({})"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(withStatus.Body.String(), "I will inspect the environment first.") {
+		t.Fatalf("model-authored status was omitted: %s", withStatus.Body.String())
+	}
+
+	withoutStatus := httptest.NewRecorder()
+	if err := writeToolResponse(withoutStatus, "chatcmpl_test", "gpt-test", false, true, calls, chathub.Result{Text: "CALL_TOOL: exec({})"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(withoutStatus.Body.String(), "step 1") || strings.Contains(withoutStatus.Body.String(), "第 1 步") {
+		t.Fatalf("gateway progress was invented: %s", withoutStatus.Body.String())
+	}
+}

@@ -47,6 +47,28 @@ func TestResponseStateWireCompressionAndLegacyJSON(t *testing.T) {
 	}
 }
 
+func TestResponseStateTTLDefaultsToThirtyMinutesWithoutAffinity(t *testing.T) {
+	t.Setenv("M365_AFFINITY_TTL_MINUTES", "")
+	server := &Server{}
+	if got := server.responseStateTTL(); got != 30*time.Minute {
+		t.Fatalf("response state TTL=%s, want 30m", got)
+	}
+}
+
+func TestResponseStateTTLUsesConfiguredAffinityTTL(t *testing.T) {
+	server := &Server{affinity: &affinityManager{config: affinityConfig{TTL: 7 * time.Minute}}}
+	if got := server.responseStateTTL(); got != 7*time.Minute {
+		t.Fatalf("response state TTL=%s, want 7m", got)
+	}
+}
+
+func TestResponseStateTTLIsCappedAtThirtyMinutes(t *testing.T) {
+	server := &Server{affinity: &affinityManager{config: affinityConfig{TTL: 6 * time.Hour}}}
+	if got := server.responseStateTTL(); got != 30*time.Minute {
+		t.Fatalf("response state TTL=%s, want 30m cap", got)
+	}
+}
+
 func newResponseStateTestServer(config affinityConfig) *Server {
 	if config.TTL == 0 {
 		config.TTL = time.Hour

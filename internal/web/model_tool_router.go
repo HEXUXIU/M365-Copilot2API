@@ -183,7 +183,8 @@ func callOmitsNodeReplDocumentationOutput(call detectedToolCall) bool {
 func modelToolRouterPrompt(prompt string, tools []map[string]any, choice any) string {
 	defs, _ := json.Marshal(compactRouterTools(tools))
 	mode := normalizedToolChoiceMode(choice)
-	rules := `- If a tool is needed, respond with: CALL_TOOL: tool_name({"arg1":"value1"})
+	rules := `- If a tool is needed, you may first add exactly one model-authored status line: STATUS: <what you are doing and why>
+- Then respond with: CALL_TOOL: tool_name({"arg1":"value1"})
 - If no tool is needed, respond with: NO_TOOL_NEEDED
 - Only use tools from the available list above
 - Validate all arguments against the tool's schema

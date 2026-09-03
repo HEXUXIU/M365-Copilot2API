@@ -363,13 +363,16 @@ type ContextMessage struct {
 // producing a response. Text events are safe to show immediately; progress and
 // tool events are normally buffered by protocol adapters.
 type StreamEvent struct {
-	Kind        string
-	Text        string
-	MessageType string
-	ContentType string
-	ToolName    string
-	Arguments   json.RawMessage
-	Raw         json.RawMessage
+	Kind          string
+	Text          string
+	MessageType   string
+	ContentType   string
+	ContentOrigin string
+	MessageID     string
+	ToolCallID    string
+	ToolName      string
+	Arguments     json.RawMessage
+	Raw           json.RawMessage
 }
 
 type StreamHandler func(StreamEvent) error
@@ -797,6 +800,8 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 	var events []json.RawMessage
 	var suggestions []SuggestedResponse
 	seenStreamTools := map[string]bool{}
+	var reasoningSnapshots reasoningReconciler
+	seenReasoning := map[string]bool{}
 	var reasoningBuf strings.Builder
 	var offense string
 	var scores []Score
@@ -1042,19 +1047,34 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 						}
 					}
 
-					for _, ev := range classifyUpdateMessages(msgs) {
+					for _, ev := range classifyUpdateMessagesWithSeen(msgs, seenStreamTools) {
 						if ev.Kind == "reasoning" {
-							if reasoningBuf.Len() > 0 {
-								reasoningBuf.WriteByte('\n')
-								ev.Text = "\n" + ev.Text
+							if ev.ContentOrigin == "ChainOfThoughtSummary" {
+								ev.Text = reasoningSnapshots.Apply(ev.Text)
+							} else {
+								key := ev.ContentOrigin + "|" + ev.ContentType + "|" + ev.Text
+								if seenReasoning[key] {
+									ev.Text = ""
+								} else {
+									seenReasoning[key] = true
+								}
 							}
-							reasoningBuf.WriteString(strings.TrimPrefix(ev.Text, "\n"))
-							if strings.TrimSpace(ev.Text) != "" {
+							if ev.Text != "" {
+								if reasoningBuf.Len() > 0 {
+									reasoningBuf.WriteByte('\n')
+								}
+								reasoningBuf.WriteString(strings.TrimPrefix(ev.Text, "\n"))
+								if onEvent != nil {
+									if err := onEvent(ev); err != nil {
+										returnConn = false
+										return Result{}, err
+									}
+								}
 								markMeaningfulOutput()
 							}
 						}
 						ev.Raw = eventRaw(arg)
-						if ev.Kind != "text" && onEvent != nil {
+						if ev.Kind != "text" && ev.Kind != "reasoning" && onEvent != nil {
 							if err := onEvent(ev); err != nil {
 								returnConn = false
 								return Result{}, err

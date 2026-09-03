@@ -247,22 +247,77 @@ func completionEvidenceAllows(answer string, l agentLedger) bool {
 	if len(l.Completed) == 0 && len(l.Pending) == 0 {
 		return !unsupportedSuccess.MatchString(answer)
 	}
-	low := strings.ToLower(answer)
-	failureKeywords := []string{"cannot confirm", "not confirmed", "unable to confirm", "no tool result", "no matching tool results were returned", "no external action has been verified"}
-	hasFailure := false
-	for _, h := range failureKeywords {
-		if strings.Contains(low, h) {
-			hasFailure = true
-			break
-		}
-	}
 	if len(l.Completed) > 0 {
-		return !hasFailure
+		for _, evidence := range l.Completed {
+			if !evidence.Failed {
+				continue
+			}
+			// A failed tool result is authoritative negative evidence. The
+			// assistant must report that failure (or that completion remains
+			// unconfirmed); a positive action claim would be misleading.
+			return answerAcknowledgesFailure(answer) && !answerClaimsPositiveSuccess(answer)
+		}
+		return true
 	}
 	if unsupportedSuccess.MatchString(answer) {
 		return false
 	}
 	return true
+}
+
+func answerAcknowledgesFailure(answer string) bool {
+	low := strings.ToLower(answer)
+	for _, phrase := range []string{
+		"cannot confirm", "not confirmed", "unable to confirm",
+		"no tool result", "no matching tool results were returned",
+		"no external action has been verified", "failed", "failure",
+		"error", "permission denied", "access denied", "denied", "not written",
+		"did not", "未完成", "未成功",
+		"失败", "错误", "拒绝", "无法确认", "没有完成",
+	} {
+		if strings.Contains(low, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func answerClaimsPositiveSuccess(answer string) bool {
+	positive := []string{
+		"successfully", "succeeded", "successful", "completed",
+		"created", "written", "executed", "started", "deployed",
+		"deleted", "verified", "searched", "opened", "sent", "interacted",
+		"成功", "完成", "创建", "写入", "执行", "启动", "部署", "删除",
+		"验证", "搜索", "打开", "发送", "交互",
+	}
+	negative := []string{
+		"not ", "never ", "didn't ", "did not ", "failed to ",
+		"unable to ", "cannot ", "can't ", "no ", "未", "没有",
+		"未能", "无法", "不",
+	}
+	for _, sentence := range strings.FieldsFunc(answer, func(r rune) bool {
+		return strings.ContainsRune(".!?\n。！？", r)
+	}) {
+		low := strings.ToLower(sentence)
+		for _, word := range positive {
+			index := strings.Index(low, strings.ToLower(word))
+			if index < 0 {
+				continue
+			}
+			prefix := low[:index]
+			negated := false
+			for _, marker := range negative {
+				if strings.HasSuffix(strings.TrimSpace(prefix), strings.TrimSpace(marker)) {
+					negated = true
+					break
+				}
+			}
+			if !negated {
+				return true
+			}
+		}
+	}
+	return false
 }
 func completedCallIDs(l agentLedger) []string {
 	o := make([]string, 0, len(l.Completed))

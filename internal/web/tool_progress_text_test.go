@@ -41,3 +41,12 @@ func TestModelAuthoredToolStatusIsExtractedAndIgnoredByParser(t *testing.T) {
 		t.Fatalf("parsed=%t calls=%#v", parsed, calls)
 	}
 }
+
+func TestModelToolProgressOnlyForExplicitModelStatus(t *testing.T) {
+	if got := modelToolProgress("STATUS: I will inspect the environment before running the requested command.\nCALL_TOOL: exec({})"); got != "I will inspect the environment before running the requested command." {
+		t.Fatalf("model status was not preserved: %q", got)
+	}
+	if got := modelToolProgress("CALL_TOOL: exec({})"); got != "" {
+		t.Fatalf("gateway invented progress: %q", got)
+	}
+}

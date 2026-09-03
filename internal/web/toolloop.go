@@ -16,6 +16,13 @@ type detectedToolCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
+func publicToolCallID(ev chathub.StreamEvent, name string, args json.RawMessage, index int) string {
+	if id := strings.TrimSpace(ev.ToolCallID); id != "" {
+		return id
+	}
+	return callID(name, string(args), index)
+}
+
 func toolType(name string, tools []map[string]any) string {
 	for _, t := range tools {
 		f, _ := t["function"].(map[string]any)

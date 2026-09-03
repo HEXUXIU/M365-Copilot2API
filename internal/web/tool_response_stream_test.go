@@ -9,6 +9,13 @@ import (
 	"m365-copilot2api/internal/chathub"
 )
 
+func TestPublicToolCallIDPreservesChatHubIdentity(t *testing.T) {
+	ev := chathub.StreamEvent{ToolCallID: "upstream-call-1"}
+	if got := publicToolCallID(ev, "exec", []byte(`{"input":"pwd"}`), 0); got != "upstream-call-1" {
+		t.Fatalf("public tool call ID=%q, want upstream identity", got)
+	}
+}
+
 func TestToolStreamSeparatesArgumentsFromFinishReason(t *testing.T) {
 	rr := httptest.NewRecorder()
 	calls := []detectedToolCall{{

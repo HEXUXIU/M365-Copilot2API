@@ -2526,7 +2526,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if toolKnown {
-					streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
+					streamedTools = append(streamedTools, detectedToolCall{ID: publicToolCallID(ev, ev.ToolName, ev.Arguments, len(streamedTools)), Name: ev.ToolName, Arguments: ev.Arguments})
 				} else {
 					log.Printf("[tool-event] id=%s skipping unknown native tool %q (not in client-declared tools)", requestID, ev.ToolName)
 				}

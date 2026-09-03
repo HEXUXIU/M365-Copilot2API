@@ -58,7 +58,10 @@ func classifyUpdateMessagesWithSeen(messages []any, seen map[string]bool) []Stre
 
 func extractToolFields(m map[string]any) (string, json.RawMessage, string) {
 	callID := ""
-	for _, k := range []string{"callId", "call_id", "toolCallId", "tool_call_id", "messageId", "message_id"} {
+	// messageId identifies the containing assistant message, not an individual
+	// tool invocation. Only invocation-scoped IDs may establish tool identity;
+	// when they are absent, toolEventKey falls back to canonical name+arguments.
+	for _, k := range []string{"callId", "call_id", "toolCallId", "tool_call_id"} {
 		if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
 			callID = strings.TrimSpace(v)
 			break

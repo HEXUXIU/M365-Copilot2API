@@ -74,6 +74,18 @@ func TestClassifyUpdateMessagesKeepsDistinctParallelCallsWithSameArguments(t *te
 	}
 }
 
+func TestClassifyUpdateMessagesDoesNotUseMessageIDAsToolIdentity(t *testing.T) {
+	seen := map[string]bool{}
+	args := map[string]any{"input": "Get-Location"}
+	got := classifyUpdateMessagesWithSeen([]any{
+		map[string]any{"toolName": "exec", "messageId": "message-1", "arguments": args},
+		map[string]any{"toolName": "exec", "messageId": "message-1", "arguments": map[string]any{"input": "Get-ChildItem"}},
+	}, seen)
+	if len(got) != 2 {
+		t.Fatalf("distinct calls sharing an envelope message ID were collapsed: %#v", got)
+	}
+}
+
 func TestClassifyUpdateMessagesDeduplicatesSameCallIDAcrossRepresentations(t *testing.T) {
 	seen := map[string]bool{}
 	args := map[string]any{"input": "Get-Location"}

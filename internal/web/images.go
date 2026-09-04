@@ -103,7 +103,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		endpoint = "/v1/images/edits"
 		prompt = fmt.Sprintf("Edit the first attached image with GPT Image 2. Size: %s. Instructions: %s. Preserve everything not requested to change. Return the edited image URL directly.", size, b.Prompt)
 	}
-	request := chathub.Request{Text: prompt, Tone: "magic", Attachments: b.Attachments, LicenseType: s.settings.get().LicenseType, Scenario: s.settings.get().Scenario, FeatureFlags: s.featureFlags()}
+	request := chathub.Request{Text: prompt, Tone: "magic", Attachments: b.Attachments, LicenseType: s.settings.get().LicenseType, Scenario: s.settings.get().Scenario, FeatureFlags: s.featureFlags(), ImageGeneration: true}
 	var res chathub.Result
 	var lastErr error
 	maxAttempts := 1

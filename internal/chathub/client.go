@@ -54,7 +54,10 @@ func (e *MeteringError) Unwrap() error {
 	return e.Err
 }
 
-const defaultResponseIdleTimeout = 30 * time.Second
+const (
+	defaultResponseIdleTimeout      = 30 * time.Second
+	defaultImageResponseIdleTimeout = 120 * time.Second
+)
 
 func responseIdleTimeoutFromEnv() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("M365_RESPONSE_IDLE_TIMEOUT_SECONDS"))
@@ -64,6 +67,18 @@ func responseIdleTimeoutFromEnv() time.Duration {
 	seconds, err := strconv.Atoi(raw)
 	if err != nil || seconds < 5 || seconds > 300 {
 		return defaultResponseIdleTimeout
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+func imageResponseIdleTimeoutFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("M365_IMAGE_RESPONSE_IDLE_TIMEOUT_SECONDS"))
+	if raw == "" {
+		return defaultImageResponseIdleTimeout
+	}
+	seconds, err := strconv.Atoi(raw)
+	if err != nil || seconds < 30 || seconds > 300 {
+		return defaultImageResponseIdleTimeout
 	}
 	return time.Duration(seconds) * time.Second
 }
@@ -339,6 +354,9 @@ type Request struct {
 	// normally after emitting content but before its completion frame. Router
 	// and tool-planning requests leave this disabled.
 	AutoContinue bool
+	// ImageGeneration keeps accepted GraphicArt jobs on their original
+	// connection long enough to receive the completed image event.
+	ImageGeneration bool
 }
 
 type FeatureFlags struct {
@@ -435,12 +453,13 @@ type Reference struct {
 }
 
 type Client struct {
-	HTTPHeader          http.Header
-	HTTPClient          *http.Client
-	Dialer              *websocket.Dialer
-	Pool                *ConnPool
-	Trace               func(map[string]any)
-	ResponseIdleTimeout time.Duration
+	HTTPHeader               http.Header
+	HTTPClient               *http.Client
+	Dialer                   *websocket.Dialer
+	Pool                     *ConnPool
+	Trace                    func(map[string]any)
+	ResponseIdleTimeout      time.Duration
+	ImageResponseIdleTimeout time.Duration
 }
 
 func NewClient() *Client {
@@ -449,11 +468,12 @@ func NewClient() *Client {
 	h.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 	d := outbound.WebSocketDialer()
 	return &Client{
-		HTTPHeader:          h,
-		HTTPClient:          outbound.HTTPClient(),
-		Dialer:              d,
-		Pool:                NewConnPool(d, h),
-		ResponseIdleTimeout: responseIdleTimeoutFromEnv(),
+		HTTPHeader:               h,
+		HTTPClient:               outbound.HTTPClient(),
+		Dialer:                   d,
+		Pool:                     NewConnPool(d, h),
+		ResponseIdleTimeout:      responseIdleTimeoutFromEnv(),
+		ImageResponseIdleTimeout: imageResponseIdleTimeoutFromEnv(),
 	}
 }
 
@@ -669,10 +689,15 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 
 	var deltas []string
 	var streamed strings.Builder
-	idleTimeout := c.ResponseIdleTimeout
-	if idleTimeout <= 0 {
-		idleTimeout = defaultResponseIdleTimeout
+	chatIdleTimeout := c.ResponseIdleTimeout
+	if chatIdleTimeout <= 0 {
+		chatIdleTimeout = defaultResponseIdleTimeout
 	}
+	imageIdleTimeout := c.ImageResponseIdleTimeout
+	if imageIdleTimeout <= 0 {
+		imageIdleTimeout = defaultImageResponseIdleTimeout
+	}
+	idleTimeout := chatIdleTimeout
 	var responseIdleTimer *time.Timer
 	var responseIdleC <-chan time.Time
 	markMeaningfulOutput := func() {
@@ -814,6 +839,7 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 	var sawSuccessfulResult bool
 	finishResult := func(terminal string) (Result, error) {
 		incomplete := terminal == "normal_close_with_content" || terminal == "response_idle_with_content"
+		images := imageURLs(events)
 		phase = PhaseCompleted
 		ts.LastTokenReceived = time.Now().UTC().Format(time.RFC3339Nano)
 		log.Printf("chathub timing terminal=%s elapsed_ms=%d streamed_text=%d events=%d skipped_snapshots=%d", terminal, time.Since(payloadSentAt).Milliseconds(), streamed.Len(), len(events), skippedSnapshots)
@@ -847,7 +873,7 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 			returnConn = false
 			return Result{}, ErrRateLimitNotice
 		}
-		if text == "" && (!incomplete || reasoningBuf.Len() == 0) {
+		if text == "" && len(images) == 0 && (!incomplete || reasoningBuf.Len() == 0) {
 			returnConn = false
 			return Result{}, ErrEmptyCompletion
 		}
@@ -881,7 +907,7 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 			RawResult:                 rawResult,
 			Events:                    events,
 			Normalized:                NormalizeEvents(events),
-			Images:                    imageURLs(events),
+			Images:                    images,
 			Timestamps:                ts,
 			Incomplete:                incomplete,
 			TerminalReason:            terminal,
@@ -1018,6 +1044,14 @@ func (c *Client) chatWithHandlersOnce(ctx context.Context, acc Account, req Requ
 			}
 			t, _ := obj["type"].(float64)
 			target, _ := obj["target"].(string)
+			if req.ImageGeneration && hasImageGenerationProgress(obj) {
+				idleTimeout = imageIdleTimeout
+				markMeaningfulOutput()
+				if len(imageURLs([]json.RawMessage{json.RawMessage(b)})) > 0 {
+					returnConn = false
+					return finishResult("image_result")
+				}
+			}
 
 			// SignalR ping
 			if int(t) == 6 {

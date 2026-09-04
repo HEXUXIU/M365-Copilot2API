@@ -52,6 +52,38 @@ func imageURLs(raw []json.RawMessage) []string {
 	return out
 }
 
+func hasImageGenerationProgress(event map[string]any) bool {
+	if intValue(event["type"]) != 1 || !strings.EqualFold(stringValue(event["target"]), "update") {
+		return false
+	}
+	arguments, _ := event["arguments"].([]any)
+	for _, rawArgument := range arguments {
+		argument, _ := rawArgument.(map[string]any)
+		messages, _ := argument["messages"].([]any)
+		for _, rawMessage := range messages {
+			message, _ := rawMessage.(map[string]any)
+			contentType := stringValue(message["contentType"])
+			contentOrigin := stringValue(message["contentOrigin"])
+			if !strings.EqualFold(contentType, "GraphicArt") && !strings.EqualFold(contentOrigin, "ImageGeneration") {
+				continue
+			}
+			progress, _ := message["contentGenerationProgressList"].([]any)
+			for _, rawProgress := range progress {
+				item, _ := rawProgress.(map[string]any)
+				if strings.EqualFold(stringValue(item["contentType"]), "image") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func stringValue(value any) string {
+	text, _ := value.(string)
+	return text
+}
+
 func isImageURL(s string) bool {
 	if strings.HasPrefix(s, "data:image/") {
 		_, err := base64.StdEncoding.DecodeString(strings.SplitN(s, ",", 2)[1])

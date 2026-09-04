@@ -23,6 +23,11 @@ func TestImageProgressStageFromEvent(t *testing.T) {
 			want:  "generating",
 		},
 		{
+			name:  "pending image content",
+			event: chathub.StreamEvent{Kind: "progress", MessageType: "Progress", ContentType: "image", ContentOrigin: "ImageGeneration"},
+			want:  "generating",
+		},
+		{
 			name:  "ordinary text",
 			event: chathub.StreamEvent{Kind: "text", Text: "hello"},
 			want:  "",

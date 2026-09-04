@@ -9,7 +9,7 @@ func imageProgressStageFromEvent(event chathub.StreamEvent) string {
 	if event.MessageType != "Progress" {
 		return ""
 	}
-	if event.ContentType != "GraphicArt" && event.ContentType != "ImageGeneration" {
+	if event.ContentType != "GraphicArt" && event.ContentType != "ImageGeneration" && event.ContentType != "image" {
 		return ""
 	}
 	if event.ContentOrigin != "ImageGeneration" && event.ContentOrigin != "GraphicArt" {

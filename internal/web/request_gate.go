@@ -8,11 +8,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 var errRequestQueueFull = errors.New("request queue is full")
 
 const maxRequestGateHeadSkips = 8
+const requestBodyReadTimeout = 30 * time.Second
 
 type requestGateWaiter struct {
 	ready   chan struct{}
@@ -225,6 +227,9 @@ func (s *Server) requestGateMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		defer release()
+		if r.Body != nil {
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(requestBodyReadTimeout))
+		}
 		next.ServeHTTP(w, r)
 	})
 }

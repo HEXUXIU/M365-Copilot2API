@@ -10,6 +10,16 @@ import (
 	"time"
 )
 
+type readDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+}
+
+func (w *readDeadlineRecorder) SetReadDeadline(deadline time.Time) error {
+	w.deadlines = append(w.deadlines, deadline)
+	return nil
+}
+
 func TestRequestGateQueuesFIFOAndReleases(t *testing.T) {
 	g := newRequestGate(1, 2)
 	first, err := g.Acquire(context.Background())
@@ -92,6 +102,59 @@ func TestRequestGateMiddlewareOnlyGatesAPIWork(t *testing.T) {
 	case <-called:
 	case <-time.After(time.Second):
 		t.Fatal("non-API request was not passed through")
+	}
+}
+
+func TestRequestGateMiddlewareRefreshesBodyReadDeadlineAfterQueue(t *testing.T) {
+	g := newRequestGate(1, 1)
+	occupied, err := g.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{requestGate: g}
+	entered := make(chan struct{})
+	done := make(chan struct{})
+	w := &readDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-5.6-sol","input":"ok"}`))
+	go func() {
+		s.requestGateMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			close(entered)
+		})).ServeHTTP(w, r)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for g.Snapshot()["queued"].(int) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if g.Snapshot()["queued"].(int) != 1 {
+		t.Fatal("request did not enter the gate queue")
+	}
+	occupied()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("queued request did not enter the handler")
+	}
+	<-done
+	if len(w.deadlines) != 1 {
+		t.Fatalf("read deadline refreshes=%d, want 1", len(w.deadlines))
+	}
+	remaining := time.Until(w.deadlines[0])
+	if remaining < 25*time.Second || remaining > 31*time.Second {
+		t.Fatalf("refreshed read deadline remaining=%v, want about 30s", remaining)
+	}
+}
+
+func TestTraceWriterUnwrapsForResponseController(t *testing.T) {
+	base := &readDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	w := &traceWriter{ResponseWriter: base}
+	deadline := time.Now().Add(30 * time.Second)
+	if err := http.NewResponseController(w).SetReadDeadline(deadline); err != nil {
+		t.Fatalf("SetReadDeadline through trace writer: %v", err)
+	}
+	if len(base.deadlines) != 1 || !base.deadlines[0].Equal(deadline) {
+		t.Fatalf("deadlines=%v, want [%v]", base.deadlines, deadline)
 	}
 }
 

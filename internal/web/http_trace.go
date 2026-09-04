@@ -13,6 +13,8 @@ type traceWriter struct {
 	bytes  int
 }
 
+func (w *traceWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (w *traceWriter) WriteHeader(status int) {
 	if w.status == 0 {
 		w.status = status

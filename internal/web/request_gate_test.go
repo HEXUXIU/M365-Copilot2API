@@ -16,7 +16,6 @@ func TestRequestGateQueuesFIFOAndReleases(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer first()
 	started := make(chan struct{})
 	released := make(chan struct{})
 	go func() {
@@ -117,6 +116,55 @@ func TestRequestGateWeightedPermitsProtectLongRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	second()
+}
+
+func TestRequestGateUsesFreePermitsBehindOversizedHead(t *testing.T) {
+	g := newRequestGate(4, 4)
+	first, err := g.AcquireWeighted(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first()
+
+	largeReady := make(chan func(), 1)
+	go func() {
+		release, acquireErr := g.AcquireWeighted(context.Background(), 2)
+		if acquireErr != nil {
+			t.Errorf("large acquire: %v", acquireErr)
+			return
+		}
+		largeReady <- release
+	}()
+	deadline := time.Now().Add(time.Second)
+	for g.Snapshot()["queued"].(int) != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if g.Snapshot()["queued"].(int) != 1 {
+		t.Fatal("large request was not queued")
+	}
+
+	smallReady := make(chan func(), 1)
+	go func() {
+		release, acquireErr := g.AcquireWeighted(context.Background(), 1)
+		if acquireErr != nil {
+			t.Errorf("small acquire: %v", acquireErr)
+			return
+		}
+		smallReady <- release
+	}()
+	select {
+	case release := <-smallReady:
+		release()
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("small request was blocked by an oversized queue head")
+	}
+	first()
+	select {
+	case release := <-largeReady:
+		release()
+	case <-time.After(time.Second):
+		t.Fatal("large request was not promoted after capacity became available")
+	}
 }
 
 func TestRequestWeightUsesContentLength(t *testing.T) {

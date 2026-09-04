@@ -12,10 +12,13 @@ import (
 
 var errRequestQueueFull = errors.New("request queue is full")
 
+const maxRequestGateHeadSkips = 8
+
 type requestGateWaiter struct {
 	ready   chan struct{}
 	granted bool
 	weight  int
+	skips   int
 }
 
 // requestGate bounds active API work and keeps a FIFO wait queue. The gate is
@@ -41,11 +44,37 @@ func newRequestGate(limit, maxQueue int) *requestGate {
 
 func (g *requestGate) promoteLocked() {
 	for len(g.waiters) > 0 {
-		w := g.waiters[0]
-		if g.active+w.weight > g.limit {
-			break
+		selected := 0
+		head := g.waiters[0]
+		if g.active+head.weight > g.limit {
+			selected = -1
+			for i := 1; i < len(g.waiters); i++ {
+				candidate := g.waiters[i]
+				if g.active+candidate.weight > g.limit {
+					continue
+				}
+				blockedByAgedHead := false
+				for j := 0; j < i; j++ {
+					if g.waiters[j].skips >= maxRequestGateHeadSkips {
+						blockedByAgedHead = true
+						break
+					}
+				}
+				if blockedByAgedHead {
+					break
+				}
+				for j := 0; j < i; j++ {
+					g.waiters[j].skips++
+				}
+				selected = i
+				break
+			}
 		}
-		g.waiters = g.waiters[1:]
+		if selected < 0 {
+			return
+		}
+		w := g.waiters[selected]
+		g.waiters = append(g.waiters[:selected], g.waiters[selected+1:]...)
 		if w.granted {
 			continue
 		}
@@ -103,6 +132,10 @@ func (g *requestGate) AcquireWeighted(ctx context.Context, weight int) (func(), 
 		return nil, errRequestQueueFull
 	}
 	g.waiters = append(g.waiters, w)
+	// A newly queued request may fit in permits left by an oversized head.
+	// Promote immediately so idle capacity is used without waiting for an
+	// unrelated release event.
+	g.promoteLocked()
 	g.mu.Unlock()
 	select {
 	case <-w.ready:
@@ -119,6 +152,7 @@ func (g *requestGate) AcquireWeighted(ctx context.Context, weight int) (func(), 
 				break
 			}
 		}
+		g.promoteLocked()
 		g.mu.Unlock()
 		return nil, ctx.Err()
 	}

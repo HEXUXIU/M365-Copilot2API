@@ -155,6 +155,30 @@ Use a unique test ID and meaningful scene prompt. Start it once on the server an
 
 Before editing behavior, add the exact redacted observed fixture and selected assertion to this plan.
 
+Observed on production candidate `f4500abdec3a` at 2026-09-04 16:17 CST:
+
+- attempt 1 and attempt 3 both received five events;
+- the first update carried a short reasoning/progress message;
+- the second relevant update was `messageType=Progress`,
+  `contentType=GraphicArt`, `contentOrigin=ImageGeneration`;
+- `contentGenerationProgressList[0]` used `contentType=image`, contained
+  `pollUrl`, `fileToken`, and `ImageReferenceUrls`, but the URL array was still
+  empty and no status value was present;
+- only SignalR ping frames followed before `response_idle_with_content` fired;
+- reasoning length was 19 or 20 bytes, image count was zero, and the public
+  request ended as HTTP 502 after 73.48 seconds;
+- a preceding request on candidate `f85cd4d24406` succeeded through attempt 3
+  with two image URLs after 91.76 seconds, proving that the payload and parser
+  can still produce valid images.
+
+Selected repair: add an internal `Request.ImageGeneration` marker. Ordinary
+requests retain the existing 30-second response idle limit. When an image-marked
+request receives the observed pending GraphicArt progress, switch that
+connection to a 120-second image idle limit, still bounded by the existing
+150-second HTTP image context. When a later GraphicArt progress event contains
+an image URL, finish immediately with that image instead of waiting for an
+unrelated text or completion frame.
+
 ### Task 4: Test-Drive The Selected Repair
 
 **Files:**

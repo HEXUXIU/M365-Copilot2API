@@ -6,7 +6,7 @@ Goal: Make M365 Images generation and edit requests provide real SSE progress wh
 
 Architecture: Add a small M365 web-layer progress writer that emits deduplicated stage events and 10-second SSE comments. Extend the current image request path with a stream branch using chatWithAccountEvents; retain the existing blocking branch for stream:false. Sub2API remains the relay and accounting boundary because it already handles image SSE, keepalive, header filtering, and public-origin URL rewriting.
 
-Tech Stack: Go, net/http, Gin, ChatHub events, existing M365 image handler, existing Sub2API image SSE relay, Go test/race/vet/build.
+Tech Stack: Go, net/http, ChatHub events, existing M365 image handler, existing Sub2API image SSE relay, Go test/race/vet/build.
 
 ---
 
@@ -80,7 +80,7 @@ Files:
 
 - [ ] Step 1: Implement the minimal writer
 
-Define imageProgressStream with a mutex, Gin context, event prefix, start time, heartbeat interval, last stage, stop/done channels, and stopped state. Define newImageProgressStream, Start, Stage, and Stop. Start sets text/event-stream, Cache-Control: no-cache, Connection: keep-alive, and X-Accel-Buffering: no, then starts a ticker goroutine. Stage deduplicates by stage, marshals only type, stage, and elapsed_seconds, writes one SSE event, and flushes. The ticker writes the SSE comment ": image-generation keepalive\\n\\n" and flushes. All writes are mutex-protected; a write error stops the stream.
+Define imageProgressStream with a mutex, standard http.ResponseWriter, request context, event prefix, start time, heartbeat interval, last stage, stop/done channels, and stopped state. Define newImageProgressStream(w http.ResponseWriter, ctx context.Context, prefix string, interval time.Duration), Start, Stage, and Stop. Start sets text/event-stream, Cache-Control: no-cache, Connection: keep-alive, and X-Accel-Buffering: no, then starts a ticker goroutine. Stage deduplicates by stage, marshals only type, stage, and elapsed_seconds, writes one SSE event, and flushes. The ticker writes the SSE comment ": image-generation keepalive\\n\\n" and flushes. All writes are mutex-protected; a write error stops the stream.
 
 - [ ] Step 2: Verify GREEN and package compatibility
 
@@ -317,4 +317,3 @@ Restore the saved Compose file and m365-copilot2api:image-graphicart-wait-675ea1
 - [ ] Step 6: Push and complete
 
 Push the M365 branch and any Sub2API branch changes to the private repository. Mark the active goal complete only after acceptance data and rollback artifacts exist.
-

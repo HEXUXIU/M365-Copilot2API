@@ -17,6 +17,13 @@ var allowedImageProgressStages = map[string]struct{}{
 	"completed":   {},
 }
 
+var imageProgressStageRank = map[string]int{
+	"queued":      1,
+	"generating":  2,
+	"downloading": 3,
+	"completed":   4,
+}
+
 // imageProgressStream writes a protocol-compatible SSE stream for an image
 // request. It never fabricates a percentage; stages reflect real request state.
 type imageProgressStream struct {
@@ -28,6 +35,8 @@ type imageProgressStream struct {
 	started  time.Time
 	interval time.Duration
 	last     string
+	lastRank int
+	seen     map[string]struct{}
 	stop     chan struct{}
 	done     chan struct{}
 	stopped  bool
@@ -49,6 +58,7 @@ func newImageProgressStream(writer http.ResponseWriter, ctx context.Context, pre
 		interval: interval,
 		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
+		seen:     make(map[string]struct{}, len(allowedImageProgressStages)),
 	}
 }
 
@@ -128,7 +138,11 @@ func (s *imageProgressStream) Stage(stage string) error {
 	if s.stopped {
 		return errors.New("image progress stream stopped")
 	}
-	if stage == s.last {
+	if _, seen := s.seen[stage]; seen {
+		return nil
+	}
+	rank := imageProgressStageRank[stage]
+	if rank < s.lastRank {
 		return nil
 	}
 	payload := map[string]any{
@@ -140,6 +154,8 @@ func (s *imageProgressStream) Stage(stage string) error {
 		return err
 	}
 	s.last = stage
+	s.lastRank = rank
+	s.seen[stage] = struct{}{}
 	return nil
 }
 

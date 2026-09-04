@@ -110,3 +110,24 @@ func TestImageProgressStreamHeartbeatIsSSEComment(t *testing.T) {
 		t.Fatalf("heartbeat was exposed as a stage: %q", body)
 	}
 }
+
+func TestImageProgressStreamDoesNotRepeatAStageAfterLifecycleAdvances(t *testing.T) {
+	recorder := newLockedResponseWriter()
+	stream := newImageProgressStream(recorder, context.Background(), "image_generation", time.Hour)
+	defer stream.Stop()
+	if err := stream.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for _, stage := range []string{"queued", "generating", "downloading", "generating", "completed", "downloading"} {
+		if err := stream.Stage(stage); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := recorder.String()
+	for _, stage := range []string{"queued", "generating", "downloading", "completed"} {
+		if got := strings.Count(body, `"stage":"`+stage+`"`); got != 1 {
+			t.Fatalf("stage %q count = %d, want 1; body=%q", stage, got, body)
+		}
+	}
+}

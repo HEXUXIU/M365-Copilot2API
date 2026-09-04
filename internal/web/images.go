@@ -40,6 +40,7 @@ type imageGenerationRequest struct {
 	N              int                  `json:"n"`
 	Size           string               `json:"size"`
 	ResponseFormat string               `json:"response_format"`
+	Stream         bool                 `json:"stream"`
 	Model          string               `json:"model"`
 	AccountID      string               `json:"accountId"`
 	User           string               `json:"user"`
@@ -104,6 +105,42 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		prompt = fmt.Sprintf("Edit the first attached image with GPT Image 2. Size: %s. Instructions: %s. Preserve everything not requested to change. Return the edited image URL directly.", size, b.Prompt)
 	}
 	request := chathub.Request{Text: prompt, Tone: "magic", Attachments: b.Attachments, LicenseType: s.settings.get().LicenseType, Scenario: s.settings.get().Scenario, FeatureFlags: s.featureFlags(), ImageGeneration: true}
+	var progress *imageProgressStream
+	progressGenerated := false
+	if b.Stream {
+		prefix := "image_generation"
+		if b.Operation == "edit" {
+			prefix = "image_edit"
+		}
+		progress = newImageProgressStream(w, r.Context(), prefix, 10*time.Second)
+		if err := progress.Start(); err != nil {
+			return
+		}
+		defer progress.Stop()
+		if err := progress.Stage("queued"); err != nil {
+			return
+		}
+	}
+	streamError := func(status int, typ, message string) {
+		if progress != nil {
+			_ = progress.Error(sanitizePublicInternalText(message))
+			return
+		}
+		writeOpenAIError(w, status, typ, message)
+	}
+	streamUpstreamError := func(upstreamErr error) {
+		if progress != nil {
+			message := upstreamError(upstreamErr)
+			if errors.Is(upstreamErr, chathub.ErrImageLimit) {
+				message = "image generation daily limit reached; try again tomorrow"
+			} else if IsRateLimited(upstreamErr) {
+				message = "upstream is rate limiting; try again shortly"
+			}
+			_ = progress.Error(message)
+			return
+		}
+		writeUpstreamError(w, upstreamErr)
+	}
 	var res chathub.Result
 	var lastErr error
 	maxAttempts := 1
@@ -122,10 +159,26 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 			acc = next
 		}
 		attempted[acc.ID] = struct{}{}
-		res, err = s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, request)
+		onEvent := func(event chathub.StreamEvent) error {
+			if progress == nil {
+				return nil
+			}
+			if stage := imageProgressStageFromEvent(event); stage != "" {
+				if stage == "generating" {
+					progressGenerated = true
+				}
+				return progress.Stage(stage)
+			}
+			return nil
+		}
+		if b.Stream {
+			res, err = s.chatWithAccountEvents(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, request, onEvent)
+		} else {
+			res, err = s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, request)
+		}
 		if err != nil {
 			lastErr = err
-			if attempt+1 >= maxAttempts || !(IsTransientUpstreamFailure(err) || IsRateLimited(err) || IsAuthFailure(err) || errors.Is(err, chathub.ErrImageLimit) || IsEmptyCompletion(err)) {
+			if attempt+1 >= maxAttempts || progressGenerated || !(IsTransientUpstreamFailure(err) || IsRateLimited(err) || IsAuthFailure(err) || errors.Is(err, chathub.ErrImageLimit) || IsEmptyCompletion(err)) {
 				break
 			}
 			continue
@@ -162,18 +215,18 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if lastErr != nil {
-		writeUpstreamError(w, lastErr)
+		streamUpstreamError(lastErr)
 		return
 	}
 	if len(res.Images) == 0 {
 		refusalText := strings.Join([]string{res.Text, res.RawResult}, "\n")
 		if isImageQuotaRefusal(refusalText) {
 			w.Header().Set("Retry-After", "86400")
-			writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", "M365 image generation quota is exhausted; try again later or use another account")
+			streamError(http.StatusTooManyRequests, "rate_limit_error", "M365 image generation quota is exhausted; try again later or use another account")
 			return
 		}
 		log.Printf("[image-gen-events] %s", imageEventDiagnostic(res))
-		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "upstream returned no image resource")
+		streamError(http.StatusBadGateway, "upstream_error", "upstream returned no image resource")
 		return
 	}
 	images := res.Images
@@ -183,12 +236,17 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 
 	var designerToken string
 	data := make([]map[string]string, 0, len(images))
+	if progress != nil {
+		if err := progress.Stage("downloading"); err != nil {
+			return
+		}
+	}
 	for _, sourceURL := range images {
 		if strings.HasPrefix(strings.ToLower(sourceURL), "data:image/") {
 			if format == "b64_json" {
 				parts := strings.SplitN(sourceURL, ",", 2)
 				if len(parts) != 2 {
-					writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "invalid upstream image data")
+					streamError(http.StatusBadGateway, "upstream_error", "invalid upstream image data")
 					return
 				}
 				data = append(data, map[string]string{"b64_json": parts[1]})
@@ -199,7 +257,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		}
 		if !isDesignerImageURL(sourceURL) {
 			if format == "b64_json" {
-				writeOpenAIError(w, http.StatusBadGateway, "unsupported_response_format", "upstream returned URL, not b64_json")
+				streamError(http.StatusBadGateway, "unsupported_response_format", "upstream returned URL, not b64_json")
 				return
 			}
 			data = append(data, map[string]string{"url": sourceURL})
@@ -208,7 +266,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		if designerToken == "" {
 			designerToken, err = s.designerAccessToken(acc)
 			if err != nil {
-				writeOpenAIError(w, http.StatusBadGateway, "upstream_error", upstreamError(err))
+				streamError(http.StatusBadGateway, "upstream_error", upstreamError(err))
 				return
 			}
 		}
@@ -233,7 +291,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		}
 		if downloadErr != nil {
 			log.Printf("[image-gen-download] err=%v", downloadErr)
-			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", upstreamError(downloadErr))
+			streamError(http.StatusBadGateway, "upstream_error", upstreamError(downloadErr))
 			return
 		}
 		if format == "b64_json" {
@@ -254,7 +312,27 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		DurationMs:   time.Since(startedAt).Milliseconds(),
 		Status:       200,
 	})
-	jsonOut(w, map[string]any{"created": time.Now().Unix(), "data": data, "m365": map[string]any{"conversationId": res.ConversationID, "sessionId": res.SessionID, "images": images}})
+	created := time.Now().Unix()
+	if progress != nil {
+		if err := progress.Stage("completed"); err != nil {
+			return
+		}
+		prefix := "image_generation"
+		if b.Operation == "edit" {
+			prefix = "image_edit"
+		}
+		for _, item := range data {
+			payload := map[string]any{"type": prefix + ".completed", "created_at": created}
+			for key, value := range item {
+				payload[key] = value
+			}
+			if err := progress.Emit(prefix+".completed", payload); err != nil {
+				return
+			}
+		}
+		return
+	}
+	jsonOut(w, map[string]any{"created": created, "data": data, "m365": map[string]any{"conversationId": res.ConversationID, "sessionId": res.SessionID, "images": images}})
 }
 
 func imageEventDiagnostic(res chathub.Result) string {
@@ -337,11 +415,20 @@ func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	stream := false
+	if rawStream := strings.TrimSpace(r.FormValue("stream")); rawStream != "" {
+		stream, err = strconv.ParseBool(rawStream)
+		if err != nil {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "stream must be a boolean")
+			return
+		}
+	}
 	body := imageGenerationRequest{
 		Prompt:         prompt,
 		N:              n,
 		Size:           strings.TrimSpace(r.FormValue("size")),
 		ResponseFormat: strings.TrimSpace(r.FormValue("response_format")),
+		Stream:         stream,
 		Model:          strings.TrimSpace(r.FormValue("model")),
 		AccountID:      firstNonEmpty(strings.TrimSpace(r.FormValue("accountId")), strings.TrimSpace(r.FormValue("account_id"))),
 		User:           strings.TrimSpace(r.FormValue("user")),

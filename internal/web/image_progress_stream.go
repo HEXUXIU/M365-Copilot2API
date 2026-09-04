@@ -136,16 +136,42 @@ func (s *imageProgressStream) Stage(stage string) error {
 		"stage":           stage,
 		"elapsed_seconds": int64(time.Since(s.started) / time.Second),
 	}
+	if err := s.emitLocked(s.prefix+".progress", payload); err != nil {
+		return err
+	}
+	s.last = stage
+	return nil
+}
+
+func (s *imageProgressStream) Emit(eventName string, payload any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.emitLocked(eventName, payload)
+}
+
+func (s *imageProgressStream) Error(message string) error {
+	if message == "" {
+		message = "upstream request failed"
+	}
+	return s.Emit("error", map[string]any{
+		"type":  "error",
+		"error": map[string]any{"type": "upstream_error", "message": message},
+	})
+}
+
+func (s *imageProgressStream) emitLocked(eventName string, payload any) error {
+	if s.stopped {
+		return errors.New("image progress stream stopped")
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(s.writer, "event: %s.progress\ndata: %s\n\n", s.prefix, body); err != nil {
+	if _, err := fmt.Fprintf(s.writer, "event: %s\ndata: %s\n\n", eventName, body); err != nil {
 		s.stopLocked()
 		return err
 	}
 	s.flusher.Flush()
-	s.last = stage
 	return nil
 }
 

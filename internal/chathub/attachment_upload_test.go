@@ -73,3 +73,51 @@ func TestUploadAttachmentsRejectsOversizedDataBeforeHTTP(t *testing.T) {
 		t.Fatalf("err=%v called=%t", err, called)
 	}
 }
+
+type attachmentTimeoutError struct{}
+
+func (attachmentTimeoutError) Error() string   { return "TLS handshake timeout" }
+func (attachmentTimeoutError) Timeout() bool   { return true }
+func (attachmentTimeoutError) Temporary() bool { return true }
+
+func TestUploadAttachmentsRetriesTransientUpload503(t *testing.T) {
+	attempts := 0
+	client := &Client{HTTPClient: &http.Client{Transport: attachmentRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+		attempts++
+		if attempts == 1 {
+			return &http.Response{StatusCode: http.StatusServiceUnavailable, Status: "503 Service Unavailable", Body: io.NopCloser(strings.NewReader("busy")), Header: make(http.Header)}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"docId":"doc-retry","fileName":"image.png","fileType":"png","result":{"value":"Success"}}`)), Header: make(http.Header)}, nil
+	})}}
+	attachments := []Attachment{{Type: "image", MimeType: "image/png", URL: "data:image/png;base64,aGVsbG8="}}
+	if err := client.uploadAttachments(context.Background(), Account{AccessToken: "token"}, "conversation", attachments); err != nil {
+		t.Fatalf("upload error=%v", err)
+	}
+	if attempts != 2 || attachments[0].DocID != "doc-retry" {
+		t.Fatalf("attempts=%d attachment=%#v", attempts, attachments[0])
+	}
+}
+
+func TestUploadAttachmentsRetriesTransientDownloadTimeout(t *testing.T) {
+	attempts := 0
+	client := &Client{HTTPClient: &http.Client{Transport: attachmentRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodGet {
+			attempts++
+			if attempts == 1 {
+				return nil, &url.Error{Op: "Get", URL: r.URL.String(), Err: attachmentTimeoutError{}}
+			}
+			return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("hello")), Header: http.Header{"Content-Type": []string{"image/png"}}}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"docId":"doc-download-retry","fileName":"image.png","fileType":"png","result":{"value":"Success"}}`)), Header: make(http.Header)}, nil
+	})}}
+	attachments := []Attachment{{Type: "image", URL: "https://1.1.1.1/image.png"}}
+	if err := client.uploadAttachments(context.Background(), Account{AccessToken: "token"}, "conversation", attachments); err != nil {
+		t.Fatalf("upload error=%v", err)
+	}
+	if attempts != 2 || attachments[0].DocID != "doc-download-retry" {
+		t.Fatalf("download attempts=%d attachment=%#v", attempts, attachments[0])
+	}
+}

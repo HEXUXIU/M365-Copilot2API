@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"m365-copilot2api/internal/outbound"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +35,12 @@ var ErrImageLimit = errors.New("upstream image generation daily limit reached")
 var ErrOffensiveContent = errors.New("upstream content policy flagged as offensive")
 
 var ErrMeteringThrottled = errors.New("upstream metering throttle: capability access denied")
+
+const (
+	attachmentTransientRetries = 2
+	attachmentRetryBaseDelay   = 150 * time.Millisecond
+	attachmentRetryMaxDelay    = 2 * time.Second
+)
 
 type MeteringError struct {
 	Err         error
@@ -1451,6 +1458,59 @@ func (c *Client) downloadClient() *http.Client {
 	}
 }
 
+func isTransientAttachmentStatus(status int) bool {
+	switch status {
+	case http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTransientAttachmentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary()) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "tls") ||
+		strings.Contains(s, "handshake") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "unexpected eof")
+}
+
+func attachmentRetryDelay(attempt int, retryAfter string) time.Duration {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(retryAfter)); err == nil && seconds > 0 {
+		d := time.Duration(seconds) * time.Second
+		if d < attachmentRetryMaxDelay {
+			return d
+		}
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := attachmentRetryBaseDelay * time.Duration(1<<(attempt-1))
+	if d > attachmentRetryMaxDelay {
+		return attachmentRetryMaxDelay
+	}
+	return d
+}
+
+func waitAttachmentRetry(ctx context.Context, attempt int, retryAfter string) error {
+	timer := time.NewTimer(attachmentRetryDelay(attempt, retryAfter))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversationID string, attachments []Attachment) error {
 	imageCount := 0
 	for i := range attachments {
@@ -1468,23 +1528,56 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 			if err := validateRemoteDownloadURL(a.URL); err != nil {
 				return err
 			}
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
-			if err != nil {
-				return fmt.Errorf("attachment %d: create request: %w", i, err)
+			var body []byte
+			var mimeType string
+			var downloadErr error
+			for attempt := 0; attempt <= attachmentTransientRetries; attempt++ {
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
+				if err != nil {
+					return fmt.Errorf("attachment %d: create request: %w", i, err)
+				}
+				resp, err := c.downloadClient().Do(req)
+				if err != nil {
+					downloadErr = err
+					if attempt < attachmentTransientRetries && isTransientAttachmentError(err) {
+						if err := waitAttachmentRetry(ctx, attempt+1, ""); err != nil {
+							return fmt.Errorf("attachment %d: download: %w", i, err)
+						}
+						continue
+					}
+					return fmt.Errorf("attachment %d: download: %w", i, err)
+				}
+				body, err = io.ReadAll(io.LimitReader(resp.Body, maxAttachmentMiB<<20))
+				retryAfter := resp.Header.Get("Retry-After")
+				status := resp.StatusCode
+				mimeType = resp.Header.Get("Content-Type")
+				resp.Body.Close()
+				if err != nil {
+					downloadErr = err
+					if attempt < attachmentTransientRetries && isTransientAttachmentError(err) {
+						if err := waitAttachmentRetry(ctx, attempt+1, retryAfter); err != nil {
+							return fmt.Errorf("attachment %d: read body: %w", i, err)
+						}
+						continue
+					}
+					return fmt.Errorf("attachment %d: read body: %w", i, err)
+				}
+				if status == http.StatusOK {
+					downloadErr = nil
+					break
+				}
+				downloadErr = fmt.Errorf("HTTP %d", status)
+				if attempt < attachmentTransientRetries && isTransientAttachmentStatus(status) {
+					if err := waitAttachmentRetry(ctx, attempt+1, retryAfter); err != nil {
+						return fmt.Errorf("attachment %d: download: %w", i, err)
+					}
+					continue
+				}
+				return fmt.Errorf("attachment %d: HTTP %d", i, status)
 			}
-			resp, err := c.downloadClient().Do(req)
-			if err != nil {
-				return fmt.Errorf("attachment %d: download: %w", i, err)
+			if downloadErr != nil {
+				return fmt.Errorf("attachment %d: download: %w", i, downloadErr)
 			}
-			body, err := io.ReadAll(io.LimitReader(resp.Body, maxAttachmentMiB<<20))
-			resp.Body.Close()
-			if err != nil {
-				return fmt.Errorf("attachment %d: read body: %w", i, err)
-			}
-			if resp.StatusCode != http.StatusOK {
-				return fmt.Errorf("attachment %d: HTTP %d", i, resp.StatusCode)
-			}
-			mimeType := resp.Header.Get("Content-Type")
 			if mimeType == "" {
 				mimeType = "image/png"
 			}
@@ -1528,50 +1621,83 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 		}
 		form.Add("optionsSets", "cwcgptvsan")
 		form.Add("optionsSets", "flux_v3_gptv_enable_upload_multi_image_in_turn_wo_ch")
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://substrate.office.com/m365Copilot/UploadFile", strings.NewReader(form.Encode()))
-		if err != nil {
-			return err
-		}
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		if acc.AccessToken != "" {
-			req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
-		}
-		req.Header.Set("Accept", "application/json")
-		// Required by the enterprise Copilot UploadFile image-input path.
-		// This feature gate is documented in the prior reverse-proxy research
-		// and mirrors the PyRIT request flow.
-		req.Header.Set("X-Variants", "feature.EnableImageSupportInUploadFile")
-		req.Header.Set("X-Scenario", "OfficeWebIncludedCopilot")
-		req.Header.Set("Referer", "https://m365.cloud.microsoft/")
-		for k, vv := range c.HTTPHeader {
-			for _, v := range vv {
-				if k != "Origin" || v != "" {
-					req.Header.Add(k, v)
+		var data []byte
+		var status int
+		var responseHeaders http.Header
+		var uploadErr error
+		for attempt := 0; attempt <= attachmentTransientRetries; attempt++ {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://substrate.office.com/m365Copilot/UploadFile", strings.NewReader(form.Encode()))
+			if err != nil {
+				return fmt.Errorf("attachment %d: upload request: %w", i, err)
+			}
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			if acc.AccessToken != "" {
+				req.Header.Set("Authorization", "Bearer "+acc.AccessToken)
+			}
+			req.Header.Set("Accept", "application/json")
+			req.Header.Set("X-Variants", "feature.EnableImageSupportInUploadFile")
+			req.Header.Set("X-Scenario", "OfficeWebIncludedCopilot")
+			req.Header.Set("Referer", "https://m365.cloud.microsoft/")
+			for k, vv := range c.HTTPHeader {
+				for _, v := range vv {
+					if k != "Origin" || v != "" {
+						req.Header.Add(k, v)
+					}
 				}
 			}
+			resp, err := c.HTTPClient.Do(req)
+			if err != nil {
+				uploadErr = err
+				if attempt < attachmentTransientRetries && isTransientAttachmentError(err) {
+					if err := waitAttachmentRetry(ctx, attempt+1, ""); err != nil {
+						return fmt.Errorf("attachment %d: upload request: %w", i, err)
+					}
+					continue
+				}
+				return fmt.Errorf("attachment %d: upload request: %w", i, err)
+			}
+			data, err = io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			status = resp.StatusCode
+			responseHeaders = resp.Header.Clone()
+			resp.Body.Close()
+			if err != nil {
+				uploadErr = err
+				if attempt < attachmentTransientRetries && isTransientAttachmentError(err) {
+					if err := waitAttachmentRetry(ctx, attempt+1, responseHeaders.Get("Retry-After")); err != nil {
+						return fmt.Errorf("attachment %d: read upload response: %w", i, err)
+					}
+					continue
+				}
+				return fmt.Errorf("attachment %d: read upload response: %w", i, err)
+			}
+			uploadErr = nil
+			if status >= 200 && status < 300 {
+				break
+			}
+			if attempt < attachmentTransientRetries && isTransientAttachmentStatus(status) {
+				if err := waitAttachmentRetry(ctx, attempt+1, responseHeaders.Get("Retry-After")); err != nil {
+					return fmt.Errorf("attachment %d: upload: %w", i, err)
+				}
+				continue
+			}
+			break
 		}
-		resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return fmt.Errorf("attachment %d: upload request: %w", i, err)
+		if uploadErr != nil {
+			return fmt.Errorf("attachment %d: upload request: %w", i, uploadErr)
 		}
-		data, readErr := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-		resp.Body.Close()
-		if readErr != nil {
-			return fmt.Errorf("attachment %d: read upload response: %w", i, readErr)
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if status < 200 || status >= 300 {
 			// Office's file sanitizer intermittently rejects otherwise valid
 			// clipboard images with InvalidRequest. Keep the bounded data URL on
 			// the attachment so chatPayload can use ChatHub's inline imageBase64
 			// path instead of aborting an already-open client stream.
-			if resp.StatusCode == http.StatusBadRequest {
+			if status == http.StatusBadRequest {
 				a.URL = imageData
 				if c.Trace != nil {
-					c.Trace(map[string]any{"stage": "upload_inline_fallback", "index": i, "mime_type": a.MimeType, "status": resp.StatusCode})
+					c.Trace(map[string]any{"stage": "upload_inline_fallback", "index": i, "mime_type": a.MimeType, "status": status})
 				}
 				continue
 			}
-			return fmt.Errorf("attachment %d: upload HTTP %d: %s", i, resp.StatusCode, strings.TrimSpace(string(data[:minInt(len(data), 500)])))
+			return fmt.Errorf("attachment %d: upload HTTP %d: %s", i, status, strings.TrimSpace(string(data[:minInt(len(data), 500)])))
 		}
 		var out struct {
 			DocID    string `json:"docId"`

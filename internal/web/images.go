@@ -14,6 +14,7 @@ import (
 	"m365-copilot2api/internal/outbound"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -550,11 +551,23 @@ func (s *Server) storeGeneratedImage(data []byte, contentType string) string {
 }
 
 func generatedImageURL(r *http.Request, id string) string {
+	if publicBase := strings.TrimSpace(os.Getenv("M365_PUBLIC_URL")); publicBase != "" {
+		if u, err := url.Parse(publicBase); err == nil && u.Host != "" && (strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")) {
+			u.Path = strings.TrimRight(u.Path, "/") + "/v1/images/files/" + url.PathEscape(id)
+			u.RawQuery = ""
+			u.Fragment = ""
+			return u.String()
+		}
+	}
 	scheme := "http"
 	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s/v1/images/files/%s", scheme, r.Host, id)
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	return fmt.Sprintf("%s://%s/v1/images/files/%s", scheme, host, url.PathEscape(id))
 }
 
 func (s *Server) generatedImageFile(w http.ResponseWriter, r *http.Request) {

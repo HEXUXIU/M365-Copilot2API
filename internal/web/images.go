@@ -141,6 +141,9 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 				res.Images = urls
 			}
 		}
+		if len(res.Images) == 0 {
+			log.Printf("[image-gen-attempt-events] account=%s attempt=%d %s", acc.ID, attempt+1, imageEventDiagnostic(res))
+		}
 		if len(res.Images) > 0 {
 			lastErr = nil
 			break

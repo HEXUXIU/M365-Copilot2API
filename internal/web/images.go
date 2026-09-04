@@ -169,20 +169,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 			writeOpenAIError(w, http.StatusTooManyRequests, "rate_limit_error", "M365 image generation quota is exhausted; try again later or use another account")
 			return
 		}
-		textPreview := res.Text
-		if len(textPreview) > 500 {
-			textPreview = textPreview[:500]
-		}
-		rawPreview := ""
-		if len(res.RawResult) > 0 {
-			rawPreview = res.RawResult
-			if len(rawPreview) > 500 {
-				rawPreview = rawPreview[:500]
-			}
-		}
-		debug := map[string]any{"text": textPreview, "raw_len": len(res.RawResult), "events": len(res.Events), "images": res.Images, "raw_preview": rawPreview}
-		b, _ := json.Marshal(debug)
-		log.Printf("[image-gen-debug] %s", string(b))
+		log.Printf("[image-gen-events] %s", imageEventDiagnostic(res))
 		writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "upstream returned no image resource")
 		return
 	}
@@ -265,6 +252,25 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		Status:       200,
 	})
 	jsonOut(w, map[string]any{"created": time.Now().Unix(), "data": data, "m365": map[string]any{"conversationId": res.ConversationID, "sessionId": res.SessionID, "images": images}})
+}
+
+func imageEventDiagnostic(res chathub.Result) string {
+	if len(res.Images) > 0 {
+		return ""
+	}
+	payload := struct {
+		Events         int                         `json:"events"`
+		ReasoningBytes int                         `json:"reasoning_bytes"`
+		TerminalReason string                      `json:"terminal_reason"`
+		Structure      []chathub.ImageEventSummary `json:"structure"`
+	}{
+		Events:         len(res.Events),
+		ReasoningBytes: len(res.Reasoning),
+		TerminalReason: res.TerminalReason,
+		Structure:      chathub.SummarizeImageEvents(res.Events),
+	}
+	encoded, _ := json.Marshal(payload)
+	return string(encoded)
 }
 
 func (s *Server) imageEdits(w http.ResponseWriter, r *http.Request) {

@@ -52,6 +52,9 @@ func ClassifyError(err error) ErrorCategory {
 	if err == nil {
 		return CategoryUnknown
 	}
+	if IsUpstreamInternalError(err) {
+		return CategoryUpstreamStructured
+	}
 	if errors.Is(err, context.Canceled) {
 		return CategoryClientCanceled
 	}
@@ -229,6 +232,9 @@ func IsTransientUpstreamFailure(err error) bool {
 	if err == nil || IsRateLimited(err) || IsAuthFailure(err) || IsEmptyCompletion(err) {
 		return false
 	}
+	if IsUpstreamInternalError(err) {
+		return true
+	}
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
 		return true
@@ -238,13 +244,17 @@ func IsTransientUpstreamFailure(err error) bool {
 		"ws dial:", "handshake send:", "handshake recv:", "chat send:",
 		"ws read before completion:", "connection reset", "connection refused",
 		"broken pipe", "unexpected eof", "use of closed network connection",
-		"i/o timeout", "upstream result error: internalerror",
+		"i/o timeout",
 	} {
 		if strings.Contains(msg, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+func IsUpstreamInternalError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "upstream result error: internalerror")
 }
 
 func isRetryableAccountFailure(err error) bool {

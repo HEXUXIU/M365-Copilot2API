@@ -89,6 +89,24 @@ func TestAdaptiveAccountConcurrencyReducesOn429AndRecovers(t *testing.T) {
 	}
 }
 
+func TestAdaptiveAccountConcurrencyReducesOnProviderInternalError(t *testing.T) {
+	limiter := &accountConcurrency{
+		limit:      16,
+		inflight:   map[string]int{},
+		changed:    make(chan struct{}),
+		adaptive:   true,
+		perAccount: map[string]int{},
+		successes:  map[string]int{},
+	}
+	if got := limiter.effectiveLimit("account-a"); got != 4 {
+		t.Fatalf("initial adaptive limit=%d want 4", got)
+	}
+	limiter.Observe("account-a", errors.New("upstream result error: InternalError"))
+	if got := limiter.effectiveLimit("account-a"); got != 2 {
+		t.Fatalf("InternalError adaptive limit=%d want 2", got)
+	}
+}
+
 func TestAccountConcurrencySupports128ConcurrentCalls(t *testing.T) {
 	const concurrency = 128
 	t.Setenv("M365_ACCOUNT_CONCURRENCY_LIMIT", "128")
@@ -193,6 +211,22 @@ func TestCallWithTransientRetryStopsAtBudget(t *testing.T) {
 	}
 	if calls != 3 {
 		t.Fatalf("calls=%d want initial call plus 2 retries", calls)
+	}
+}
+
+func TestCallWithTransientRetryCapsProviderInternalErrorAtOneRetry(t *testing.T) {
+	t.Setenv("M365_TRANSIENT_RETRY_ATTEMPTS", "3")
+	t.Setenv("M365_TRANSIENT_RETRY_DELAY_MS", "1")
+	calls := 0
+	_, err := callWithTransientRetry(context.Background(), "account-a", nil, func() (chathub.Result, error) {
+		calls++
+		return chathub.Result{}, errors.New("upstream result error: InternalError")
+	})
+	if err == nil {
+		t.Fatal("expected final upstream internal error")
+	}
+	if calls != 2 {
+		t.Fatalf("calls=%d want initial call plus one provider retry", calls)
 	}
 }
 

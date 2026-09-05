@@ -1332,6 +1332,29 @@ func (s *Server) nextHealthyAccountExcluding(excluded map[string]struct{}) (auth
 	return auth.AccountToken{}, fmt.Errorf("no healthy account available for failover")
 }
 
+func accountFailureExclusions(accounts []auth.AccountToken, attempted map[string]struct{}, failed auth.AccountToken, err error) map[string]struct{} {
+	excluded := make(map[string]struct{}, len(attempted)+1)
+	for id := range attempted {
+		excluded[id] = struct{}{}
+	}
+	if failed.ID != "" {
+		excluded[failed.ID] = struct{}{}
+	}
+	if !IsUpstreamInternalError(err) || failed.TID == "" {
+		return excluded
+	}
+	for _, account := range accounts {
+		if account.TID == failed.TID {
+			excluded[account.ID] = struct{}{}
+		}
+	}
+	return excluded
+}
+
+func (s *Server) nextHealthyAccountForFailure(failed auth.AccountToken, attempted map[string]struct{}, err error) (auth.AccountToken, error) {
+	return s.nextHealthyAccountExcluding(accountFailureExclusions(s.tokens.List(), attempted, failed, err))
+}
+
 func (s *Server) imageAccountAvailable(accountID string) bool {
 	if !s.accountAvailable(accountID) {
 		return false
@@ -1562,7 +1585,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		// requests fail over; an explicitly chosen account is respected, and a
 		// conversation-bound chat stays on its account.
 		if body.AccountID == "" && body.ConversationID == "" && (IsRateLimited(err) || IsAuthFailure(err) || IsTransientUpstreamFailure(err)) {
-			next, nerr := s.nextHealthyAccount(acc.ID)
+			next, nerr := s.nextHealthyAccountForFailure(acc, nil, err)
 			if nerr == nil {
 				ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 				defer cancel2()
@@ -2277,8 +2300,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		routeErr = validateRequiredDecision(res, routeErr)
 		coldReplay := false
 		attempted := map[string]struct{}{acc.ID: {}}
+		failedAccount := acc
 		for attempt := 1; routeErr != nil && attempt < maxToolRouterAccountAttempts && retryableRouterFailure(routeErr); attempt++ {
-			next, nextErr := s.nextHealthyAccountExcluding(attempted)
+			next, nextErr := s.nextHealthyAccountForFailure(failedAccount, attempted, routeErr)
 			if nextErr != nil {
 				break
 			}
@@ -2292,7 +2316,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				attemptText, attemptAttachments = coldText, coldAttachments
 			}
 			nextAccount := chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
-			log.Printf("[tool-router] id=%s account_failover attempt=%d/%d from=%s to=%s reason=%v", requestID, attempt+1, maxToolRouterAccountAttempts, acc.ID, next.ID, routeErr)
+			log.Printf("[tool-router] id=%s account_failover attempt=%d/%d from=%s to=%s reason=%v", requestID, attempt+1, maxToolRouterAccountAttempts, failedAccount.ID, next.ID, routeErr)
 			res2, err2 := callRouter(next, nextAccount, attemptText, attemptAttachments)
 			err2 = validateRequiredDecision(res2, err2)
 			if err2 == nil {
@@ -2305,6 +2329,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			res = res2
 			routeErr = err2
+			failedAccount = next
 		}
 		if routeErr == nil {
 			if transientID := routerConversation.accept(&res); transientID != "" {
@@ -2602,7 +2627,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			// A throttled stream may retry on the next healthy account: only the
 			// ": connected" preamble reached the client, so the retried stream is
 			// indistinguishable from a fresh request.
-			next, nerr := s.nextHealthyAccount(acc.ID)
+			next, nerr := s.nextHealthyAccountForFailure(acc, nil, err)
 			if nerr != nil {
 				// no healthy alternative
 			} else {
@@ -2905,11 +2930,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		res, err = s.chatWithAccountReasoning(ctx, acc.ID, account, answerReq, onDeltaWrapped, onReasoningWrapped)
 		if err != nil && streamedReasoningLen == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isRetryableAccountFailure(err) {
+			attempted := map[string]struct{}{acc.ID: {}}
+			failedAccount := acc
 			for attempt := 0; attempt < 3 && err != nil; attempt++ {
-				next, nerr := s.nextHealthyAccount(acc.ID)
+				next, nerr := s.nextHealthyAccountForFailure(failedAccount, attempted, err)
 				if nerr != nil {
 					break
 				}
+				attempted[next.ID] = struct{}{}
 				failoverReq := answerReq
 				if body.ConversationID == resolvedConversationID {
 					failoverReq.ConversationID = ""
@@ -2925,6 +2953,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 				err = err2
+				failedAccount = next
 				if streamedReasoningLen > 0 || !isRetryableAccountFailure(err) {
 					break
 				}
@@ -3014,11 +3043,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			// A host fallback is an HTTP 200 with unusable text. Retry a bounded
 			// number of healthy accounts so transient tenant/account failures do
 			// not surface as an immediate 502, while avoiding retry storms.
+			attempted := map[string]struct{}{acc.ID: {}}
+			failedAccount := acc
 			for attempt := 0; attempt < 3 && err != nil; attempt++ {
-				next, nerr := s.nextHealthyAccount(acc.ID)
+				next, nerr := s.nextHealthyAccountForFailure(failedAccount, attempted, err)
 				if nerr != nil {
 					break
 				}
+				attempted[next.ID] = struct{}{}
 				failoverReq := answerReq
 				if body.ConversationID == resolvedConversationID {
 					failoverReq.ConversationID = ""
@@ -3034,6 +3066,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 				err = err2
+				failedAccount = next
 				if !isRetryableAccountFailure(err) {
 					break
 				}

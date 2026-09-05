@@ -159,8 +159,8 @@ func (c *accountConcurrency) effectiveLimit(accountID string) int {
 }
 
 // Observe applies additive increase/multiplicative decrease to account
-// concurrency. Only account-scoped rate/auth failures reduce the limit;
-// transient transport errors are handled by the proxy pool and retry layer.
+// concurrency. Account rate/auth failures and structured provider failures
+// reduce the limit; ordinary transport errors stay in the proxy retry layer.
 func (c *accountConcurrency) Observe(accountID string, err error) {
 	if c == nil || accountID == "" {
 		return
@@ -175,7 +175,7 @@ func (c *accountConcurrency) Observe(accountID string, err error) {
 	}
 	current := c.effectiveLimitLocked(accountID)
 	if err != nil {
-		if !IsRateLimited(err) && !IsAuthFailure(err) {
+		if !IsRateLimited(err) && !IsAuthFailure(err) && !IsUpstreamInternalError(err) {
 			return
 		}
 		next := (current + 1) / 2
@@ -377,14 +377,18 @@ func callWithTransientRetry(ctx context.Context, accountID string, observed func
 	for attempt := 0; ; attempt++ {
 		result, err := call()
 		upstreamCanceled := errors.Is(err, context.Canceled) && ctx.Err() == nil
-		if err == nil || attempt >= maxRetries || (!IsTransientUpstreamFailure(err) && !upstreamCanceled) || (observed != nil && observed()) {
+		retryLimit := maxRetries
+		if IsUpstreamInternalError(err) && retryLimit > 1 {
+			retryLimit = 1
+		}
+		if err == nil || attempt >= retryLimit || (!IsTransientUpstreamFailure(err) && !upstreamCanceled) || (observed != nil && observed()) {
 			return result, err
 		}
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
 		retry := attempt + 1
-		log.Printf("[transient-retry] account=%s retry=%d/%d category=%s", accountID, retry, maxRetries, ClassifyError(err))
+		log.Printf("[transient-retry] account=%s retry=%d/%d category=%s", accountID, retry, retryLimit, ClassifyError(err))
 		timer := time.NewTimer(transientRetryDelay(retry))
 		select {
 		case <-ctx.Done():

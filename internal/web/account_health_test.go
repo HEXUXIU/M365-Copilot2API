@@ -71,6 +71,9 @@ func TestTransientUpstreamFailureClassification(t *testing.T) {
 	if IsTransientUpstreamFailure(fmt.Errorf("request timeout setting is invalid")) {
 		t.Fatal("an unrelated timeout word must not trigger transport retry")
 	}
+	if got := ClassifyError(fmt.Errorf("upstream result error: InternalError")); got != CategoryUpstreamStructured {
+		t.Fatalf("InternalError category=%s want %s", got, CategoryUpstreamStructured)
+	}
 }
 
 func TestRetryableAccountFailureIncludesTransportErrors(t *testing.T) {
@@ -395,6 +398,49 @@ func TestNextHealthyAccountExcludingDoesNotRepeatTriedAccounts(t *testing.T) {
 	excluded["u-3"] = struct{}{}
 	if _, err := s.nextHealthyAccountExcluding(excluded); err == nil {
 		t.Fatal("expected failure after every account was tried")
+	}
+}
+
+func TestAccountFailureExclusionsSkipSameTenantAfterInternalError(t *testing.T) {
+	accounts := []auth.AccountToken{
+		{ID: "tenant-a-1", TID: "tenant-a"},
+		{ID: "tenant-a-2", TID: "tenant-a"},
+		{ID: "tenant-b-1", TID: "tenant-b"},
+	}
+	attempted := map[string]struct{}{"already-tried": {}}
+	got := accountFailureExclusions(
+		accounts,
+		attempted,
+		accounts[0],
+		errors.New("upstream result error: InternalError"),
+	)
+	for _, id := range []string{"already-tried", "tenant-a-1", "tenant-a-2"} {
+		if _, ok := got[id]; !ok {
+			t.Fatalf("same-tenant provider failure did not exclude %q: %#v", id, got)
+		}
+	}
+	if _, ok := got["tenant-b-1"]; ok {
+		t.Fatalf("different tenant was excluded: %#v", got)
+	}
+	if len(attempted) != 1 {
+		t.Fatalf("caller exclusion map was mutated: %#v", attempted)
+	}
+}
+
+func TestAccountFailureExclusionsKeepSameTenantForTransportFailure(t *testing.T) {
+	accounts := []auth.AccountToken{
+		{ID: "tenant-a-1", TID: "tenant-a"},
+		{ID: "tenant-a-2", TID: "tenant-a"},
+	}
+	attempted := map[string]struct{}{"tenant-a-1": {}}
+	got := accountFailureExclusions(
+		accounts,
+		attempted,
+		accounts[0],
+		errors.New("ws dial: connection reset by peer"),
+	)
+	if _, ok := got["tenant-a-2"]; ok {
+		t.Fatalf("ordinary transport failure excluded a healthy same-tenant account: %#v", got)
 	}
 }
 

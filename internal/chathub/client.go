@@ -1686,11 +1686,11 @@ func (c *Client) uploadAttachments(ctx context.Context, acc Account, conversatio
 			return fmt.Errorf("attachment %d: upload request: %w", i, uploadErr)
 		}
 		if status < 200 || status >= 300 {
-			// Office's file sanitizer intermittently rejects otherwise valid
-			// clipboard images with InvalidRequest. Keep the bounded data URL on
-			// the attachment so chatPayload can use ChatHub's inline imageBase64
-			// path instead of aborting an already-open client stream.
-			if status == http.StatusBadRequest {
+			// Office's upload service intermittently rejects valid images or stays
+			// unavailable through the bounded retry window. Keep the bounded data
+			// URL so ChatHub can use its inline imageBase64 path instead of turning
+			// a usable request into a gateway error.
+			if status == http.StatusBadRequest || isTransientAttachmentStatus(status) {
 				a.URL = imageData
 				if c.Trace != nil {
 					c.Trace(map[string]any{"stage": "upload_inline_fallback", "index": i, "mime_type": a.MimeType, "status": status})

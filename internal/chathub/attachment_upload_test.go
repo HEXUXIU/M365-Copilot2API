@@ -101,6 +101,30 @@ func TestUploadAttachmentsRetriesTransientUpload503(t *testing.T) {
 	}
 }
 
+func TestUploadAttachmentsFallsBackInlineAfterTransientUploadRetries(t *testing.T) {
+	attempts := 0
+	client := &Client{HTTPClient: &http.Client{Transport: attachmentRoundTripFunc(func(*http.Request) (*http.Response, error) {
+		attempts++
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Status:     "503 Service Unavailable",
+			Body:       io.NopCloser(strings.NewReader("busy")),
+			Header:     make(http.Header),
+		}, nil
+	})}}
+	attachments := []Attachment{{Type: "image", MimeType: "image/png", URL: "data:image/png;base64,aGVsbG8="}}
+	if err := client.uploadAttachments(context.Background(), Account{AccessToken: "token"}, "conversation", attachments); err != nil {
+		t.Fatalf("upload error=%v", err)
+	}
+	if attempts != attachmentTransientRetries+1 || attachments[0].DocID != "" {
+		t.Fatalf("attempts=%d attachment=%#v", attempts, attachments[0])
+	}
+	payload := chatPayload(Request{Text: "inspect", Attachments: attachments}, "request", true)
+	if !strings.Contains(payload, `"imageBase64":"aGVsbG8="`) {
+		t.Fatalf("inline image fallback missing after transient retries: %s", payload)
+	}
+}
+
 func TestUploadAttachmentsRetriesTransientDownloadTimeout(t *testing.T) {
 	attempts := 0
 	client := &Client{HTTPClient: &http.Client{Transport: attachmentRoundTripFunc(func(r *http.Request) (*http.Response, error) {

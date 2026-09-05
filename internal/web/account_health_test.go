@@ -59,6 +59,7 @@ func TestTransientUpstreamFailureClassification(t *testing.T) {
 		fmt.Errorf("ws dial: %w", errors.New("connection reset by peer")),
 		fmt.Errorf("ws read before completion: %w", io.ErrUnexpectedEOF),
 		fmt.Errorf("chat send: i/o timeout"),
+		fmt.Errorf("upstream result error: InternalError"),
 	} {
 		if !IsTransientUpstreamFailure(err) {
 			t.Fatalf("expected transient failure: %v", err)

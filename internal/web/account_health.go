@@ -238,7 +238,7 @@ func IsTransientUpstreamFailure(err error) bool {
 		"ws dial:", "handshake send:", "handshake recv:", "chat send:",
 		"ws read before completion:", "connection reset", "connection refused",
 		"broken pipe", "unexpected eof", "use of closed network connection",
-		"i/o timeout",
+		"i/o timeout", "upstream result error: internalerror",
 	} {
 		if strings.Contains(msg, marker) {
 			return true

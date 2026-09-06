@@ -16,9 +16,6 @@ func toolProtocolPrompt(text string, tools []Tool, choice any, hasPlugins bool) 
 		}
 		return fmt.Sprintf("Please answer the following request in full. Do not truncate or abbreviate your response.\n\n%s", text)
 	}
-	if hasPlugins {
-		return text
-	}
 	var defs []string
 	for _, t := range tools {
 		var f struct {

@@ -1695,8 +1695,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if budget < 1024 {
 		budget = 1024
 	}
-	if truncatedMsgs, truncated, budgetErr := slidingWindow(body.Messages, budget); budgetErr != nil {
+	if truncatedMsgs, truncated, budgetErr := slidingWindowWithTools(body.Messages, body.Tools, budget); budgetErr != nil {
 		w.Header().Set("X-M365-Context-Truncated", "1")
+		if strings.HasPrefix(budgetErr.Error(), "tools_exceed_context") {
+			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "tools_exceed_context", budgetErr.Error())
+			return
+		}
 		writeOpenAIError(w, 400, "context_length_exceeded", budgetErr.Error())
 		return
 	} else if truncated {

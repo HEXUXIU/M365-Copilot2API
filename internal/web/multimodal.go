@@ -2,10 +2,29 @@ package web
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"m365-copilot2api/internal/chathub"
 )
+
+var dataImageRe = regexp.MustCompile(`data:image/([a-zA-Z0-9.+-]+);base64,[A-Za-z0-9+/=]+`)
+
+func extractToolResultImages(txt string) (string, []chathub.Attachment) {
+	matches := dataImageRe.FindAllStringSubmatch(txt, -1)
+	if len(matches) == 0 {
+		return txt, nil
+	}
+	var atts []chathub.Attachment
+	for i, m := range matches {
+		if i >= 8 {
+			break
+		}
+		atts = append(atts, chathub.Attachment{Type: "image", URL: m[0], MimeType: "image/" + m[1]})
+	}
+	txt = dataImageRe.ReplaceAllString(txt, "[image from tool result extracted as attachment]")
+	return txt, atts
+}
 
 func parseContent(c any) (string, []chathub.Attachment) {
 	var text strings.Builder

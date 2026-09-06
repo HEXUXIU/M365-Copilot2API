@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"m365-copilot2api/internal/chathub"
@@ -151,6 +152,74 @@ func flattenPromptMessagesWithBudget(messages []oaiMsg, attachments []chathub.At
 }
 
 // budget for slidingWindow: B = ContextWindow - MaxOutput - 512
+var windowsPathRe = regexp.MustCompile(`\b[A-Za-z]:\\[\\A-Za-z0-9_.\- ~]+`)
+var uncPathRe = regexp.MustCompile(`\\\\[A-Za-z0-9_.\-]+\\[\\A-Za-z0-9_.\- ~]+`)
+var unixPathRe = regexp.MustCompile(`(?:^|[\s"'(\[])((?:/[A-Za-z0-9_.\-]+){2,})`)
+
+func extractTaskAnchors(messages []oaiMsg) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] || len(out) >= 64 {
+			return
+		}
+		if len(p) > 512 {
+			p = p[:512]
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	for _, m := range messages {
+		for _, s := range flattenStrings(m) {
+			for _, p := range windowsPathRe.FindAllString(s, -1) {
+				add(p)
+			}
+			for _, p := range uncPathRe.FindAllString(s, -1) {
+				add(p)
+			}
+			for _, g := range unixPathRe.FindAllStringSubmatch(s, -1) {
+				if len(g) > 1 {
+					add(g[1])
+				}
+			}
+		}
+	}
+	return out
+}
+
+func flattenStrings(m oaiMsg) []string {
+	var out []string
+	appendWalk := func(v any) {}
+	appendWalk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			out = append(out, t)
+		case []any:
+			for _, x := range t {
+				appendWalk(x)
+			}
+		case map[string]any:
+			for _, x := range t {
+				appendWalk(x)
+			}
+		}
+	}
+	appendWalk(m.Content)
+	for _, c := range m.ToolCalls {
+		appendWalk(c)
+	}
+	return out
+}
+
+func taskAnchorBlock(messages []oaiMsg) string {
+	anchors := extractTaskAnchors(messages)
+	if len(anchors) == 0 {
+		return ""
+	}
+	return "\n[task anchors — file paths referenced in this conversation, preserved for tool use; do not lose these]\n" + strings.Join(anchors, "\n") + "\n"
+}
+
 func slidingWindow(messages []oaiMsg, budget int) ([]oaiMsg, bool, error) {
 	if budget <= 0 {
 		budget = 1024
@@ -223,10 +292,20 @@ func slidingWindow(messages []oaiMsg, budget int) ([]oaiMsg, bool, error) {
 		}
 	}
 	var out []oaiMsg
+	omitted := 0
 	for idx, a := range atoms {
 		if selected[idx] {
+			if omitted > 0 {
+				out = append(out, oaiMsg{Role: "context-notice", Content: fmt.Sprintf("[%d earlier conversation turn(s) omitted to fit the context budget]", omitted)})
+				omitted = 0
+			}
 			out = append(out, a.Msgs...)
+		} else {
+			omitted++
 		}
+	}
+	if omitted > 0 && len(out) > 0 {
+		out = append(out, oaiMsg{Role: "context-notice", Content: fmt.Sprintf("[%d earliest conversation turn(s) omitted to fit the context budget]", omitted)})
 	}
 	truncated := len(selected) < len(atoms)
 	if len(out) == 0 && len(atoms) > 0 {
@@ -234,5 +313,45 @@ func slidingWindow(messages []oaiMsg, budget int) ([]oaiMsg, bool, error) {
 		out = append(out, last.Msgs...)
 		truncated = true
 	}
+	if truncated && len(out) > 0 {
+		notice := oaiMsg{Role: "context-notice", Content: "[context notice] Some earlier turns were omitted to fit the context budget. Historical tool calls and their results in the history are reference markers only — never repeat or execute a historical tool call. Use the current turn for any action."}
+		out = append([]oaiMsg{notice}, out...)
+	}
 	return out, truncated, nil
+}
+
+func toolDefinitionTokens(tools []chathub.Tool) int {
+	total := 0
+	for _, t := range tools {
+		total += estimateBudgetTokens(string(t.Function))
+	}
+	return total * 2
+}
+
+func slidingWindowWithTools(messages []oaiMsg, tools []chathub.Tool, budget int) ([]oaiMsg, bool, error) {
+	toolTokens := toolDefinitionTokens(tools)
+	if toolTokens > 0 && budget-toolTokens < 1024 {
+		return nil, false, fmt.Errorf("tools_exceed_context: tool definitions need ~%d tokens, leaving %d of %d; reduce tool count or descriptions", toolTokens, budget-toolTokens, budget)
+	}
+	effective := budget - toolTokens
+	anchorBlock := taskAnchorBlock(messages)
+	if anchorBlock != "" {
+		if len(anchorBlock) > 4096 {
+			anchorBlock = anchorBlock[:4096]
+		}
+		anchorTokens := estimateBudgetTokens(anchorBlock)
+		if effective-anchorTokens < 512 {
+			anchorBlock = ""
+		} else {
+			effective -= anchorTokens
+		}
+	}
+	msgs, truncated, err := slidingWindow(messages, effective)
+	if err != nil {
+		return nil, false, err
+	}
+	if truncated && anchorBlock != "" {
+		msgs = append(msgs, oaiMsg{Role: "context-notice", Content: strings.TrimSpace(anchorBlock)})
+	}
+	return msgs, truncated, nil
 }

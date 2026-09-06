@@ -44,6 +44,14 @@ func flattenPromptMessages(messages []oaiMsg, attachments []chathub.Attachment) 
 	}
 	for _, m := range rest {
 		role := strings.ToLower(strings.TrimSpace(m.Role))
+		if role == "context-notice" {
+			txt, _ := parseContent(m.Content)
+			txt = strings.TrimSpace(txt)
+			if txt != "" {
+				b.WriteString(fmt.Sprintf("\n%s\n", txt))
+			}
+			continue
+		}
 		if role == "" {
 			role = "user"
 		}
@@ -68,6 +76,9 @@ func flattenPromptMessages(messages []oaiMsg, attachments []chathub.Attachment) 
 			continue
 		}
 		if role == "tool" {
+			txt, toolImgs := extractToolResultImages(txt)
+			attachments = append(attachments, toolImgs...)
+			txt = strings.TrimSpace(txt)
 			txt = compactToolResult(txt, 4000)
 			b.WriteString(fmt.Sprintf("\n[tool result id=%s]\n%s\n", m.ToolCallID, txt))
 			continue

@@ -2172,7 +2172,26 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 			return nil
 		}
+		reasoningFilter := newPublicReasoningStreamFilter()
+		emitReasoning := func(part string) error {
+			if part == "" {
+				return nil
+			}
+			if err := r.Context().Err(); err != nil {
+				return err
+			}
+			delta := map[string]any{"reasoning_content": part}
+			if first {
+				delta["role"] = "assistant"
+				first = false
+			}
+			chunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}}
+			return sw.data(mustJSON(chunk))
+		}
 		res, err := s.chatWithAccountEvents(ctx, acc.ID, account, answerReq, func(ev chathub.StreamEvent) error {
+			if ev.Kind == "reasoning" {
+				return emitReasoning(reasoningFilter.Push(ev.Text))
+			}
 			if ev.Kind == "tool" && ev.ToolName != "" && len(ev.Arguments) > 0 {
 				streamedTools = append(streamedTools, detectedToolCall{ID: "call_" + uuid.NewString(), Name: ev.ToolName, Arguments: ev.Arguments})
 				return nil
@@ -2486,6 +2505,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
 		}
+		if err := emitReasoning(reasoningFilter.Flush()); err != nil {
+			log.Printf("[req-trace] id=%s stage=stream_write_reasoning err=%v", requestID, err)
+			return
+		}
 		finishChunk := map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}}}
 		if res.Throttling != nil {
 			finishChunk["x_m365_throttling"] = res.Throttling
@@ -2594,6 +2617,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	answerReq.FirstTokenTimeout = time.Duration(s.settings.get().FirstTokenTimeoutSeconds) * time.Second
 	answerPrompt = answerReq.Text
 	var res chathub.Result
+	// NOTE: streaming is fully handled by the earlier `if body.Stream` branch,
+	// which always returns before reaching here, so this duplicate stream
+	// branch is unreachable. Do not add new streaming logic here — the live
+	// path is the one above (issue #83 reasoning streaming was fixed there).
 	if body.Stream {
 		flusher, ok := w.(http.Flusher)
 		if !ok {

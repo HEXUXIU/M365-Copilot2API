@@ -1610,6 +1610,9 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadGateway, "m365_error", upstreamError(err))
 		return
 	}
+	// The probe has no conversation binding, so M365 created a throwaway
+	// conversation; delete it so model tests do not clutter the account.
+	s.dropTransientConversation(res.ConversationID)
 	jsonOut(w, map[string]any{"ok": true, "model": b.Model, "reply": sanitizePublicAssistantTextForModel(res.Text, b.Model), "latency_ms": ms})
 }
 

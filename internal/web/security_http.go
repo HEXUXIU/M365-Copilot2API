@@ -35,7 +35,14 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func (s *Server) rootPage(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/conversation" {
+	// /conversation is a standalone legacy detail page; everything else at the
+	// root is the React console, so the SPA is the primary UI rather than the
+	// legacy single-page HTML (which had the non-sticky sidebar and stale i18n).
+	if r.URL.Path == "/conversation" {
+		s.serveLegacyPage(w, r, "conversation.html")
+		return
+	}
+	if r.URL.Path != "/" && r.URL.Path != "/login" {
 		http.NotFound(w, r)
 		return
 	}
@@ -43,11 +50,13 @@ func (s *Server) rootPage(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
 		return
 	}
-	name := "index.html"
-	if r.URL.Path == "/login" {
-		name = "login.html"
-	} else if r.URL.Path == "/conversation" {
-		name = "conversation.html"
+	s.serveWebAppShell(w, r)
+}
+
+func (s *Server) serveLegacyPage(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
+		return
 	}
 	f, err := webContent.Open(name)
 	if err != nil {
@@ -62,6 +71,22 @@ func (s *Server) rootPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+func (s *Server) serveWebAppShell(w http.ResponseWriter, r *http.Request) {
+	f, err := webContent.Open("webapp/index.html")
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error", "console unavailable")
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "server_error", "console unavailable")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, "index.html", st.ModTime(), f)
 }
 
 // serveWebApp serves the built React bundle from the embedded FS. Vite emits

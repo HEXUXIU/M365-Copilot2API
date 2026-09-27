@@ -73,6 +73,13 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "response_format must be url or b64_json")
 		return
 	}
+	// Only the advertised image models may drive the Flux graphic-art pipeline;
+	// a chat model here would otherwise be silently accepted and embedded in
+	// the prompt (issue: images endpoint must honor the model).
+	if b.Model != "" && !isImageModel(b.Model) {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model "+b.Model+" does not support image generation; use flux-3 or flux-4")
+		return
+	}
 	acc, err := s.resolveAccount(firstNonEmpty(b.AccountID, b.User))
 	if err != nil {
 		writeUpstreamError(w, err)

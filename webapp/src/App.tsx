@@ -350,11 +350,14 @@ const sharedStyles = `
 .btn-sm { padding: 5px 10px; min-height: 28px; font-size: 11.5px; }
 
 .card {
-  background: var(--surface-solid);
+  background: var(--surface);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.25s ease;
 }
 .card + .card { margin-top: 16px; }
 .card-head {

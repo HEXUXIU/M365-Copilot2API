@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -19,25 +20,35 @@ func TestWebAppHandlerDirect(t *testing.T) {
 	}
 }
 
-func TestWebAppRouteServed(t *testing.T) {
+// The React console must be the primary UI at the root, not the legacy HTML.
+func TestRootServesConsole(t *testing.T) {
 	s := &Server{}
 	handler := s.Routes()
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/webapp/index.html", nil))
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "root") {
+		t.Fatalf("root did not serve the React console: status=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
+func TestWebAppAssetsServed(t *testing.T) {
+	s := &Server{}
+	handler := s.Routes()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/webapp/", nil))
 	if w.Code != http.StatusOK {
-		t.Fatalf("/webapp/index.html status=%d body=%q", w.Code, w.Body.String())
+		t.Fatalf("/webapp/ status=%d body=%q", w.Code, w.Body.String())
 	}
-	if !strings.Contains(w.Body.String(), "root") {
-		t.Fatalf("SPA shell missing #root: %q", w.Body.String())
+	re := regexp.MustCompile(`/webapp/assets/[^"']+\.(?:js|css)`)
+	assets := re.FindAllString(w.Body.String(), -1)
+	if len(assets) == 0 {
+		t.Fatalf("SPA shell referenced no assets: %q", w.Body.String())
 	}
-	w2 := httptest.NewRecorder()
-	handler.ServeHTTP(w2, httptest.NewRequest(http.MethodGet, "/webapp/", nil))
-	if w2.Code != http.StatusOK {
-		t.Fatalf("/webapp/ status=%d body=%q", w2.Code, w2.Body.String())
-	}
-	w3 := httptest.NewRecorder()
-	handler.ServeHTTP(w3, httptest.NewRequest(http.MethodGet, "/webapp/assets/index-CuzoNQcv.css", nil))
-	if w3.Code != http.StatusOK {
-		t.Fatalf("asset status=%d", w3.Code)
+	for _, a := range assets {
+		aw := httptest.NewRecorder()
+		handler.ServeHTTP(aw, httptest.NewRequest(http.MethodGet, a, nil))
+		if aw.Code != http.StatusOK {
+			t.Fatalf("asset %s status=%d", a, aw.Code)
+		}
 	}
 }

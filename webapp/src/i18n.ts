@@ -149,6 +149,8 @@ const dict: Record<string, Partial<Record<Locale, string>>> = {
   Failed: { "zh-CN": "失败", "zh-TW": "失敗", ja: "失敗", ko: "실패", es: "Fallido", fr: "Échec", de: "Fehlgeschlagen", "pt-BR": "Falhou", ru: "Ошибка", ar: "فشل" },
   "Testing…": { "zh-CN": "测试中…", "zh-TW": "測試中…", ja: "テスト中…", ko: "테스트 중…", es: "Probando…", fr: "Test en cours…", de: "Teste…", "pt-BR": "Testando…", ru: "Тестирование…", ar: "جارٍ الاختبار…" },
   "Not tested": { "zh-CN": "未测试", "zh-TW": "未測試", ja: "未テスト", ko: "미테스트", es: "Sin probar", fr: "Non testé", de: "Nicht getestet", "pt-BR": "Não testado", ru: "Не тестировано", ar: "لم يُختبر" },
+  "Test selected": { "zh-CN": "测试所选", "zh-TW": "測試所選", ja: "選択をテスト", ko: "선택 항목 테스트", es: "Probar seleccionados", fr: "Tester la sélection", de: "Auswahl testen", "pt-BR": "Testar selecionados", ru: "Тестировать выбранные", ar: "اختبار المحدد" },
+  "Select at least one model": { "zh-CN": "请至少选择一个模型", "zh-TW": "請至少選擇一個模型", ja: "モデルを1つ以上選択してください", ko: "모델을 하나 이상 선택하세요", es: "Selecciona al menos un modelo", fr: "Sélectionnez au moins un modèle", de: "Mindestens ein Modell auswählen", "pt-BR": "Selecione ao menos um modelo", ru: "Выберите хотя бы одну модель", ar: "اختر نموذجًا واحدًا على الأقل" },
 
   // Login & shared table headers
   "Administrator Login": { "zh-CN": "管理员登录", "zh-TW": "管理員登入", ja: "管理者ログイン", ko: "관리자 로그인", es: "Inicio de sesión de administrador", fr: "Connexion administrateur", de: "Administrator-Anmeldung", "pt-BR": "Login de administrador", ru: "Вход администратора", ar: "تسجيل دخول المسؤول" },

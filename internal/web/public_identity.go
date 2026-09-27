@@ -213,6 +213,7 @@ func sanitizePublicAssistantText(text string) string {
 }
 
 func sanitizePublicAssistantTextForModel(text, model string) string {
+	text = stripReplacementChars(text)
 	if !publicIdentityPolicyEnabled() {
 		return text
 	}
@@ -221,13 +222,25 @@ func sanitizePublicAssistantTextForModel(text, model string) string {
 }
 
 func sanitizePublicInternalText(text string) string {
+	text = stripReplacementChars(text)
 	if !publicIdentityPolicyEnabled() {
 		return text
 	}
 	return publicProviderIdentityPattern.ReplaceAllString(text, publicAssistantIdentity)
 }
 
+// stripReplacementChars removes U+FFFD replacement characters produced by
+// upstream byte-level truncation. It always applies, independent of the
+// opt-in identity policy, because U+FFFD is never legitimate content.
+func stripReplacementChars(text string) string {
+	if text == "" || strings.IndexRune(text, utf8.RuneError) < 0 {
+		return text
+	}
+	return strings.ReplaceAll(text, string(utf8.RuneError), "")
+}
+
 func sanitizePublicReasoningText(text string) string {
+	text = stripReplacementChars(text)
 	if !publicIdentityPolicyEnabled() {
 		return text
 	}
@@ -405,7 +418,7 @@ func (f *publicIdentityStreamFilter) Push(fragment string) string {
 		return sanitizePublicAssistantText(fragment)
 	}
 	if !publicIdentityPolicyEnabled() {
-		return fragment
+		return stripReplacementChars(fragment)
 	}
 	f.pending += fragment
 	return f.consume(false)
@@ -418,7 +431,7 @@ func (f *publicIdentityStreamFilter) Flush() string {
 	if !publicIdentityPolicyEnabled() {
 		out := f.pending
 		f.pending = ""
-		return out
+		return stripReplacementChars(out)
 	}
 	out := f.consume(true)
 	f.pending = ""
@@ -450,7 +463,7 @@ func (f *publicIdentityStreamFilter) consume(final bool) string {
 	}
 	out := f.pending[:cut]
 	f.pending = f.pending[cut:]
-	return out
+	return stripReplacementChars(out)
 }
 
 type publicReasoningStreamFilter struct {
@@ -466,7 +479,7 @@ func (f *publicReasoningStreamFilter) Push(fragment string) string {
 		return sanitizePublicReasoningText(fragment)
 	}
 	if !publicIdentityPolicyEnabled() {
-		return fragment
+		return stripReplacementChars(fragment)
 	}
 	f.pending += fragment
 	return f.consume(false)
@@ -479,7 +492,7 @@ func (f *publicReasoningStreamFilter) Flush() string {
 	if !publicIdentityPolicyEnabled() {
 		out := f.pending
 		f.pending = ""
-		return out
+		return stripReplacementChars(out)
 	}
 	out := sanitizePublicReasoningText(f.pending)
 	f.pending = ""
@@ -496,8 +509,12 @@ func (f *publicReasoningStreamFilter) consume(final bool) string {
 		return sanitizePublicReasoningText(chunk)
 	}
 	if len(f.pending) > 4096 {
-		chunk := f.pending[:len(f.pending)-256]
-		f.pending = f.pending[len(f.pending)-256:]
+		cut := len(f.pending) - 256
+		for cut > 0 && !utf8.RuneStart(f.pending[cut]) {
+			cut--
+		}
+		chunk := f.pending[:cut]
+		f.pending = f.pending[cut:]
 		return sanitizePublicReasoningText(chunk)
 	}
 	return ""

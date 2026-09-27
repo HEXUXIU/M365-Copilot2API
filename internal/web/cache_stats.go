@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 )
 
+const maxCacheStatKeys = 1024
+
 type CacheStats struct {
 	mu sync.Mutex
 
@@ -29,15 +31,15 @@ type CacheStats struct {
 }
 
 type statsSnapshot struct {
-	TotalRequests  int64         `json:"total_requests"`
-	CacheHits      int64         `json:"cache_hits"`
-	CacheMisses    int64         `json:"cache_misses"`
-	TokensSent     int64         `json:"tokens_sent"`
-	TokensSaved    int64         `json:"tokens_saved"`
-	ActiveSessions int           `json:"active_sessions"`
-	MaxSessionAge  time.Duration `json:"max_session_age"`
-	HitRate        float64       `json:"hit_rate"`
-	SavingsPercent float64       `json:"savings_percent"`
+	TotalRequests  int64               `json:"total_requests"`
+	CacheHits      int64               `json:"cache_hits"`
+	CacheMisses    int64               `json:"cache_misses"`
+	TokensSent     int64               `json:"tokens_sent"`
+	TokensSaved    int64               `json:"tokens_saved"`
+	ActiveSessions int                 `json:"active_sessions"`
+	MaxSessionAge  time.Duration       `json:"max_session_age"`
+	HitRate        float64             `json:"hit_rate"`
+	SavingsPercent float64             `json:"savings_percent"`
 	KeyStats       map[string]*KeyStat `json:"key_stats"`
 }
 
@@ -97,6 +99,17 @@ func (s *CacheStats) RecordRequest(apiKey string, hit bool, tokensSent, tokensSa
 
 	ks, ok := s.KeyStats[apiKey]
 	if !ok {
+		if len(s.KeyStats) >= maxCacheStatKeys {
+			var oldestKey string
+			var oldest time.Time
+			for key, stat := range s.KeyStats {
+				if oldestKey == "" || stat.LastUsed.Before(oldest) {
+					oldestKey = key
+					oldest = stat.LastUsed
+				}
+			}
+			delete(s.KeyStats, oldestKey)
+		}
 		ks = &KeyStat{APIKey: apiKey}
 		s.KeyStats[apiKey] = ks
 	}

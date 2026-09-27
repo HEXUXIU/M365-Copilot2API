@@ -20,6 +20,8 @@ func TestAgentLedgerDetectsRepeatedFailure(t *testing.T) {
 		{Role: "tool", ToolCallID: "c1", Content: "exit code 1: failed"},
 		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c2", "type": "function", "function": map[string]any{"name": "run", "arguments": "{\"cmd\":\"build\"}"}}}},
 		{Role: "tool", ToolCallID: "c2", Content: "exit code 1: failed"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c3", "type": "function", "function": map[string]any{"name": "run", "arguments": "{\"cmd\":\"build\"}"}}}},
+		{Role: "tool", ToolCallID: "c3", Content: "different explicit error"},
 	}
 	l := buildAgentLedger(msgs)
 	if !l.RepeatedFailure {
@@ -27,6 +29,37 @@ func TestAgentLedgerDetectsRepeatedFailure(t *testing.T) {
 	}
 	if !strings.Contains(l.RouterContext(), "change strategy") {
 		t.Fatal(l.RouterContext())
+	}
+}
+
+func TestAgentLedgerSuccessClearsFailureSequence(t *testing.T) {
+	msgs := []oaiMsg{
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c1", "function": map[string]any{"name": "apply_patch", "arguments": "{\"patchText\":\"a\"}"}}}},
+		{Role: "tool", ToolCallID: "c1", Content: "error"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c2", "function": map[string]any{"name": "apply_patch", "arguments": "{\"patchText\":\"a\"}"}}}},
+		{Role: "tool", ToolCallID: "c2", Content: "failed"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c3", "function": map[string]any{"name": "apply_patch", "arguments": "{\"patchText\":\"a\"}"}}}},
+		{Role: "tool", ToolCallID: "c3", Content: "Done"},
+		{Role: "assistant", ToolCalls: []map[string]any{{"id": "c4", "function": map[string]any{"name": "apply_patch", "arguments": "{\"patchText\":\"a\"}"}}}},
+		{Role: "tool", ToolCallID: "c4", Content: "error"},
+	}
+	if l := buildAgentLedger(msgs); l.RepeatedFailure {
+		t.Fatalf("success did not clear failure sequence: %+v", l)
+	}
+}
+
+func TestAgentLedgerDifferentArgumentsDoNotRepeatFailure(t *testing.T) {
+	var msgs []oaiMsg
+	for i, patch := range []string{"a", "b", "a", "c"} {
+		id := fmt.Sprintf("c%d", i)
+		args := fmt.Sprintf("{\"patchText\":%q}", patch)
+		msgs = append(msgs,
+			oaiMsg{Role: "assistant", ToolCalls: []map[string]any{{"id": id, "function": map[string]any{"name": "apply_patch", "arguments": args}}}},
+			oaiMsg{Role: "tool", ToolCallID: id, Content: "explicit error"},
+		)
+	}
+	if l := buildAgentLedger(msgs); l.RepeatedFailure {
+		t.Fatalf("different arguments were conflated: %+v", l)
 	}
 }
 

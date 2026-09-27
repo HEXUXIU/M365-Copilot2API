@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,32 @@ import (
 
 	"github.com/google/uuid"
 )
+
+const maxPooledBufferCapacity = 64 << 10
+const maxPooledBuffers = 64
+
+var responseBufferPool = make(chan *bytes.Buffer, maxPooledBuffers)
+
+func getResponseBuffer() *bytes.Buffer {
+	select {
+	case b := <-responseBufferPool:
+		b.Reset()
+		return b
+	default:
+		return new(bytes.Buffer)
+	}
+}
+
+func putResponseBuffer(b *bytes.Buffer) {
+	if b == nil || b.Cap() > maxPooledBufferCapacity {
+		return
+	}
+	b.Reset()
+	select {
+	case responseBufferPool <- b:
+	default:
+	}
+}
 
 func openAIChoice(v map[string]any) (map[string]any, string) {
 	choices, _ := v["choices"].([]any)
@@ -192,9 +219,10 @@ func sseSafeRaw(w http.ResponseWriter, f http.Flusher, payload string) error {
 // goroutines and the main emit loop would otherwise interleave partial
 // frames on the shared ResponseWriter (net/http writes are not goroutine-safe).
 type sseWriter struct {
-	w  http.ResponseWriter
-	f  http.Flusher
-	mu sync.Mutex
+	w         http.ResponseWriter
+	f         http.Flusher
+	mu        sync.Mutex
+	committed bool
 }
 
 func newSSEWriter(w http.ResponseWriter, f http.Flusher) *sseWriter {
@@ -204,6 +232,13 @@ func newSSEWriter(w http.ResponseWriter, f http.Flusher) *sseWriter {
 func (s *sseWriter) raw(payload string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !s.committed {
+		s.w.Header().Set("Content-Type", "text/event-stream")
+		s.w.Header().Set("Cache-Control", "no-cache")
+		s.w.Header().Set("Connection", "keep-alive")
+		s.w.Header().Set("X-Accel-Buffering", "no")
+		s.committed = true
+	}
 	rc := http.NewResponseController(s.w)
 	_ = rc.SetWriteDeadline(time.Now().Add(30 * time.Second))
 	if _, err := fmt.Fprint(s.w, payload); err != nil {
@@ -215,6 +250,18 @@ func (s *sseWriter) raw(payload string) error {
 	return nil
 }
 
+func (s *sseWriter) isCommitted() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.committed
+}
+
 func (s *sseWriter) data(data string) error {
-	return s.raw("data: " + data + "\n\n")
+	b := getResponseBuffer()
+	b.WriteString("data: ")
+	b.WriteString(data)
+	b.WriteString("\n\n")
+	payload := b.String()
+	putResponseBuffer(b)
+	return s.raw(payload)
 }

@@ -338,9 +338,9 @@ func (sr *sessionResolver) matchContextLocked(tenant, ipFinger string, messages 
 		return "", 0
 	}
 	type match struct {
-		id      string
-		n       int
-		recent  time.Time
+		id     string
+		n      int
+		recent time.Time
 	}
 	best := match{}
 	for id, sess := range sr.sessions {

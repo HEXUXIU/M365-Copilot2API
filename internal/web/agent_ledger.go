@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -39,7 +40,7 @@ type agentLedger struct {
 	Metering            []meteringSnapshot `json:"metering,omitempty"`
 }
 
-var failureSignal = regexp.MustCompile(`(?i)(exit\s*(code|status)?\s*[:=]?\s*[1-9]\d*|\berror\b|\bfailed\b|\bfailure\b|exception|traceback|timed?\s*out|permission denied|not found|refused)`)
+var failureSignal = regexp.MustCompile(`(?im)(exit\s*(code|status)?\s*[:=]?\s*[1-9]\d*|^\s*(error|failed|failure)(?:\s|:|$)|\bexplicit\s+error\b|exception|traceback|timed?\s*out|permission denied|not found|refused)`)
 var unsupportedSuccess = regexp.MustCompile(`(?i)\b(installed|created|written|executed|ran|started|deployed|deleted|verified|completed|succeeded|successful(?:ly)?)\b`)
 
 func compactToolResult(s string, limit int) string {
@@ -85,24 +86,25 @@ func buildAgentLedger(messages []oaiMsg) agentLedger {
 		if m.Role == "tool" {
 			if e, ok := calls[m.ToolCallID]; ok {
 				e.Result = compactToolResult(contentToString(m.Content), 4000)
-				e.Failed = failureSignal.MatchString(e.Result)
+				e.Failed = !strings.HasPrefix(e.Result, "Success. Updated the following files:") && failureSignal.MatchString(e.Result)
 				calls[m.ToolCallID] = e
 			}
 		}
 	}
 	l := agentLedger{}
 	seenCall := map[string]int{}
-	seenFailure := map[string]int{}
+	var consecutiveFailureSignature string
+	consecutiveFailures := 0
 	for _, id := range order {
 		e := calls[id]
 		l.ToolRounds++
 		sig := e.Name + "\x00" + e.Arguments
 		seenCall[sig]++
-		if seenCall[sig] >= 2 {
+		if seenCall[sig] >= 3 {
 			l.RepeatedCall = true
 			l.RepetitionSignature = sig
 		}
-		if seenCall[sig] >= 3 {
+		if seenCall[sig] >= 5 {
 			l.StuckLoop = true
 		}
 		if e.Result == "" {
@@ -110,15 +112,23 @@ func buildAgentLedger(messages []oaiMsg) agentLedger {
 		} else {
 			l.Completed = append(l.Completed, e)
 			if e.Failed {
-				fs := e.Name + "\x00" + e.Arguments + "\x00" + normalizeFailure(e.Result)
-				seenFailure[fs]++
-				if seenFailure[fs] >= 2 {
+				fs := e.Name + "\x00" + canonicalToolArguments(e.Arguments)
+				if fs == consecutiveFailureSignature {
+					consecutiveFailures++
+				} else {
+					consecutiveFailureSignature = fs
+					consecutiveFailures = 1
+				}
+				if consecutiveFailures >= 3 {
 					l.RepeatedFailure = true
 					l.RepetitionSignature = fs
 				}
-				if seenFailure[fs] >= 3 {
+				if consecutiveFailures >= 5 {
 					l.StuckLoop = true
 				}
+			} else {
+				consecutiveFailureSignature = ""
+				consecutiveFailures = 0
 			}
 		}
 	}
@@ -128,7 +138,11 @@ func normalizeFailure(s string) string {
 	s = strings.ToLower(s)
 	s = regexp.MustCompile(`\d+`).ReplaceAllString(s, "#")
 	if len(s) > 500 {
-		s = s[:500]
+		cut := 500
+		for cut > 0 && cut < len(s) && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut]
 	}
 	return s
 }

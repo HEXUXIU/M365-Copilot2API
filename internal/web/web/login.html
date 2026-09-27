@@ -36,7 +36,7 @@ button.loading::after{content:"";position:absolute;inset:0;margin:auto;width:20p
 .error{color:var(--red);font-size:13px;margin-top:12px;min-height:20px;transition:opacity .2s ease}
 [hidden]{display:none!important}
 #login,#change{animation:slideUp .5s var(--ease-out) .15s both}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+@media(max-width:480px){.card{padding:26px 20px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}
 </style></head>
 <body>
 <main class="card">

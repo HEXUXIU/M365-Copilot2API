@@ -100,19 +100,25 @@ func TestPublicIdentityAnswerDetectsSelfQuestionsOnly(t *testing.T) {
 
 func TestPublicIdentityAnswerUsesRequestedModelForAllAdvertisedModels(t *testing.T) {
 	models := configuredModelSpecs(defaultModelMappings)
-	if len(models) != 14 {
-		t.Fatalf("advertised models=%d, want 22", len(models))
+	if len(models) != len(gatewayModels) {
+		t.Fatalf("advertised models=%d, want %d", len(models), len(gatewayModels))
 	}
 	for _, model := range models {
+		if model.Image {
+			continue
+		}
 		answer, detected := publicIdentityAnswer([]oaiMsg{{Role: "user", Content: "你是什么模型？"}}, model.ID)
 		if !detected || !strings.Contains(answer, model.ID) {
 			t.Fatalf("model=%q answer=%q detected=%t", model.ID, answer, detected)
 		}
-		if model.ID != "gpt-5.6-sol" && strings.Contains(answer, "gpt-5.6-sol") {
-			t.Fatalf("model=%q was reported as gpt-5.6-sol: %q", model.ID, answer)
-		}
 		if strings.HasPrefix(model.ID, "claude-") && !strings.Contains(answer, "Claude 系列") {
 			t.Fatalf("Claude model has wrong family: %q", answer)
+		}
+	}
+	for _, model := range models {
+		switch model.ID {
+		case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-image-2":
+			t.Fatalf("misleading model %q must not be advertised", model.ID)
 		}
 	}
 }
@@ -403,5 +409,36 @@ func TestProtocolAdaptersSanitizeAssistantIdentity(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStripReplacementCharsFiltersUFFFD(t *testing.T) {
+	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "")
+	bad := "abc�def�ghi"
+	if got := stripReplacementChars(bad); got != "abcdefghi" {
+		t.Fatalf("stripReplacementChars(%q)=%q", bad, got)
+	}
+	if got := sanitizePublicAssistantText(bad); strings.ContainsRune(got, '�') {
+		t.Fatalf("assistant text still contains U+FFFD: %q", got)
+	}
+	if got := sanitizePublicInternalText(bad); strings.ContainsRune(got, '�') {
+		t.Fatalf("internal text still contains U+FFFD: %q", got)
+	}
+	if got := sanitizePublicReasoningText(bad); strings.ContainsRune(got, '�') {
+		t.Fatalf("reasoning text still contains U+FFFD: %q", got)
+	}
+	f := newPublicIdentityStreamFilter("gpt-5.6-sol")
+	if got := f.Push("he�llo"); strings.ContainsRune(got, '�') {
+		t.Fatalf("stream Push still contains U+FFFD: %q", got)
+	}
+	if got := f.Flush(); strings.ContainsRune(got, '�') {
+		t.Fatalf("stream Flush still contains U+FFFD: %q", got)
+	}
+	rf := newPublicReasoningStreamFilter()
+	if got := rf.Push("x�y"); strings.ContainsRune(got, '�') {
+		t.Fatalf("reasoning Push still contains U+FFFD: %q", got)
+	}
+	if got := rf.Flush(); strings.ContainsRune(got, '�') {
+		t.Fatalf("reasoning Flush still contains U+FFFD: %q", got)
 	}
 }

@@ -10,4 +10,7 @@ require (
 	golang.org/x/net v0.35.0
 )
 
-require github.com/dlclark/regexp2 v1.11.5 // indirect
+require (
+	github.com/dlclark/regexp2 v1.11.5 // indirect
+	golang.org/x/sys v0.30.0 // indirect
+)

@@ -111,7 +111,11 @@ func TestModelsAdvertiseContextAndReasoning(t *testing.T) {
 		if !ok {
 			t.Fatalf("missing capabilities: %#v", m)
 		}
-		if caps["reasoning"] != true {
+		if outMods, _ := m["output_modalities"].([]any); len(outMods) == 1 && outMods[0] == "image" {
+			if caps["reasoning"] != false {
+				t.Fatalf("image model must not advertise reasoning: %#v", m)
+			}
+		} else if caps["reasoning"] != true {
 			t.Fatalf("reasoning not advertised: %#v", m)
 		}
 		if levels, ok := caps["supported_reasoning_levels"].([]any); !ok || len(levels) == 0 {
@@ -139,16 +143,29 @@ func TestModelsAdvertiseContextAndReasoning(t *testing.T) {
 	}
 }
 
-func TestModelCatalogAdvertisesGPTImage2(t *testing.T) {
+func TestModelCatalogAdvertisesFluxImages(t *testing.T) {
+	seen := map[string]bool{}
 	for _, model := range modelCatalog() {
-		if model["id"] == "gpt-image-2" {
-			if model["display_name"] != "GPT Image 2" {
-				t.Fatalf("display_name=%#v", model["display_name"])
-			}
-			return
+		id, _ := model["id"].(string)
+		if id != "flux-3" && id != "flux-4" {
+			continue
+		}
+		seen[id] = true
+		if model["output_modalities"] == nil {
+			t.Fatalf("%s missing output_modalities", id)
+		}
+		if model["tool_calls"] != false {
+			t.Fatalf("%s must not advertise tool_calls", id)
 		}
 	}
-	t.Fatal("gpt-image-2 missing from model catalog")
+	if !seen["flux-3"] || !seen["flux-4"] {
+		t.Fatalf("flux models missing from catalog: %v", seen)
+	}
+	for _, model := range modelCatalog() {
+		if model["id"] == "gpt-image-2" {
+			t.Fatal("misleading gpt-image-2 must not be advertised")
+		}
+	}
 }
 
 func TestConfiguredModelMappingsDriveCatalogAndRouting(t *testing.T) {

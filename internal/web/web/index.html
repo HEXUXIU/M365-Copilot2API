@@ -2,9 +2,9 @@
 :root{color-scheme:light dark;--bg:#f5f5f7;--surface:rgba(255,255,255,0.72);--surface-solid:#fff;--surface-border:rgba(255,255,255,0.5);--line:rgba(0,0,0,0.06);--line-strong:rgba(0,0,0,0.1);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;--accent-hover:#0077ed;--primary:#1d1d1f;--primary-hover:#000;--green:#34c759;--red:#ff3b30;--orange:#ff9f0a;--purple:#bf5af2;--sidebar-w:240px;--shadow-sm:0 2px 8px rgba(0,0,0,0.04);--shadow:0 8px 32px rgba(0,0,0,0.06);--shadow-lg:0 16px 48px rgba(0,0,0,0.1);--radius:14px;--radius-sm:10px;--ease-out:cubic-bezier(0.23,1,0.32,1);--ease-in-out:cubic-bezier(0.77,0,0.175,1);--ease-spring:cubic-bezier(0.32,0.72,0,1)}
 @media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--surface:rgba(44,44,46,0.75);--surface-solid:#2c2c2e;--surface-border:rgba(255,255,255,0.06);--line:rgba(255,255,255,0.06);--line-strong:rgba(255,255,255,0.12);--text:#f5f5f7;--muted:#98989d;--accent:#0a84ff;--accent-hover:#409cff;--primary:#f5f5f7;--primary-hover:#fff;--green:#30d158;--red:#ff453a;--orange:#ff9f0a;--purple:#bf5af2;--shadow-sm:0 2px 8px rgba(0,0,0,0.15);--shadow:0 8px 32px rgba(0,0,0,0.2);--shadow-lg:0 16px 48px rgba(0,0,0,0.3)}}
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{max-width:100%}
+html,body{max-width:100%;overflow-x:hidden}
 body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display","Noto Sans SC",-apple-system,BlinkMacSystemFont,system-ui,sans-serif;font-size:14px;line-height:1.4706;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;transition:background .3s ease,color .3s ease}
-.app{display:flex;min-height:100vh;animation:fadeIn .4s var(--ease-out)}
+.app{display:flex;min-height:100vh;max-width:100%;overflow-x:hidden;animation:fadeIn .4s var(--ease-out)}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
 @keyframes scaleIn{from{opacity:0;transform:scale(0.95)}to{opacity:1;transform:scale(1)}}
@@ -49,8 +49,9 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .stat-sub{margin-top:4px;font-size:11px;font-weight:500;color:var(--green)}
 
 /* Card */
-.card{background:var(--surface);-webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden;transition:background .3s ease,border-color .3s ease}
-.card-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line)}
+.card{background:var(--surface);-webkit-backdrop-filter:blur(20px) saturate(180%);backdrop-filter:blur(20px) saturate(180%);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden;transition:background .3s ease,border-color .3s ease;max-width:100%}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;min-width:0;overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;scrollbar-width:none}
+.card-head::-webkit-scrollbar{display:none}
 .card-title{font-size:13px;font-weight:600;letter-spacing:-0.01em}
 .card-body{padding:18px}
 
@@ -97,6 +98,8 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 .btn-sm{padding:5px 10px;min-height:28px;font-size:11px}
 
 /* Table */
+.table-wrap{overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;max-width:100%;scrollbar-width:thin}
+.table-wrap .table{min-width:640px}
 .table{width:100%;border-collapse:collapse}
 .table th{text-align:left;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;background:transparent;border-bottom:1px solid var(--line);padding:10px 18px}
 .table td{padding:12px 18px;border-bottom:1px solid var(--line);white-space:nowrap;font-size:13px}
@@ -215,8 +218,8 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 
 /* Responsive */
 @media(max-width:900px){.stats{grid-template-columns:repeat(2,1fr)}.quick-grid{grid-template-columns:1fr}}
-@media(max-width:640px){.sidebar{width:48px;padding:16px 4px}.logo span,.nav-label,.nav button span,.sidebar-foot{display:none}.logo{padding-bottom:16px;justify-content:center}.nav button{padding:8px 0;justify-content:center}.topbar{padding:0 14px}.content{padding:16px}.stats{grid-template-columns:1fr}.topbar-right{display:none}}
-@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+@media(max-width:640px){.sidebar{width:48px;padding:16px 4px}.logo span,.nav-label,.nav button span,.sidebar-foot{display:none}.logo{padding-bottom:16px;justify-content:center}.nav button{padding:8px 0;justify-content:center}.topbar{padding:0 14px}.content{padding:16px}.stats{grid-template-columns:1fr}.topbar-right{display:none}.main{overflow-x:hidden}.content{overflow-x:hidden}.card{max-width:100%}.card-head{flex-wrap:nowrap;gap:10px;padding:12px 14px}.page-head{flex-wrap:wrap;gap:10px}.usage-toolbar{flex-wrap:wrap}.table-wrap{margin:0;touch-action:pan-x}.seg{max-width:100%;overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch;scrollbar-width:none}.seg::-webkit-scrollbar{display:none}.pagination{overflow-x:auto;flex-wrap:nowrap;-webkit-overflow-scrolling:touch}}
+@media(max-width:900px){.usage-overview{grid-template-columns:repeat(2,1fr)}}@media(max-width:640px){.usage-overview{grid-template-columns:1fr}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}
 
 /* Usage overview card (dashboard) */
 .usage-overview{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;margin-bottom:24px;box-shadow:var(--shadow-sm)}
@@ -317,7 +320,7 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
       <button data-page="modeltest" onclick="showPage('modeltest')"><i data-lucide="flask-conical" style="width:16px;height:16px;flex-shrink:0"></i><span>Model Test</span></button>
       <button data-page="settings" onclick="showPage('settings')"><i data-lucide="settings" style="width:16px;height:16px;flex-shrink:0"></i><span>Settings</span></button>
     </nav>
-    <div class="sidebar-foot">v0.4.0</div>
+    <div class="sidebar-foot" id="sidebarVersion">dev</div>
   </aside>
 
   <main class="main">
@@ -436,7 +439,7 @@ if (response.output_text) {
         </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Recent requests</span><button class="btn btn-sm" onclick="showPage('usage')">View all</button></div>
-          <table class="table"><thead><tr><th>Time</th><th>Model</th><th>Endpoint</th><th>Tokens</th><th>Status</th></tr></thead><tbody id="dashRecentRows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Model</th><th>Endpoint</th><th>Tokens</th><th>Status</th></tr></thead><tbody id="dashRecentRows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table></div>
         </div>
       </section>
 
@@ -481,7 +484,7 @@ if (response.output_text) {
         </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Request details</span><span style="font-size:11px;color:var(--muted)">Recent records</span></div>
-          <table class="table"><thead><tr><th>Time</th><th>Key</th><th>Model</th><th>Endpoint</th><th>Tokens</th><th>Latency</th></tr></thead><tbody id="ugLogRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Key</th><th>Model</th><th>Endpoint</th><th>Tokens</th><th>Latency</th></tr></thead><tbody id="ugLogRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table></div>
           <div class="pagination"><span id="ugPageInfo"></span><button class="btn btn-sm" id="ugPrev" onclick="ugPage(-1)">Previous</button><button class="btn btn-sm" id="ugNext" onclick="ugPage(1)">Next</button></div>
         </div>
       </section>
@@ -537,7 +540,8 @@ if (response.output_text) {
               </div>
             </div>
           </div>
-          <table class="table"><thead><tr><th>Account</th><th>Calls</th><th>Status</th><th>Updated</th><th>Scheduling</th><th>Proxy</th><th>Actions</th></tr></thead><tbody id="accountRows"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody></table>
+          <div class="card-body" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;border-bottom:1px solid var(--line)"><label style="display:flex;align-items:center;gap:6px;font-size:12px"><input id="accountSelectAll" type="checkbox" onchange="selectAllAccounts(this.checked)"> Select all</label><span id="accountSelectionCount" class="form-hint" style="margin:0">0 selected</span><button class="btn-sm btn" onclick="batchAccounts({scheduling:true})">Enable sched</button><button class="btn-sm btn danger" onclick="batchAccounts({scheduling:false})">Disable sched</button><button class="btn-sm btn" onclick="batchAccounts({webSearch:true})">Search on</button><button class="btn-sm btn danger" onclick="batchAccounts({webSearch:false})">Search off</button><input class="form-input" id="batchSystemPrompt" placeholder="System prompt for selected…" style="flex:1;min-width:160px;padding:6px 10px;font-size:12px"><button class="btn-sm btn primary" onclick="applyBatchSystemPrompt()">Apply prompt</button><button class="btn-sm btn" onclick="clearBatchSystemPrompt()">Clear prompt</button></div>
+          <div class="table-wrap"><table class="table"><thead><tr><th></th><th>Account</th><th>Calls</th><th>Status</th><th>Updated</th><th>Scheduling</th><th>Proxy</th><th>Actions</th></tr></thead><tbody id="accountRows"><tr><td colspan="8" class="empty">Loading...</td></tr></tbody></table></div>
         </div>
       </section>
 
@@ -549,7 +553,7 @@ if (response.output_text) {
         </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Key list</span><span style="font-size:11px;color:var(--muted)">The full key is shown only once after creation</span></div>
-          <table class="table"><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Status</th><th>Last used</th><th style="text-align:right">Actions</th></tr></thead><tbody id="keyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Status</th><th>Last used</th><th style="text-align:right">Actions</th></tr></thead><tbody id="keyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table></div>
         </div>
       </section>
 
@@ -571,7 +575,7 @@ if (response.output_text) {
         </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Conversation list</span></div>
-          <table class="table"><thead><tr><th>Name</th><th>Messages</th><th>Account</th><th>Last updated</th><th>Actions</th></tr></thead><tbody id="convRows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Name</th><th>Messages</th><th>Account</th><th>Last updated</th><th>Actions</th></tr></thead><tbody id="convRows"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody></table></div>
         </div>
       </section>
 
@@ -595,7 +599,7 @@ if (response.output_text) {
         </div>
         <div class="card">
           <div class="card-head"><span class="card-title">Proxy list</span></div>
-          <table class="table"><thead><tr><th>URL</th><th>Status</th><th>Latency</th><th>Failures</th><th>Cooldown until</th><th>Actions</th></tr></thead><tbody id="proxyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table>
+          <div class="table-wrap"><table class="table"><thead><tr><th>URL</th><th>Status</th><th>Latency</th><th>Failures</th><th>Cooldown until</th><th>Actions</th></tr></thead><tbody id="proxyRows"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody></table></div>
         </div>
       </section>
 
@@ -606,14 +610,19 @@ if (response.output_text) {
           <button class="btn primary" onclick="modelTestAll()"><i data-lucide="play" style="width:14px;height:14px"></i> Test all</button>
         </div>
         <div class="card">
-          <table class="table"><thead><tr><th>Model</th><th>Status</th><th>Latency</th><th>Reply</th></tr></thead><tbody id="modelTestRows"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody></table>
+          <div class="table-wrap"><table class="table"><thead><tr><th>Model</th><th>Status</th><th>Latency</th><th>Reply</th></tr></thead><tbody id="modelTestRows"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody></table></div>
         </div>
       </section>
 
       <!-- Settings -->
       <section id="page-settings" style="display:none">
         <h2 style="font-size:18px;font-weight:700;margin-bottom:16px">Settings</h2>
-        <div class="card"><div class="card-body"><div class="form-group"><label class="form-label">Listen address</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div><div class="form-group"><label class="form-label">Chat timeout (seconds)</label><input class="form-input" id="setTimeout" type="number" placeholder="120"></div><div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select><p class="form-hint">Choose the language used by the administration console.</p></div><div style="margin-top:16px"><button class="btn primary" onclick="saveSettings()">Save settings</button></div></div></div>
+        <div class="card"><div class="card-head"><span class="card-title">请求与模型</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Chat timeout (seconds, 5-3600)</label><input class="form-input" id="setTimeout" type="number" min="5" max="3600" placeholder="600"></div><div class="form-group"><label class="form-label">Image timeout (seconds, 5-3600)</label><input class="form-input" id="setImageTimeout" type="number" min="5" max="3600" placeholder="300"></div><div class="form-group"><label class="form-label">Context window (tokens)</label><input class="form-input" id="setContextWindow" type="number" min="1024" placeholder="512000"></div><div class="form-group"><label class="form-label">Max output tokens</label><input class="form-input" id="setMaxOutput" type="number" min="1" placeholder="65536"></div><div class="form-group"><label class="form-label">Max tool calls / turn (1-64)</label><input class="form-input" id="setMaxToolCalls" type="number" min="1" max="64" placeholder="64"></div><div class="form-group"><label class="form-label">Max tool rounds (1-512)</label><input class="form-input" id="setMaxToolRounds" type="number" min="1" max="512" placeholder="512"></div><div class="form-group"><label class="form-label">Max conversation messages</label><input class="form-input" id="setMaxConvMsgs" type="number" min="1" max="10000" placeholder="10000"></div></div></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">账号与限流</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Account concurrency (1-64)</label><input class="form-input" id="setAcctConcurrency" type="number" min="1" max="64" placeholder="16"></div><div class="form-group"><label class="form-label">Rate limit cooldown (seconds, 5-3600)</label><input class="form-input" id="setCooldown" type="number" min="5" max="3600" placeholder="30"></div><div class="form-group"><label class="form-label">Transient throttle cooldown (seconds, 5-600)</label><input class="form-input" id="setTransientCooldown" type="number" min="5" max="600" placeholder="15"></div><div class="form-group"><label class="form-label">Scenario</label><select class="form-input" id="setScenario"><option value="OfficeWebIncludedCopilot">OfficeWebIncludedCopilot</option><option value="Bizchat">Bizchat</option><option value="CopilotConsumer">CopilotConsumer</option><option value="Chathub">Chathub</option></select></div><div class="form-group"><label class="form-label">License type</label><select class="form-input" id="setLicense"><option value="Starter">Starter</option><option value="Premium">Premium</option><option value="Free">Free</option><option value="BCAIS">BCAIS</option><option value="BCSWW">BCSWW</option><option value="BCWAF">BCWAF</option><option value="BCWBF">BCWBF</option></select></div><div class="form-group"><label class="form-label">Log level</label><select class="form-input" id="setLogLevel"><option value="silent">silent</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select></div></div></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">功能开关</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px" id="featureFlags"></div><p class="form-hint">MemoryV2 / DeepWork / ComputerUse / RealtimeVoice / SystemPromptOverride / ImageAPI / DesignerImageGen4o / CodeCanvas / SydneyReconnect</p></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">模型映射</span><span style="font-size:11px;color:var(--muted)">公开模型名 → 上游 tone</span></div><div class="table-wrap"><table class="table"><thead><tr><th>Public model</th><th>Upstream tone</th><th>Display name</th><th>Reasoning</th><th style="text-align:right">Actions</th></tr></thead><tbody id="modelMapRows"></tbody></table></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><div class="form-group" style="margin:0"><label class="form-label">Public model</label><input class="form-input" id="newModelId" placeholder="gpt-5.7-chat" style="width:160px"></div><div class="form-group" style="margin:0"><label class="form-label">Upstream tone</label><select class="form-input" id="newModelTone" style="width:200px"></select></div><div class="form-group" style="margin:0"><label class="form-label">Display name</label><input class="form-input" id="newModelDisplay" placeholder="GPT-5.7" style="width:140px"></div><div class="form-group" style="margin:0"><label class="form-label">Reasoning</label><select class="form-input" id="newModelEffort" style="width:110px"><option value="low">low</option><option value="minimal">minimal</option><option value="medium" selected>medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="none">none</option></select></div><button class="btn-sm btn primary" onclick="addModelMapping()">Add</button></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">系统</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;align-items:end"><div class="form-group" style="margin:0" id="setAutoStartWrap"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input id="setAutoStart" type="checkbox"> 开机自启动（当前用户，免管理员）</label><p class="form-hint">写入 HKCU Run 注册表项，指向当前可执行文件。</p></div><div class="form-group" style="margin:0"><label class="form-label">日志位置</label><input class="form-input" id="setLogPath" readonly placeholder="stdout / stderr"><p class="form-hint">M365_DEBUG_LOG 环境变量设置 debug 日志文件；运行日志输出到进程 stdout/stderr。</p></div></div></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Listen address (需重启)</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div><div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select></div></div><div style="margin-top:16px;display:flex;gap:8px"><button class="btn primary" onclick="saveSettings()">Save settings</button><button class="btn" onclick="loadSettings()">Reload</button></div></div></div>
       </section>
     </div>
   </main>
@@ -860,7 +869,18 @@ const localeText={
   'Not checked': {'zh-CN':'未检测','zh-TW':'未檢測','ja':'未確認','ko':'확인 안 됨','es':'Sin comprobar','fr':'Non vérifié','de':'Nicht geprüft','pt-BR':'Não verificado','ru':'Не проверено','ar':'لم يتم التحقق'},
   'Cooling down': {'zh-CN':'冷却中','zh-TW':'冷卻中','ja':'クールダウン中','ko':'쿨다운 중','es':'Enfriando','fr':'En attente','de':'Wird abgekühlt','pt-BR':'Resfriando','ru':'Ожидание','ar':'جارٍ التهدئة'},
   'Testing…': {'zh-CN':'测试中…','zh-TW':'測試中…','ja':'テスト中…','ko':'테스트 중…','es':'Probando…','fr':'Test en cours…','de':'Wird getestet…','pt-BR':'Testando…','ru':'Тестирование…','ar':'جارٍ الاختبار…'},
-  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'}
+  'Failed': {'zh-CN':'失败','zh-TW':'失敗','ja':'失敗','ko':'실패','es':'Fallido','fr':'Échec','de':'Fehlgeschlagen','pt-BR':'Falhou','ru':'Ошибка','ar':'فشل'},
+  'Sign in via browser OAuth and add the account to the pool': {'zh-CN':'通过浏览器 OAuth 登录并将账号加入账号池','zh-TW':'透過瀏覽器 OAuth 登入並將帳號加入帳號池','ja':'ブラウザOAuthでサインインしアカウントをプールに追加','ko':'브라우저 OAuth로 로그인하여 계정을 풀에 추가','es':'Inicia sesión con OAuth del navegador y añade la cuenta al grupo','fr':'Connectez-vous via OAuth dans le navigateur et ajoutez le compte au pool','de':'Melden Sie sich per Browser-OAuth an und fügen Sie das Konto zum Pool hinzu','pt-BR':'Faça login via OAuth no navegador e adicione a conta ao pool','ru':'Войдите через OAuth в браузере и добавьте аккаунт в пул','ar':'سجّل الدخول عبر OAuth في المتصفح وأضف الحساب إلى المجموعة'},
+  'Generate a key to authenticate API requests': {'zh-CN':'生成密钥以认证 API 请求','zh-TW':'產生金鑰以驗證 API 請求','ja':'APIリクエスト認証用のキーを生成','ko':'API 요청 인증용 키 생성','es':'Genera una clave para autenticar solicitudes API','fr':'Générez une clé pour authentifier les requêtes API','de':'Erstellen Sie einen Schlüssel zur Authentifizierung von API-Anfragen','pt-BR':'Gere uma chave para autenticar solicitações de API','ru':'Создайте ключ для аутентификации запросов API','ar':'أنشئ مفتاحًا لمصادقة طلبات API'},
+  'Sign in via Microsoft OAuth': {'zh-CN':'通过 Microsoft OAuth 登录','zh-TW':'透過 Microsoft OAuth 登入','ja':'Microsoft OAuthでサインイン','ko':'Microsoft OAuth로 로그인','es':'Iniciar sesión con Microsoft OAuth','fr':'Se connecter via Microsoft OAuth','de':'Über Microsoft OAuth anmelden','pt-BR':'Entrar com Microsoft OAuth','ru':'Войти через Microsoft OAuth','ar':'تسجيل الدخول عبر Microsoft OAuth'},
+  'Generate a key for API access': {'zh-CN':'生成用于 API 访问的密钥','zh-TW':'產生用於 API 存取的金鑰','ja':'APIアクセス用のキーを生成','ko':'API 액세스용 키 생성','es':'Genera una clave para acceso API','fr':'Générez une clé pour l\'accès API','de':'Schlüssel für API-Zugriff erstellen','pt-BR':'Gere uma chave para acesso à API','ru':'Создайте ключ для доступа к API','ar':'أنشئ مفتاحًا للوصول إلى API'},
+  'No custom mappings (using built-in catalog)': {'zh-CN':'无自定义映射（使用内置目录）','zh-TW':'無自訂映射（使用內建目錄）','ja':'カスタムマッピングなし（組み込みカタログ使用）','ko':'사용자 매핑 없음(내장 카탈로그 사용)','es':'Sin mapeos personalizados (catálogo integrado)','fr':'Aucun mappage personnalisé (catalogue intégré)','de':'Keine benutzerdefinierten Zuordnungen (integrierter Katalog)','pt-BR':'Sem mapeamentos personalizados (catálogo integrado)','ru':'Нет пользовательских сопоставлений (встроенный каталог)','ar':'لا توجد تعيينات مخصصة (باستخدام الكتالوج المدمج)'},
+  'Enter public model id': {'zh-CN':'输入公开模型 ID','zh-TW':'輸入公開模型 ID','ja':'公開モデルIDを入力','ko':'공개 모델 ID 입력','es':'Introduce el ID del modelo público','fr':'Saisissez l\'ID du modèle public','de':'Öffentliche Modell-ID eingeben','pt-BR':'Informe o ID do modelo público','ru':'Введите ID публичной модели','ar':'أدخل معرّف النموذج العام'},
+  'Invalid model id': {'zh-CN':'模型 ID 无效','zh-TW':'模型 ID 無效','ja':'無効なモデルID','ko':'잘못된 모델 ID','es':'ID de modelo no válido','fr':'ID de modèle invalide','de':'Ungültige Modell-ID','pt-BR':'ID de modelo inválido','ru':'Недопустимый ID модели','ar':'معرّف النموذج غير صالح'},
+  'Mapping already exists': {'zh-CN':'映射已存在','zh-TW':'映射已存在','ja':'マッピングは既に存在します','ko':'매핑이 이미 존재합니다','es':'El mapeo ya existe','fr':'Le mappage existe déjà','de':'Zuordnung existiert bereits','pt-BR':'O mapeamento já existe','ru':'Сопоставление уже существует','ar':'التعيين موجود بالفعل'},
+  'Bind proxy for this account…': {'zh-CN':'为此账号绑定代理…','zh-TW':'為此帳號綁定代理…','ja':'このアカウントにプロキシをバインド…','ko':'이 계정에 프록시 바인딩…','es':'Vincular proxy a esta cuenta…','fr':'Lier un proxy à ce compte…','de':'Proxy für dieses Konto binden…','pt-BR':'Vincular proxy a esta conta…','ru':'Привязать прокси к этому аккаунту…','ar':'ربط وكيل بهذا الحساب…'},
+  'Proxy bound': {'zh-CN':'已绑定代理','zh-TW':'已綁定代理','ja':'プロキシをバインドしました','ko':'프록시 바인딩됨','es':'Proxy vinculado','fr':'Proxy lié','de':'Proxy gebunden','pt-BR':'Proxy vinculado','ru':'Прокси привязан','ar':'تم ربط الوكيل'},
+  'Proxy unbound': {'zh-CN':'已解绑代理','zh-TW':'已解綁代理','ja':'プロキシを解除しました','ko':'프록시 해제됨','es':'Proxy desvinculado','fr':'Proxy délié','de':'Proxy getrennt','pt-BR':'Proxy desvinculado','ru':'Прокси отвязан','ar':'تم فصل الوكيل'}
 };
 function preferredLocale(){
   try{
@@ -968,6 +988,7 @@ function showPage(p){
   if(p==='proxies')loadProxies();
   if(p==='modeltest')loadModelTest();
   if(p==='settings')loadSettings();
+  try{lucide.createIcons();}catch(e){}
 }
 
 let onboardingHidden=false;
@@ -1079,16 +1100,39 @@ function renderAccounts(){
     const status=x.status==='cooldown'?`<div><span class="status cooldown"><i></i>Cooldown</span>${cooldown}</div>`:x.status==='online'?'<span class="status online"><i></i>Online</span>':'<span class="status offline"><i></i>Offline</span>';
     const calls=x.rateLimited?`Limited after ${x.callCount||0} calls`:`Called ${x.callCount||0} times`;
     const scheduleEnabled=x.scheduleEnabled!==false;
+    const searchEnabled=x.webSearchEnabled!==false;
+    const flags=`<div style="display:flex;gap:4px;margin-top:4px;flex-wrap:wrap">${searchEnabled?'':'<span class="status warn"><i></i>No search</span>'}${x.systemPrompt?'<span class="status online"><i></i>Custom prompt</span>':''}</div>`;
     const proxyLabel=x.boundProxy?`<span style="font-size:11px;word-break:break-all">${esc(x.boundProxy)}</span>`:'<span style="color:var(--muted);font-size:11px">—</span>';
-    return `<tr><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div><b>${x.displayName||x.email}</b><div style="font-size:11px;color:var(--muted)">${x.email||''}</div></div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" onclick="toggleAccountSchedule('${x.id}',${!scheduleEnabled})">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td>${proxyLabel} <button class="btn-sm btn" style="margin-top:2px" onclick="bindAccountProxy('${x.id}','${esc(x.boundProxy||'')}')">Bind</button></td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`;
-  }).join(''):'<tr><td colspan="7" class="empty">No matching accounts</td></tr>';
+    const checked=_accountSelection.has(x.id)?' checked':'';
+    return `<tr><td><input type="checkbox" data-account-select value="${esc(x.id)}"${checked} onchange="toggleAccountSelect('${x.id}',this.checked)"></td><td><div class="account-cell"><div class="avatar">${(x.displayName||x.email||'M')[0]}</div><div><b>${x.displayName||x.email}</b><div style="font-size:11px;color:var(--muted)">${x.email||''}</div>${flags}</div></div></td><td style="font-size:12px;white-space:nowrap">${calls}</td><td>${status}</td><td style="font-size:12px;color:var(--muted)">${x.updatedAt?new Date(x.updatedAt).toLocaleString():'-'}</td><td><button class="btn-sm btn${scheduleEnabled?'':' danger'}" onclick="toggleAccountSchedule('${x.id}',${!scheduleEnabled})">${scheduleEnabled?'Enabled':'Disabled'}</button></td><td>${proxyLabel} <button class="btn-sm btn" style="margin-top:2px" onclick="bindAccountProxy('${x.id}','${esc(x.boundProxy||'')}')">Bind</button></td><td><button class="btn-sm btn danger" onclick="deleteAccount('${x.id}')">Delete</button></td></tr>`;
+  }).join(''):'<tr><td colspan="8" class="empty">No matching accounts</td></tr>';
+}
+const _accountSelection=new Set();
+function toggleAccountSelect(id,on){if(on)_accountSelection.add(id);else _accountSelection.delete(id);updateAccountSelectionCount();}
+function selectAllAccounts(on){_accountSelection.clear();if(on)(_accountsCache||[]).forEach(x=>_accountSelection.add(x.id));document.querySelectorAll('[data-account-select]').forEach(c=>{c.checked=on;});updateAccountSelectionCount();}
+function updateAccountSelectionCount(){const el=$('accountSelectionCount');if(el)el.textContent=_accountSelection.size+' selected';const all=$('accountSelectAll');if(all)all.checked=_accountSelection.size>0&&(_accountsCache||[]).every(x=>_accountSelection.has(x.id));}
+function selectedAccountIDs(){return Array.from(_accountSelection);}
+async function batchAccounts(patch){
+  const ids=selectedAccountIDs();
+  if(!ids.length){showNotice('Select at least one account','error');return;}
+  try{const r=await api('/api/accounts/batch',{method:'POST',body:JSON.stringify(Object.assign({ids},patch))});showNotice('Updated '+r.updated+' accounts','success');await loadAccounts();}catch(e){showNotice(e.message,'error');}
+}
+async function applyBatchSystemPrompt(){
+  const v=($('batchSystemPrompt').value||'').trim();
+  if(!v){showNotice('Enter a system prompt first','error');return;}
+  await batchAccounts({systemPrompt:v});
+}
+async function clearBatchSystemPrompt(){
+  if(!selectedAccountIDs().length){showNotice('Select at least one account','error');return;}
+  if(!confirm('Clear custom system prompt for selected accounts?'))return;
+  await batchAccounts({systemPrompt:''});
 }
 async function loadAccounts(){
   try{
     const d=await api('/api/accounts');
     _accountsCache=d.accounts||[];
     renderAccounts();
-  }catch(e){$('accountRows').innerHTML=`<tr><td colspan="7" class="empty">${e.message}</td></tr>`;}
+  }catch(e){$('accountRows').innerHTML=`<tr><td colspan="8" class="empty">${e.message}</td></tr>`;}
 }
 
 async function toggleAccountSchedule(id,enabled){
@@ -1127,7 +1171,7 @@ async function startPKCE(){
       if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权超时，请重新开始授权。</b></div>';return;}
       if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权窗口在完成前已关闭。</b></div>';return;}
       try{const s=await api('/api/auth/status?state='+d.state);
-        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>授权成功</div><p>账号已加入账号池。</p></div>';showNotice('授权成功','success');loadAccounts();}
+        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>授权成功</div><p>账号已加入账号池。</p></div>';showNotice('授权成功','success');loadAccounts();try{lucide.createIcons();}catch(e){}}
         if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权失败或已过期</b></div>';}
       }catch(e){}
     },2000);
@@ -1581,22 +1625,79 @@ async function modelTestAll(){
   showNotice('模型测试完成','success');
 }
 
+const _featureFlagDefs=[["enableMemoryV2","Memory V2"],["enableDeepWork","Deep Work"],["enableComputerUse","Computer Use"],["enableRealtimeVoice","Realtime Voice"],["enableSystemPromptOverride","System Prompt Override"],["enableImageApi","Image API"],["enableDesignerImageGen4o","Designer Image 4o"],["enableCodeCanvas","Code Canvas"],["enableSydneyReconnect","Sydney Reconnect"]];
+let _modelMappingsCache=[];
+let _upstreamTonesCache=[];
+function numOrUndef(id){const v=$(id).value.trim();if(!v)return undefined;const n=parseInt(v,10);return isNaN(n)?undefined:n;}
 async function loadSettings(){
   try{
     const d=await api('/api/admin/settings');
     const v=d.settings||{};
     $('setListen').value=v.listenAddress||'';
-    $('setTimeout').value=v.chatTimeoutSeconds||120;
+    $('setTimeout').value=v.chatTimeoutSeconds??'';
+    $('setImageTimeout').value=v.imageTimeoutSeconds??'';
+    $('setContextWindow').value=v.contextWindow??'';
+    $('setMaxOutput').value=v.maxOutputTokens??'';
+    $('setMaxToolCalls').value=v.maxToolCallsPerTurn??'';
+    $('setMaxToolRounds').value=v.maxToolRounds??'';
+    $('setMaxConvMsgs').value=v.maxConversationMessages??'';
+    $('setAcctConcurrency').value=v.accountConcurrencyLimit??'';
+    $('setCooldown').value=v.rateLimitCooldownSeconds??'';
+    $('setTransientCooldown').value=v.transientThrottledCooldownSeconds??'';
+    $('setScenario').value=v.scenario||'OfficeWebIncludedCopilot';
+    $('setLicense').value=v.licenseType||'Starter';
+    $('setLogLevel').value=v.logLevel||'info';
+    $('setLogPath').value=v.debugLogPath||'stdout / stderr（M365_DEBUG_LOG 可配置）';
+    const asWrap=$('setAutoStartWrap');
+    if(d.autoStartSupported===false){if(asWrap)asWrap.style.display='none';}
+    else{$('setAutoStart').checked=!!d.autoStart;}
+    $('featureFlags').innerHTML=_featureFlagDefs.map(([k,label])=>`<label style="display:flex;align-items:center;gap:8px;font-size:12px"><input type="checkbox" data-ff="${k}"${v[k]?' checked':''}> ${label}</label>`).join('');
+    _modelMappingsCache=(v.modelMappings||[]).slice();
+    _upstreamTonesCache=(d.upstreamTones||[]).slice();
+    $('newModelTone').innerHTML=_upstreamTonesCache.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    renderModelMappings();
+    try{lucide.createIcons();}catch(e){}
   }catch(e){showNotice(e.message,'error');}
 }
+function renderModelMappings(){
+  $('modelMapRows').innerHTML=_modelMappingsCache.length?_modelMappingsCache.map((m,i)=>`<tr><td><b>${esc(m.publicModel||'')}</b></td><td style="font-size:12px">${esc(m.upstreamTone||'')}</td><td style="font-size:12px">${esc(m.displayName||'')}</td><td style="font-size:12px">${esc(m.defaultReasoningLevel||'')}</td><td style="text-align:right"><button class="btn-sm btn danger" onclick="delModelMapping(${i})">Delete</button></td></tr>`).join(''):'<tr><td colspan="5" class="empty">No custom mappings (using built-in catalog)</td></tr>';
+  try{lucide.createIcons();}catch(e){}
+}
+function addModelMapping(){
+  const id=$('newModelId').value.trim(),tone=$('newModelTone').value,display=$('newModelDisplay').value.trim()||id,effort=$('newModelEffort').value;
+  if(!id){showNotice('Enter public model id','error');return;}
+  if(!/^[A-Za-z0-9._-]{1,128}$/.test(id)){showNotice('Invalid model id','error');return;}
+  if(_modelMappingsCache.some(m=>(m.publicModel||'').toLowerCase()===id.toLowerCase())){showNotice('Mapping already exists','error');return;}
+  _modelMappingsCache.push({publicModel:id,upstreamTone:tone,displayName:display,defaultReasoningLevel:effort});
+  $('newModelId').value='';$('newModelDisplay').value='';
+  renderModelMappings();
+}
+function delModelMapping(i){_modelMappingsCache.splice(i,1);renderModelMappings();}
 async function saveSettings(){
   try{
+    const body={modelMappings:_modelMappingsCache};
     const listen=$('setListen').value.trim();
-    const timeout=$('setTimeout').value.trim();
-    const body={};
     if(listen)body.listenAddress=listen;
-    if(timeout)body.chatTimeoutSeconds=parseInt(timeout);
-    await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
+    const put=(k,v)=>{if(v!==undefined)body[k]=v;};
+    put('chatTimeoutSeconds',numOrUndef('setTimeout'));
+    put('imageTimeoutSeconds',numOrUndef('setImageTimeout'));
+    put('contextWindow',numOrUndef('setContextWindow'));
+    put('maxOutputTokens',numOrUndef('setMaxOutput'));
+    put('maxToolCallsPerTurn',numOrUndef('setMaxToolCalls'));
+    put('maxToolRounds',numOrUndef('setMaxToolRounds'));
+    put('maxConversationMessages',numOrUndef('setMaxConvMsgs'));
+    put('accountConcurrencyLimit',numOrUndef('setAcctConcurrency'));
+    put('rateLimitCooldownSeconds',numOrUndef('setCooldown'));
+    put('transientThrottledCooldownSeconds',numOrUndef('setTransientCooldown'));
+    body.scenario=$('setScenario').value;
+    body.licenseType=$('setLicense').value;
+    body.logLevel=$('setLogLevel').value;
+    const as=$('setAutoStart');
+    if(as)body.autoStart=as.checked;
+    document.querySelectorAll('[data-ff]').forEach(c=>{body[c.dataset.ff]=c.checked;});
+    const resp=await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
+    if(resp&&resp.autoStartError)showNotice('自启动设置失败: '+resp.autoStartError,'error');
+    else if(resp&&resp.autoStartApplied!==undefined)showNotice(resp.autoStartApplied?'已开启开机自启动':'已关闭开机自启动','success');
     showNotice('设置已保存','success');
   }catch(e){showNotice(e.message,'error');}
 }
@@ -1605,6 +1706,7 @@ setInterval(()=>{if($('page-accounts').style.display!=='none')loadAccounts();},1
 
 // Init
 try{lucide.createIcons();}catch(e){}
+api('/api/version').then(v=>{const el=document.getElementById('sidebarVersion');if(el&&v&&v.version){el.textContent=(v.version==='dev')?'dev':('v'+v.version);}}).catch(()=>{});
 fetch('/api/admin/session').then(r=>r.json()).then(d=>{
   if(d.authenticated&&d.must_change_password){location.replace('/login');}
   else if(d.authenticated){$('login').style.display='none';$('app').style.display='flex';showPage('dashboard');loadStats();loadOnboarding();}

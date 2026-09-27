@@ -338,12 +338,12 @@ curl http://127.0.0.1:4141/v1/messages \
 
 | 模型 | 默认推理级别 | 说明 |
 |------|-------------|------|
-| `gpt-5.6-sol` | `low` | 默认模型 |
-| `gpt-5.6-terra` | `medium` | 推理折中 |
-| `gpt-5.6-luna` | `medium` | 推理折中 |
+| `gpt-5.6-reasoning` | `medium` | 推理模型 |
+| `gpt-5.5` / `gpt-5.4` / `gpt-5.3` / `gpt-5.2` | `medium` | 快速模型（`reasoning_effort` 可切档） |
+| `flux-3` / `flux-4` | - | 生图模型（走 `/v1/images` 真实图像管线） |
 
 - 模型映射把公开模型名翻译成上游 tone；控制台可增删映射、调整默认推理级别。
-- 推理强度还可通过请求内的 `reasoning_effort` 参数调整。
+- 推理强度通过 OpenAI 兼容的 `reasoning_effort` 参数调整（`none/minimal/low/medium/high/xhigh`），不再用虚假模型名区分档位。
 - M365 订阅会上线的新模型名（如 `gpt-5.2`、`gpt-5.4`、`codex` 系）以实际目录为准，可在控制台配置导入。
 
 ## 内容键会话复用原理

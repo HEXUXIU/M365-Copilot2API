@@ -10,7 +10,10 @@ import (
 )
 
 var (
-	Version     = "0.5.0"
+	// Version 默认 "dev"，表示非发布构建。发布版由 release.yml 通过
+	// -ldflags "-X m365-copilot2api/internal/web.Version=<tag>" 从 Git tag 注入，
+	// 避免手工改版本号遗漏。
+	Version     = "dev"
 	Commit      = "unknown"
 	BuildTime   = "unknown"
 	startedAt   = time.Now()

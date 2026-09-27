@@ -7,9 +7,9 @@ type Tool struct {
 	Function json.RawMessage `json:"function,omitempty"`
 }
 
-func clientPlugins(tools []Tool, mcpServerURL string) []any {
+func clientPlugins(tools []Tool, mcpServerURL string, disableWebSearch bool) []any {
 	plugins := make([]any, 0, len(tools)+2)
-	if mcpServerURL == "" && len(tools) == 0 {
+	if !disableWebSearch && mcpServerURL == "" && len(tools) == 0 {
 		plugins = append(plugins, map[string]any{"Id": "BingWebSearch", "Source": "BuiltIn"})
 	}
 	if mcpServerURL != "" {

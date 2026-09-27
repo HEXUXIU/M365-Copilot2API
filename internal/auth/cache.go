@@ -20,19 +20,21 @@ import (
 )
 
 type AccountToken struct {
-	ID               string    `json:"id"`
-	Email            string    `json:"email"`
-	DisplayName      string    `json:"displayName,omitempty"`
-	Status           string    `json:"status"`
-	ScheduleDisabled bool      `json:"scheduleDisabled,omitempty"`
-	AccessToken      string    `json:"accessToken"`
-	RefreshToken     string    `json:"refreshToken,omitempty"`
-	ExpiresAt        time.Time `json:"expiresAt"`
-	UpdatedAt        time.Time `json:"updatedAt"`
-	OID              string    `json:"oid,omitempty"`
-	TID              string    `json:"tid,omitempty"`
-	ClientID         string    `json:"clientId,omitempty"`
-	BoundProxy       string    `json:"boundProxy,omitempty"`
+	ID                string    `json:"id"`
+	Email             string    `json:"email"`
+	DisplayName       string    `json:"displayName,omitempty"`
+	Status            string    `json:"status"`
+	ScheduleDisabled  bool      `json:"scheduleDisabled,omitempty"`
+	WebSearchDisabled bool      `json:"webSearchDisabled,omitempty"`
+	SystemPrompt      string    `json:"systemPrompt,omitempty"`
+	AccessToken       string    `json:"accessToken"`
+	RefreshToken      string    `json:"refreshToken,omitempty"`
+	ExpiresAt         time.Time `json:"expiresAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+	OID               string    `json:"oid,omitempty"`
+	TID               string    `json:"tid,omitempty"`
+	ClientID          string    `json:"clientId,omitempty"`
+	BoundProxy        string    `json:"boundProxy,omitempty"`
 }
 
 type Cache struct {
@@ -84,19 +86,32 @@ func CachePath() string {
 // 并将主密钥接入 OS DPAPI/keyring (Windows DPAPI, macOS Keychain, Linux libsecret)，见 TODO 后续。
 const encPrefix = "enc:v1:"
 
-func masterKey() []byte {
+const fallbackMasterKeyRaw = "m365-copilot2api-fallback-pepper-v1-TODO-DPAPI-keyring"
+
+// masterKeyRaw 返回配置的主密钥原文，未配置时为空。
+func masterKeyRaw() string {
 	raw := strings.TrimSpace(os.Getenv("M365_MASTER_KEY"))
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("M365_TOKEN_ENCRYPTION_KEY"))
 	}
-	if raw == "" {
-		log.Printf("[security] WARNING: M365_MASTER_KEY not set; refresh tokens are encrypted with a built-in public fallback key. Set M365_MASTER_KEY to protect accounts.json at rest.")
-		raw = "m365-copilot2api-fallback-pepper-v1-TODO-DPAPI-keyring"
-	}
+	return raw
+}
+
+// deriveKey 用固定 pepper 对主密钥原文做 HMAC-SHA256 派生出 32 字节 AES 密钥。
+func deriveKey(raw string) []byte {
 	pepper := []byte("m365-copilot2api-pepper-v1")
 	mac := hmac.New(sha256.New, pepper)
 	_, _ = mac.Write([]byte(raw))
 	return mac.Sum(nil)
+}
+
+func masterKey() []byte {
+	raw := masterKeyRaw()
+	if raw == "" {
+		log.Printf("[security] WARNING: M365_MASTER_KEY not set; refresh tokens are encrypted with a built-in public fallback key. Set M365_MASTER_KEY to protect accounts.json at rest.")
+		raw = fallbackMasterKeyRaw
+	}
+	return deriveKey(raw)
 }
 
 func isEncrypted(s string) bool { return strings.HasPrefix(s, encPrefix) }
@@ -141,7 +156,20 @@ func decryptRefreshToken(enc string) (string, error) {
 			return "", err
 		}
 	}
-	key := masterKey()
+	if pt, err := openGCM(masterKey(), b); err == nil {
+		return pt, nil
+	}
+	// 平滑迁移：历史数据可能由未设置 M365_MASTER_KEY 的环境用内置 fallback 密钥写入。
+	// 配置主密钥后仍能读出，下次保存会自动改用新密钥，无需重新授权。
+	if masterKeyRaw() != "" {
+		if pt, err := openGCM(deriveKey(fallbackMasterKeyRaw), b); err == nil {
+			return pt, nil
+		}
+	}
+	return "", errors.New("failed to decrypt refresh token with current or fallback key")
+}
+
+func openGCM(key, b []byte) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -317,6 +345,61 @@ func (s *Store) ScheduleEnabled(id string) bool {
 	return false
 }
 
+// SetAccountsBatch applies schedule/websearch/system-prompt changes to every
+// listed account atomically: unknown IDs abort the whole batch with no partial
+// writes. Nil pointers leave the corresponding field untouched.
+func (s *Store) SetAccountsBatch(ids []string, schedule, webSearch *bool, systemPrompt *string) (int, error) {
+	seen := map[string]bool{}
+	uniq := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		uniq = append(uniq, id)
+	}
+	if len(uniq) == 0 {
+		return 0, errors.New("no account ids")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	idx := make([]int, 0, len(uniq))
+	for _, id := range uniq {
+		found := -1
+		for i := range s.data.Accounts {
+			if s.data.Accounts[i].ID == id {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return 0, fmt.Errorf("account not found: %s", id)
+		}
+		idx = append(idx, found)
+	}
+	for _, i := range idx {
+		if schedule != nil {
+			s.data.Accounts[i].ScheduleDisabled = !*schedule
+		}
+		if webSearch != nil {
+			s.data.Accounts[i].WebSearchDisabled = !*webSearch
+		}
+		if systemPrompt != nil {
+			sp := strings.TrimSpace(*systemPrompt)
+			if len(sp) > 8000 {
+				return 0, fmt.Errorf("system prompt too long (max 8000 chars)")
+			}
+			s.data.Accounts[i].SystemPrompt = sp
+		}
+		s.data.Accounts[i].UpdatedAt = time.Now()
+	}
+	if err := s.saveLocked(); err != nil {
+		return 0, err
+	}
+	return len(idx), nil
+}
+
 func (s *Store) UpdateRefreshToken(id, refreshToken string) error {
 	refreshToken = strings.TrimSpace(refreshToken)
 	if refreshToken == "" {
@@ -370,6 +453,10 @@ func (s *Store) Upsert(tok TokenSet) (AccountToken, error) {
 				acc.OID = existing.OID
 			}
 			acc.ScheduleDisabled = existing.ScheduleDisabled
+			acc.WebSearchDisabled = existing.WebSearchDisabled
+			if acc.SystemPrompt == "" {
+				acc.SystemPrompt = existing.SystemPrompt
+			}
 			if acc.BoundProxy == "" {
 				acc.BoundProxy = existing.BoundProxy
 			}

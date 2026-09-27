@@ -24,7 +24,9 @@ import (
 // scheme matches session_resolver.explicitKey and userSessionStore.userKey.
 func responseNamespace(tenant, sessionID string) string { return tenant + "\x00" + sessionID }
 
-func responseSessionID(r *http.Request) string { return strings.TrimSpace(r.Header.Get(sessionHeaderName)) }
+func responseSessionID(r *http.Request) string {
+	return strings.TrimSpace(r.Header.Get(sessionHeaderName))
+}
 
 func tenantHashPrefix(tenant string) string {
 	if len(tenant) >= 8 {

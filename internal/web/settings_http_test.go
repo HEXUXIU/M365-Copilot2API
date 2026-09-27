@@ -65,7 +65,9 @@ func TestAdminSettingsHTTP(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &getBody); err != nil {
 		t.Fatal(err)
 	}
-	if len(getBody.Settings.ModelMappings) == 0 || len(getBody.CodexModels) == 0 || len(getBody.UpstreamTones) == 0 {
+	// Default model mappings are intentionally empty: no fake model names are
+	// shipped. Custom mappings can be added through the console.
+	if len(getBody.CodexModels) == 0 || len(getBody.UpstreamTones) == 0 {
 		t.Fatalf("missing model mapping settings: %#v", getBody)
 	}
 	v := st.get()

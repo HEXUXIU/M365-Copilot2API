@@ -6,15 +6,20 @@ import (
 )
 
 func TestStreamFinalResultFallbackIsNotEmpty(t *testing.T) {
-	var text strings.Builder
-	if text.Len() != 0 {
-		t.Fatal("test setup")
-	}
 	final := "最终回答"
-	if text.Len() == 0 && strings.TrimSpace(final) != "" {
-		text.WriteString(final)
+	if got := streamFinalResultFallback(0, final); got != final {
+		t.Fatalf("expected final result fallback %q, got %q", final, got)
 	}
-	if text.String() != final {
-		t.Fatalf("expected final result fallback %q, got %q", final, text.String())
+}
+
+func TestStreamFinalResultFallbackDoesNotDuplicateStreamedContent(t *testing.T) {
+	if got := streamFinalResultFallback(len("partial"), "最终回答"); got != "" {
+		t.Fatalf("expected no fallback after streamed content, got %q", got)
+	}
+}
+
+func TestStreamFinalResultFallbackIgnoresWhitespace(t *testing.T) {
+	if got := streamFinalResultFallback(0, "  \n\t"); strings.TrimSpace(got) != "" {
+		t.Fatalf("expected no whitespace-only fallback, got %q", got)
 	}
 }

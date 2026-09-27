@@ -91,15 +91,19 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 	if size == "" {
 		size = "1024x1024"
 	}
+	// The image pipeline is the upstream Flux graphic-art flow
+	// (GenerateGraphicArt events with pollUrl/document.ashx resources),
+	// not a language-model alias. The prompt is forwarded as-is.
+	model := firstNonEmpty(b.Model, "flux-3")
 	endpoint := "/v1/images/generations"
-	prompt := fmt.Sprintf("Generate an image with GPT Image 2. Size: %s. Description: %s. Return the image URL directly.", size, b.Prompt)
+	prompt := fmt.Sprintf("Generate an image. Size: %s. Model: %s. Description: %s", size, model, b.Prompt)
 	if b.Operation == "edit" {
 		if len(b.Attachments) == 0 {
 			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "image is required")
 			return
 		}
 		endpoint = "/v1/images/edits"
-		prompt = fmt.Sprintf("Edit the first attached image with GPT Image 2. Size: %s. Instructions: %s. Preserve everything not requested to change. Return the edited image URL directly.", size, b.Prompt)
+		prompt = fmt.Sprintf("Edit the first attached image. Size: %s. Model: %s. Instructions: %s. Preserve everything not requested to change.", size, model, b.Prompt)
 	}
 	res, err := s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, chathub.Request{Text: prompt, Tone: "magic", Attachments: b.Attachments, LicenseType: s.settings.get().LicenseType, Scenario: s.settings.get().Scenario, FeatureFlags: s.featureFlags()})
 	if err != nil {
@@ -195,7 +199,7 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		Time:         time.Now(),
 		APIKeyPrefix: extractAPIKey(r),
 		AccountEmail: acc.Email,
-		Model:        firstNonEmpty(b.Model, "gpt-image-2"),
+		Model:        firstNonEmpty(b.Model, "flux-3"),
 		Endpoint:     endpoint,
 		InputTokens:  EstimateTokens(prompt),
 		DurationMs:   time.Since(startedAt).Milliseconds(),

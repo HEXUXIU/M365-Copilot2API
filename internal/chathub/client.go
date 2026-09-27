@@ -33,6 +33,8 @@ var ErrImageLimit = errors.New("upstream image generation daily limit reached")
 
 var ErrOffensiveContent = errors.New("upstream content policy flagged as offensive")
 
+var ErrFirstTokenTimeout = errors.New("upstream first text token timeout")
+
 var contentPolicyPatterns = []string{
 	"很抱歉，我无法响应",
 	"我很抱歉，我无法响应",
@@ -179,38 +181,40 @@ type Account struct {
 }
 
 type Request struct {
-	Text           string
-	Tone           string
-	ConversationID string
-	SessionID      string
-	Attachments    []Attachment
-	Tools          []Tool
-	ToolChoice     any
-	MCPServerURL   string
-	Started        bool
-	ConversationSignature   string
-	PreviousMessages        []ContextMessage
-	LicenseType             string
-	Scenario                string
-	ConnectedFederatedIDs   []string
-	FeatureFlags            FeatureFlags
-	DisableMemory           bool
-	Locale                  string
-	Market                  string
-	TimeZone                string
-	TimeZoneOffset          int
-	DeviceOS                string
+	Text                  string
+	Tone                  string
+	ConversationID        string
+	SessionID             string
+	Attachments           []Attachment
+	Tools                 []Tool
+	ToolChoice            any
+	MCPServerURL          string
+	DisableWebSearch      bool
+	Started               bool
+	ConversationSignature string
+	PreviousMessages      []ContextMessage
+	LicenseType           string
+	Scenario              string
+	ConnectedFederatedIDs []string
+	FeatureFlags          FeatureFlags
+	DisableMemory         bool
+	Locale                string
+	Market                string
+	TimeZone              string
+	TimeZoneOffset        int
+	DeviceOS              string
+	FirstTokenTimeout     time.Duration
 }
 
 type FeatureFlags struct {
-	MemoryV2            bool
-	DeepWork            bool
-	ComputerUse         bool
-	RealtimeVoice       bool
+	MemoryV2             bool
+	DeepWork             bool
+	ComputerUse          bool
+	RealtimeVoice        bool
 	SystemPromptOverride bool
-	DesignerImageGen4o  bool
-	CodeCanvas          bool
-	SydneyReconnect     bool
+	DesignerImageGen4o   bool
+	CodeCanvas           bool
+	SydneyReconnect      bool
 }
 
 type ContextMessage struct {
@@ -236,10 +240,10 @@ type StreamEvent struct {
 type StreamHandler func(StreamEvent) error
 
 type Timestamps struct {
-	RequestSent                string `json:"requestSent"`
+	RequestSent                  string `json:"requestSent"`
 	FirstServiceResponseReceived string `json:"firstServiceResponseReceived,omitempty"`
-	FirstTokenReceived         string `json:"firstTokenReceived,omitempty"`
-	LastTokenReceived          string `json:"lastTokenReceived,omitempty"`
+	FirstTokenReceived           string `json:"firstTokenReceived,omitempty"`
+	LastTokenReceived            string `json:"lastTokenReceived,omitempty"`
 }
 
 type Result struct {
@@ -349,6 +353,13 @@ func (c *Client) ChatWithReasoning(ctx context.Context, acc Account, req Request
 	})
 }
 
+// poolEligibleFor reports whether a request may take from (and return to)
+// the WebSocket connection pool. Only fresh requests without caller-supplied
+// conversation/session IDs qualify: pooled sockets carry random URL-bound IDs.
+func poolEligibleFor(req Request) bool {
+	return req.ConversationID == "" && req.SessionID == ""
+}
+
 func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request, onDelta func(string) error, onEvent StreamHandler) (Result, error) {
 	startedAt := time.Now()
 	log.Printf("chathub timing start prompt_len=%d", len(req.Text))
@@ -362,13 +373,26 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		req.Tone = defaultTone
 	}
 	firstTurn := req.Started
-	if req.SessionID == "" {
+	// A pooled WebSocket was dialed with random conversation/session IDs, so
+	// it is only safe for a fresh request. Continuing an upstream conversation
+	// with mismatched URL-bound IDs completes immediately with no text
+	// (community PR #62/#86 finding). Fresh requests reuse; continuations dial.
+	// poolEligible also gates Return: only a fresh, healthy, completed request
+	// hands its connection back to the pool.
+	poolEligible := poolEligibleFor(req)
+	if poolEligible {
 		req.SessionID = uuid.NewString()
-		firstTurn = true
-	}
-	if req.ConversationID == "" {
 		req.ConversationID = uuid.NewString()
 		firstTurn = true
+	} else {
+		if req.SessionID == "" {
+			req.SessionID = uuid.NewString()
+			firstTurn = true
+		}
+		if req.ConversationID == "" {
+			req.ConversationID = uuid.NewString()
+			firstTurn = true
+		}
 	}
 	requestID := uuid.NewString()
 	wsURL, err := BuildWSURLWithOptions(acc, req.SessionID, req.ConversationID, requestID, req.LicenseType, req.Scenario, req.DisableMemory)
@@ -388,24 +412,28 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	phase = PhaseDial
 
 	if c.Pool != nil {
-		var poolErr error
-		conn, reused, poolErr = c.Pool.Take(ctx, acc.OID, acc.TID, wsURL)
-		if poolErr != nil {
-			if errors.Is(poolErr, context.Canceled) {
-				return Result{}, &DialError{Status: 0, Kind: "CLIENT_CANCELED", cause: poolErr}
+		if !poolEligible {
+			// Continuation requests must dial fresh; skip pool Take entirely.
+		} else {
+			var poolErr error
+			conn, reused, poolErr = c.Pool.Take(ctx, acc.OID, acc.TID, wsURL)
+			if poolErr != nil {
+				if errors.Is(poolErr, context.Canceled) {
+					return Result{}, &DialError{Status: 0, Kind: "CLIENT_CANCELED", cause: poolErr}
+				}
+				return Result{}, wrapDialError(poolErr, 0, 0)
 			}
-			return Result{}, wrapDialError(poolErr, 0, 0)
-		}
-		if reused {
-			go func() {
-				warmCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				warmReqID := uuid.NewString()
-				warmSID := uuid.NewString()
-				warmCID := uuid.NewString()
-				warmURL, _ := BuildWSURL(acc, warmSID, warmCID, warmReqID, req.LicenseType, req.Scenario)
-				c.Pool.Warm(warmCtx, acc, warmURL)
-			}()
+			if reused {
+				go func() {
+					warmCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					warmReqID := uuid.NewString()
+					warmSID := uuid.NewString()
+					warmCID := uuid.NewString()
+					warmURL, _ := BuildWSURL(acc, warmSID, warmCID, warmReqID, req.LicenseType, req.Scenario)
+					c.Pool.Warm(warmCtx, acc, warmURL)
+				}()
+			}
 		}
 	}
 	if conn == nil {
@@ -452,8 +480,13 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	}
 
 	returnConn := false
+	var readerDone <-chan struct{}
 	defer func() {
-		if returnConn && conn != nil && c.Pool != nil {
+		if returnConn && conn != nil && c.Pool != nil && poolEligible {
+			if readerDone != nil {
+				_ = conn.SetReadDeadline(time.Now())
+				<-readerDone
+			}
 			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			c.Pool.Return(acc.OID, acc.TID, conn)
@@ -516,9 +549,17 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		return Result{}, &DialError{Status: 0, Kind: classifyTransportError(err), cause: fmt.Errorf("chat send: %w", err)}
 	}
 	phase = PhasePayloadSent
+	var firstTokenTimer *time.Timer
+	var firstTokenTimeout <-chan time.Time
+	if req.FirstTokenTimeout > 0 {
+		firstTokenTimer = time.NewTimer(req.FirstTokenTimeout)
+		firstTokenTimeout = firstTokenTimer.C
+		defer firstTokenTimer.Stop()
+	}
 
 	var deltas []string
 	var streamed strings.Builder
+	firstTextTokenReceived := false
 	emitDelta := func(d string) error {
 		if d == "" {
 			return nil
@@ -529,7 +570,12 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		if chTrace {
 			log.Printf("[trace:emitDelta] len=%d streamed=%d preview=%q", len(d), streamed.Len()+len(d), truncate(d, 80))
 		}
-		if streamed.Len() == 0 {
+		if !firstTextTokenReceived && strings.TrimSpace(d) != "" {
+			firstTextTokenReceived = true
+			if firstTokenTimer != nil {
+				firstTokenTimer.Stop()
+				firstTokenTimeout = nil
+			}
 			log.Printf("chathub timing first_delta_ms=%d len=%d", time.Since(payloadSentAt).Milliseconds(), len(d))
 			ts.FirstTokenReceived = time.Now().UTC().Format(time.RFC3339Nano)
 			phase = PhaseStreaming
@@ -550,42 +596,55 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	// streamed so the web layer can fail over rather than answer with it.
 	// The "throttling" frame itself is per-conversation quota metadata and is
 	// NOT a rate-limit signal.
-	rateLimited := func(text string) bool {
+	//
+	// CPU note: the length guard rejects most snapshots before running the
+	// five substring scans; a long answer never reaches them once streaming.
+	quickGuard := func(text string) bool {
 		if streamed.Len() != 0 {
 			return false
 		}
+		return len(text) <= 4096
+	}
+	rateLimited := func(text string) bool {
+		if !quickGuard(text) {
+			return false
+		}
 		t := strings.ToLower(text)
-		return strings.Contains(t, "temporarily unable to respond to this many requests") ||
+		return strings.EqualFold(strings.TrimSpace(text), "Throttled") ||
+			strings.Contains(t, "temporarily unable to respond to this volume of requests") ||
+			strings.Contains(t, "temporarily unable to respond to this many requests") ||
 			strings.Contains(t, "太多请求") ||
 			strings.Contains(t, "无法响应这么多请求") ||
 			strings.Contains(t, "too many requests") ||
 			strings.Contains(t, "please retry") && strings.Contains(t, "later")
 	}
 	imageLimitDetected := func(text string) bool {
-		if streamed.Len() != 0 {
+		if !quickGuard(text) {
 			return false
 		}
 		t := strings.ToLower(text)
 		return strings.Contains(t, "无法生成更多图像") || strings.Contains(t, "unable to generate more images") || strings.Contains(t, "cannot generate more images today")
 	}
 	contentPolicyDetected := func(text string) bool {
-		if streamed.Len() != 0 {
+		if !quickGuard(text) {
 			return false
 		}
 		return IsContentPolicyBlock(text)
 	}
 	// skippedSnapshots counts non-prefix rewrites dropped by emitSnapshot.
-	// Upstream interleaves per-token writeAtCursor fragments with cumulative
-	// snapshots, so bursts of skips are normal; the dropped text is
-	// reconciled against the authoritative final message on completion
-	// (see finalizeText). Logged once as a summary instead of per frame.
+	// The messages[].text channel is the authoritative cumulative stream; the
+	// writeAtCursor channel is a redundant per-token feed for the same text.
+	// Concatenating both is the source of duplicated public paragraphs and
+	// U+FFFD, so snapshots are reconciled once and writeAtCursor is ignored
+	// outside tracing (ported from community PR #86, commit 7ddf077).
 	skippedSnapshots := 0
+	var snapshots snapshotReconciler
 	emitSnapshot := func(snapshot string) error {
 		if snapshot == "" {
 			return nil
 		}
 		if chTrace {
-			log.Printf("[trace:emitSnapshot] cur=%d snapshot=%d", streamed.Len(), len(snapshot))
+			log.Printf("[trace:emitSnapshot] accepted=%d snapshot=%d", len(snapshots.last), len(snapshot))
 		}
 		if imageLimitDetected(snapshot) {
 			return ErrImageLimit
@@ -596,21 +655,17 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		if contentPolicyDetected(snapshot) {
 			return ErrOffensiveContent
 		}
-		cur := streamed.String()
-		if cur == "" {
-			return emitDelta(snapshot)
-		}
-		if strings.HasPrefix(snapshot, cur) {
-			return emitDelta(snapshot[len(cur):])
-		}
-		if len(snapshot) <= len(cur) {
+		suffix, ok := snapshots.Apply(snapshot)
+		if !ok {
+			if snapshots.seen {
+				skippedSnapshots++
+			}
+			if chTrace {
+				log.Printf("[trace:emitSnapshot] skip: accepted=%d snapshot=%d (duplicate, shorter, or non-prefix)", len(snapshots.last), len(snapshot))
+			}
 			return nil
 		}
-		skippedSnapshots++
-		if chTrace {
-			log.Printf("[trace:emitSnapshot] skip: cur=%d snapshot=%d (non-prefix rewrite)", len(cur), len(snapshot))
-		}
-		return nil
+		return emitDelta(suffix)
 	}
 	var final string
 	var throttling any
@@ -628,15 +683,17 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	references := make(map[string]Reference)
 	var firstServiceResponse bool
 
-	deadline := time.Now().Add(5 * time.Minute)
 	type wsRead struct {
 		msg []byte
 		err error
 	}
 	readCh := make(chan wsRead, 8)
 	done := make(chan struct{})
+	readStopped := make(chan struct{})
+	readerDone = readStopped
 	defer close(done)
 	go func() {
+		defer close(readStopped)
 		defer close(readCh)
 		for {
 			_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -653,9 +710,13 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 			}
 		}
 	}()
-	for time.Now().Before(deadline) {
+	for {
 		var read wsRead
 		select {
+		case <-firstTokenTimeout:
+			returnConn = false
+			_ = conn.Close()
+			return Result{}, ErrFirstTokenTimeout
 		case <-ctx.Done():
 			returnConn = false
 			_ = conn.Close()
@@ -780,11 +841,8 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 							suggestions = append(suggestions, parseSuggestedResponse(sr))
 						}
 					}
-					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame {
-						if err := emitSnapshot(w); err != nil {
-							returnConn = false
-							return Result{}, err
-						}
+					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame && chTrace {
+						log.Printf("[trace:writeAtCursor] ignored redundant delta len=%d snapshot_seen=%t", len(w), snapshots.seen)
 					}
 					if patches, ok := arg["patches"].([]any); ok {
 						for _, praw := range patches {
@@ -817,22 +875,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 							if !ok {
 								continue
 							}
-							ref := Reference{}
-							if tl, ok := rm["targetLink"].(string); ok {
-								ref.TargetLink = tl
-							}
-							if pdn, ok := rm["providerDisplayName"].(string); ok {
-								ref.ProviderDisplayName = pdn
-							}
-							if t, ok := rm["title"].(string); ok {
-								ref.Title = t
-							}
-							if s, ok := rm["snippet"].(string); ok {
-								ref.Snippet = s
-							}
-							if lud, ok := rm["lastUpdatedDate"].(string); ok {
-								ref.LastUpdatedDate = lud
-							}
+							ref := parseReference(rm)
 							if ref.TargetLink != "" || ref.Title != "" {
 								references[k] = ref
 							}
@@ -879,13 +922,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 									if !ok {
 										continue
 									}
-									ref := Reference{}
-									if tl, ok := rm["targetLink"].(string); ok {
-										ref.TargetLink = tl
-									}
-									if t, ok := rm["title"].(string); ok {
-										ref.Title = t
-									}
+									ref := parseReference(rm)
 									if ref.TargetLink != "" || ref.Title != "" {
 										references[k] = ref
 									}
@@ -928,25 +965,37 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 						}
 					}
 					if res, ok := item["result"].(map[string]any); ok {
-					rawResult, _ = res["value"].(string)
-					if mi, ok := res["meteringInformation"]; ok && mi != nil {
-						meteringInformation = mi
-					}
-					if msg, ok := res["message"].(string); ok {
-						final = msg
-						if imageLimitDetected(final) {
+						rawResult, _ = res["value"].(string)
+						if imageLimitDetected(rawResult) {
 							returnConn = false
 							return Result{}, ErrImageLimit
 						}
-						if rateLimited(final) {
+						if rateLimited(rawResult) {
 							returnConn = false
 							return Result{}, ErrRateLimitNotice
 						}
-						if IsContentPolicyBlock(final) {
+						if contentPolicyDetected(rawResult) {
 							returnConn = false
 							return Result{}, ErrOffensiveContent
 						}
-					}
+						if mi, ok := res["meteringInformation"]; ok && mi != nil {
+							meteringInformation = mi
+						}
+						if msg, ok := res["message"].(string); ok {
+							final = msg
+							if imageLimitDetected(final) {
+								returnConn = false
+								return Result{}, ErrImageLimit
+							}
+							if rateLimited(final) {
+								returnConn = false
+								return Result{}, ErrRateLimitNotice
+							}
+							if IsContentPolicyBlock(final) {
+								returnConn = false
+								return Result{}, ErrOffensiveContent
+							}
+						}
 					}
 				}
 				// completion frame often follows; keep reading a bit but we already have content
@@ -997,6 +1046,12 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 					returnConn = false
 					return Result{}, ErrOffensiveContent
 				}
+				// Healthy completion: hand the fresh-request connection back to
+				// the pool instead of closing it. The deferred closer respects
+				// poolEligible so continuation dials are never pooled.
+				if poolEligible {
+					returnConn = true
+				}
 				result := Result{
 					Text:                      text,
 					Reasoning:                 reasoningBuf.String(),
@@ -1034,11 +1089,6 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		}
 	}
 
-	// Reaching the overall deadline without a SignalR completion frame is
-	// an incomplete upstream response. Do not return accumulated deltas as if
-	// they were a successful, finished answer.
-	returnConn = false
-	return Result{}, fmt.Errorf("chathub response deadline exceeded before completion")
 }
 
 // finalizeText reconciles the incrementally streamed text with the
@@ -1283,7 +1333,7 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 	if deviceOS == "" {
 		deviceOS = "Windows"
 	}
-	text := toolProtocolPrompt(req.Text, req.Tools, req.ToolChoice, len(clientPlugins(req.Tools, req.MCPServerURL)) > 0)
+	text := toolProtocolPrompt(req.Text, req.Tools, req.ToolChoice, len(clientPlugins(req.Tools, req.MCPServerURL, req.DisableWebSearch)) > 0)
 	federatedConns := req.ConnectedFederatedIDs
 	if len(federatedConns) == 0 {
 		federatedConns = []string{"dummyId"}
@@ -1315,13 +1365,13 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 			"timeZoneOffset": tzOffset,
 			"timeZone":       tz,
 		},
-		"locale":         locale,
-		"messageType":    "Chat",
-		"experienceType": "Default",
-		"adaptiveCards":  []any{},
-		"clientPreferences": map[string]any{},
+		"locale":                        locale,
+		"messageType":                   "Chat",
+		"experienceType":                "Default",
+		"adaptiveCards":                 []any{},
+		"clientPreferences":             map[string]any{},
 		"connectedFederatedConnections": fcAny,
-		"clientInfo": clientInfo,
+		"clientInfo":                    clientInfo,
 	}
 	// The browser does not send an OpenAI attachments array to ChatHub. It
 	// sends a file annotation after the file has been uploaded by Office.
@@ -1459,11 +1509,11 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 				"streamingMode":    "ConciseWithPadding",
 				"message":          message,
 
-				"plugins":                    clientPlugins(req.Tools, req.MCPServerURL),
-				"extraExtensionParameters":   map[string]any{},
-				"isSbsSupported":             true,
-				"renderReferencesBehindEOS":  true,
-				"disconnectBehavior":         "continue",
+				"plugins":                   clientPlugins(req.Tools, req.MCPServerURL, req.DisableWebSearch),
+				"extraExtensionParameters":  map[string]any{},
+				"isSbsSupported":            true,
+				"renderReferencesBehindEOS": true,
+				"disconnectBehavior":        "continue",
 			},
 		},
 		"invocationId": "0",
@@ -1500,6 +1550,53 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 	b1, _ := json.Marshal(chat)
 	b2, _ := json.Marshal(metrics)
 	return string(b1) + rs + string(b2) + rs
+}
+
+// parseReference 解析单条引用。HAR 报告 05 §4.1 证实标题/摘要/来源实际
+// 藏在 displayData.content 这个转义 JSON 字符串里（键名大小写混用），
+// 仅读顶层字段会得到空 Title/Snippet。
+func parseReference(rm map[string]any) Reference {
+	ref := Reference{}
+	if tl, ok := rm["targetLink"].(string); ok {
+		ref.TargetLink = tl
+	}
+	if pdn, ok := rm["providerDisplayName"].(string); ok {
+		ref.ProviderDisplayName = pdn
+	}
+	if t, ok := rm["title"].(string); ok {
+		ref.Title = t
+	}
+	if s, ok := rm["snippet"].(string); ok {
+		ref.Snippet = s
+	}
+	if lud, ok := rm["lastUpdatedDate"].(string); ok {
+		ref.LastUpdatedDate = lud
+	}
+	if dd, ok := rm["displayData"].(map[string]any); ok {
+		if content, ok := dd["content"].(string); ok && content != "" {
+			var inner struct {
+				Title               string `json:"Title"`
+				Snippet             string `json:"snippet"`
+				ProviderDisplayName string `json:"providerDisplayName"`
+				LastUpdatedDate     string `json:"lastUpdatedDate"`
+			}
+			if json.Unmarshal([]byte(content), &inner) == nil {
+				if ref.Title == "" {
+					ref.Title = inner.Title
+				}
+				if ref.Snippet == "" {
+					ref.Snippet = inner.Snippet
+				}
+				if ref.ProviderDisplayName == "" {
+					ref.ProviderDisplayName = inner.ProviderDisplayName
+				}
+				if ref.LastUpdatedDate == "" {
+					ref.LastUpdatedDate = inner.LastUpdatedDate
+				}
+			}
+		}
+	}
+	return ref
 }
 
 func parseSuggestedResponse(m map[string]any) SuggestedResponse {

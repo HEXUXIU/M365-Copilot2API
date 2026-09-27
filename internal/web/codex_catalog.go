@@ -25,6 +25,7 @@ type reasoningConfig struct {
 type modelSpec struct {
 	ID, Owner, DisplayName, DefaultReasoningLevel string
 	Tools                                         bool
+	Image                                         bool
 }
 
 type reasoningEffortPreset struct {
@@ -68,9 +69,22 @@ var gatewayModels = []modelSpec{
 	{ID: "gpt-5.5", Owner: "microsoft-365", Tools: true},
 	{ID: "gpt-5.5-reasoning", Owner: "microsoft-365", Tools: true},
 	{ID: "gpt-5.6-reasoning", Owner: "microsoft-365", Tools: true},
-	{ID: "gpt-image-2", Owner: "microsoft-365", DisplayName: "GPT Image 2"},
+	{ID: "flux-3", Owner: "microsoft-365", DisplayName: "Flux 3", Image: true},
+	{ID: "flux-4", Owner: "microsoft-365", DisplayName: "Flux 4", Image: true},
 	{ID: "claude-sonnet", Owner: "anthropic-via-microsoft-365", Tools: true},
 	{ID: "claude-sonnet-reasoning", Owner: "anthropic-via-microsoft-365", Tools: true},
+}
+
+// isImageModel reports whether a public model id routes to the image
+// generation pipeline (/v1/images) instead of chat completions.
+func isImageModel(model string) bool {
+	id := strings.ToLower(strings.TrimSpace(model))
+	for _, m := range configuredModelSpecs(currentSettings().ModelMappings) {
+		if strings.ToLower(m.ID) == id {
+			return m.Image
+		}
+	}
+	return false
 }
 
 func validUpstreamTone(tone string) bool {
@@ -271,16 +285,26 @@ func modelCatalog() []map[string]any {
 	for _, m := range models {
 		// Keep capability fields both at the top level and under capabilities:
 		// different OpenAI-compatible clients inspect different locations.
+		// Image models expose image output only and no chat/tools/reasoning.
 		features := []string{"tools", "function_calling", "streaming", "reasoning", "vision"}
 		modalities := []string{"text", "image"}
+		outputModalities := []string{"text"}
+		chat := true
+		tools := true
+		reasoning := true
+		if m.Image {
+			features = []string{"image_generation", "vision"}
+			outputModalities = []string{"image"}
+			chat, tools, reasoning = false, false, false
+		}
 		caps := map[string]any{
-			"chat_completions": true, "responses": true, "streaming": true,
-			"tools": true, "reasoning": true,
+			"chat_completions": chat, "responses": true, "streaming": true,
+			"tools": tools, "reasoning": reasoning,
 			"reasoning_efforts": advertisedReasoningEfforts, "supported_reasoning_levels": advertisedReasoningEfforts,
-			"reasoning_mode": "gateway_tone_routing", "supports_tools": true, "tool_calls": true,
-			"function_calling": true, "supports_function_calling": true, "supports_vision": true,
+			"reasoning_mode": "gateway_tone_routing", "supports_tools": tools, "tool_calls": tools,
+			"function_calling": tools, "supports_function_calling": tools, "supports_vision": true,
 			"vision": true, "modalities": modalities, "input_modalities": modalities,
-			"output_modalities": []string{"text"}, "supported_features": features,
+			"output_modalities": outputModalities, "supported_features": features,
 		}
 		displayName := m.DisplayName
 		if displayName == "" {
@@ -305,11 +329,11 @@ func modelCatalog() []map[string]any {
 			"experimental_supported_tools": []any{}, "supports_search_tool": true, "use_responses_lite": false,
 			"tool_mode": "code_mode_only", "multi_agent_version": "v2",
 			"context_window": l.ContextWindow, "max_input_tokens": l.MaxInputTokens, "max_output_tokens": l.MaxOutputTokens,
-			"capabilities": caps, "supports_tools": true, "tool_calls": true,
+			"capabilities": caps, "supports_tools": tools, "tool_calls": tools,
 			"supported_reasoning_levels": advertisedReasoningEfforts,
-			"function_calling":           true, "supports_function_calling": true, "supports_vision": true,
+			"function_calling":           tools, "supports_function_calling": tools, "supports_vision": true,
 			"vision": true, "modalities": modalities, "input_modalities": modalities,
-			"output_modalities": []string{"text"}, "supported_features": features,
+			"output_modalities": outputModalities, "supported_features": features,
 		})
 	}
 	return out

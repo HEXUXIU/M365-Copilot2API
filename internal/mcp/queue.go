@@ -24,11 +24,14 @@ type ToolCallQueue struct {
 	mu      sync.Mutex
 	pending []*PendingToolCall
 	nextID  int64
+	notify  chan struct{}
 }
+
+const maxPendingToolCalls = 1024
 
 // NewToolCallQueue creates a new tool call queue.
 func NewToolCallQueue() *ToolCallQueue {
-	return &ToolCallQueue{}
+	return &ToolCallQueue{notify: make(chan struct{}, 1)}
 }
 
 // Enqueue adds a tool call to the queue and returns a channel that will receive the result.
@@ -45,8 +48,34 @@ func (q *ToolCallQueue) Enqueue(name string, arguments map[string]any) *PendingT
 		ErrCh:     make(chan error, 1),
 		CreatedAt: time.Now(),
 	}
+	if len(q.pending) >= maxPendingToolCalls {
+		select {
+		case call.ErrCh <- fmt.Errorf("MCP tool call queue capacity exceeded"):
+		default:
+		}
+		return call
+	}
 	q.pending = append(q.pending, call)
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
 	return call
+}
+
+func (q *ToolCallQueue) remove(call *PendingToolCall) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	for i, pending := range q.pending {
+		if pending != call {
+			continue
+		}
+		copy(q.pending[i:], q.pending[i+1:])
+		q.pending[len(q.pending)-1] = nil
+		q.pending = q.pending[:len(q.pending)-1]
+		return true
+	}
+	return false
 }
 
 // Dequeue waits for and returns the next pending tool call.
@@ -56,6 +85,7 @@ func (q *ToolCallQueue) Dequeue(ctx context.Context) *PendingToolCall {
 		q.mu.Lock()
 		if len(q.pending) > 0 {
 			call := q.pending[0]
+			q.pending[0] = nil
 			q.pending = q.pending[1:]
 			q.mu.Unlock()
 			return call
@@ -64,7 +94,7 @@ func (q *ToolCallQueue) Dequeue(ctx context.Context) *PendingToolCall {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(50 * time.Millisecond):
+		case <-q.notify:
 		}
 	}
 }
@@ -78,6 +108,7 @@ func (q *ToolCallQueue) DequeueNonBlocking() *PendingToolCall {
 		return nil
 	}
 	call := q.pending[0]
+	q.pending[0] = nil
 	q.pending = q.pending[1:]
 	return call
 }
@@ -142,15 +173,10 @@ func (p *MCPToolProvider) CallTool(ctx context.Context, name string, arguments m
 	case err := <-call.ErrCh:
 		return CallResult{}, err
 	case <-timer.C:
-		// Timeout - the tool call has been returned to the user's client.
-		// Return a pending result so the MCP client knows the tool is being
-		// executed. The actual result will be forwarded in a subsequent turn.
-		return CallResult{
-			Content: []map[string]any{
-				{"type": "text", "text": fmt.Sprintf("Tool call %s has been forwarded to the client for execution. The result will be provided in a subsequent turn.", name)},
-			},
-		}, nil
+		p.queue.remove(call)
+		return CallResult{}, fmt.Errorf("MCP tool call %s timed out waiting for the client result", name)
 	case <-ctx.Done():
+		p.queue.remove(call)
 		return CallResult{}, ctx.Err()
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"strings"
 )
 
 //go:embed all:web
@@ -60,5 +61,51 @@ func (s *Server) rootPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
+// serveWebApp serves the built React bundle from the embedded FS. Vite emits
+// index.html plus hashed assets under webapp/assets/.
+func (s *Server) serveWebApp(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		writeOpenAIError(w, http.StatusMethodNotAllowed, "invalid_request_error", "method not allowed")
+		return
+	}
+	rel := strings.TrimPrefix(r.URL.Path, "/webapp/")
+	if rel == "" || strings.Contains(rel, "..") {
+		rel = "index.html"
+	}
+	name := "webapp/" + rel
+	f, err := webContent.Open(name)
+	if err != nil {
+		// SPA fallback: unknown paths render the app shell.
+		if !strings.HasPrefix(rel, "assets/") {
+			f2, err2 := webContent.Open("webapp/index.html")
+			if err2 != nil {
+				http.NotFound(w, r)
+				return
+			}
+			defer f2.Close()
+			st2, _ := f2.Stat()
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			http.ServeContent(w, r, "index.html", st2.ModTime(), f2)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if strings.HasSuffix(name, ".js") {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	} else if strings.HasSuffix(name, ".css") {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+	} else if strings.HasSuffix(name, ".html") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	}
 	http.ServeContent(w, r, name, st.ModTime(), f)
 }

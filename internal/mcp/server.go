@@ -90,12 +90,12 @@ type sessionRegistry struct {
 }
 
 type session struct {
-	id       string
+	id         string
 	providerMu sync.RWMutex
-	provider ToolProvider
-	created  time.Time
-	msgCh    chan json.RawMessage
-	done     chan struct{}
+	provider   ToolProvider
+	created    time.Time
+	msgCh      chan json.RawMessage
+	done       chan struct{}
 }
 
 // RegisterSession creates a new MCP session with the given tool provider and returns the session ID.

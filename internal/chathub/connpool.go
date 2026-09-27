@@ -78,12 +78,6 @@ func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) {
 		p.mu.Unlock()
 		return
 	}
-	for _, pc := range p.conns[key] {
-		if time.Since(pc.created) < 30*time.Second {
-			p.mu.Unlock()
-			return
-		}
-	}
 	p.mu.Unlock()
 
 	conn, resp, err := p.dialer.DialContext(ctx, wsURL, p.header.Clone())
@@ -123,9 +117,19 @@ func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) {
 }
 
 func (p *ConnPool) Return(oid, tid string, conn *websocket.Conn) {
-	if conn != nil {
-		conn.Close()
+	if conn == nil {
+		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
+	_ = conn.SetWriteDeadline(time.Time{})
+	key := p.key(oid, tid)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.conns[key]) >= maxPoolPerKey {
+		conn.Close()
+		return
+	}
+	p.conns[key] = append(p.conns[key], &pooledConn{conn: conn, created: time.Now(), handshook: true})
 }
 
 func (p *ConnPool) Discard(oid, tid string, conn *websocket.Conn) {

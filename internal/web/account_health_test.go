@@ -24,7 +24,7 @@ func TestUpstreamErrorClassification(t *testing.T) {
 		status   int
 	}{
 		{&UpstreamHTTPError{Status: 429, RetryAfter: 90}, true, false, 90, http.StatusTooManyRequests},
-		{&UpstreamHTTPError{Status: 503}, true, false, 0, http.StatusTooManyRequests},
+		{&UpstreamHTTPError{Status: 503}, false, false, 0, http.StatusBadGateway},
 		{&UpstreamHTTPError{Status: 401}, false, true, 0, http.StatusUnauthorized},
 		{&UpstreamHTTPError{Status: 403}, false, true, 0, http.StatusUnauthorized},
 		{&UpstreamHTTPError{Status: 502}, false, false, 0, http.StatusBadGateway},
@@ -156,6 +156,41 @@ func testAccountFiles(t *testing.T) *auth.Store {
 		}
 	}
 	return store
+}
+
+func TestBatchAccountsAppliesAtomically(t *testing.T) {
+	store := testAccountFiles(t)
+	s := &Server{tokens: store, accountPool: newAccountHealth()}
+	do := func(body string) (int, map[string]any) {
+		w := httptest.NewRecorder()
+		s.batchAccounts(w, httptest.NewRequest(http.MethodPost, "/api/accounts/batch", strings.NewReader(body)))
+		var out map[string]any
+		_ = json.Unmarshal(w.Body.Bytes(), &out)
+		return w.Code, out
+	}
+	if code, _ := do(`{"ids":[],"scheduling":false}`); code != 400 {
+		t.Fatalf("empty ids status=%d want 400", code)
+	}
+	if code, _ := do(`{"ids":["u-1","missing"],"scheduling":false}`); code != 400 {
+		t.Fatalf("unknown id status=%d want 400", code)
+	}
+	if acc, _ := store.Get("u-1"); !store.ScheduleEnabled("u-1") || acc.WebSearchDisabled {
+		t.Fatal("failed batch must not partially apply")
+	}
+	sp := "Be concise."
+	code, out := do(`{"ids":["u-1","u-2"],"scheduling":false,"webSearch":false,"systemPrompt":"Be concise."}`)
+	if code != 200 || out["updated"] != float64(2) {
+		t.Fatalf("batch status=%d out=%v", code, out)
+	}
+	for _, id := range []string{"u-1", "u-2"} {
+		acc, _ := store.Get(id)
+		if store.ScheduleEnabled(id) || !acc.WebSearchDisabled || acc.SystemPrompt != sp {
+			t.Fatalf("batch not applied to %s: %+v", id, acc)
+		}
+	}
+	if acc, _ := store.Get("u-3"); !store.ScheduleEnabled(acc.ID) || acc.WebSearchDisabled || acc.SystemPrompt != "" {
+		t.Fatal("untouched account must keep defaults")
+	}
 }
 
 func TestWriteUpstreamErrorHeaders(t *testing.T) {

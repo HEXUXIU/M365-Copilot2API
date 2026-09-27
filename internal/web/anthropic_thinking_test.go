@@ -1,4 +1,4 @@
-﻿package web
+package web
 
 import (
 	"encoding/json"
@@ -49,7 +49,7 @@ func TestAnthropicResultContentParts(t *testing.T) {
 
 func TestAnthropicStreamEmitsThinkingSSE(t *testing.T) {
 	src := map[string]any{"choices": []any{map[string]any{"message": map[string]any{
-		"content":        "final",
+		"content":           "final",
 		"reasoning_content": "think1",
 	}}}}
 	w := httptest.NewRecorder()

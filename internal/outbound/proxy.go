@@ -47,11 +47,11 @@ func directClients() *Clients {
 	return &Clients{
 		HTTP: &http.Client{Transport: t},
 		WebSocket: &websocket.Dialer{
-			HandshakeTimeout:  20 * time.Second,
-			ReadBufferSize:    256 * 1024,
-			WriteBufferSize:   16 * 1024,
-			NetDialContext:    t.DialContext,
-			TLSClientConfig:   wsTLSConf,
+			HandshakeTimeout: 20 * time.Second,
+			ReadBufferSize:   256 * 1024,
+			WriteBufferSize:  16 * 1024,
+			NetDialContext:   t.DialContext,
+			TLSClientConfig:  wsTLSConf,
 		},
 	}
 }

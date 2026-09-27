@@ -194,29 +194,36 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 				if v, ok := tc["type"].(string); ok && v == "custom" {
 					typ = "custom"
 				}
+				// Resolve call identity before emitting the added frame so
+				// Responses clients receive a usable function_call item with
+				// call_id/name already set (issue #77).
+				callID, _ := tc["id"].(string)
+				fn, _ := tc["function"].(map[string]any)
+				name, _ := fn["name"].(string)
+				args, _ := fn["arguments"].(string)
 				if st == nil {
 					prefix := "fc_"
-					item := map[string]any{"type": "function_call", "call_id": "", "name": "", "arguments": "", "status": "in_progress"}
+					item := map[string]any{"type": "function_call", "call_id": callID, "name": name, "arguments": "", "status": "in_progress"}
 					if typ == "custom" {
 						prefix = "ctc_"
-						item = map[string]any{"type": "custom_tool_call", "call_id": "", "name": "", "input": "", "status": "in_progress"}
+						item = map[string]any{"type": "custom_tool_call", "call_id": callID, "name": name, "input": "", "status": "in_progress"}
 					}
-					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ}
+					st = &tcState{ItemID: prefix + uuid.NewString(), Type: typ, ID: callID, Name: name}
 					calls[idx] = st
 					item["id"] = st.ItemID
 					emit("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": idx, "item": item})
+				} else {
+					if callID != "" {
+						st.ID = callID
+					}
+					if name != "" {
+						st.Name += name
+					}
 				}
-				if v, ok := tc["id"].(string); ok {
-					st.ID = v
-				}
-				fn, _ := tc["function"].(map[string]any)
-				if v, ok := fn["name"].(string); ok {
-					st.Name += v
-				}
-				if v, ok := fn["arguments"].(string); ok {
-					st.Args += v
+				if args != "" {
+					st.Args += args
 					if st.Type != "custom" {
-						emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": idx, "item_id": st.ItemID, "delta": v})
+						emit("response.function_call_arguments.delta", map[string]any{"type": "response.function_call_arguments.delta", "output_index": idx, "item_id": st.ItemID, "delta": args})
 					}
 				}
 			}

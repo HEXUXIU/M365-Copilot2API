@@ -280,6 +280,49 @@ func utf8SafeCut(s string) int {
 	return n
 }
 
+var (
+	citationOpen  = string(rune(0xE200)) + "cite" + string(rune(0xE202))
+	citationClose = string(rune(0xE201))
+)
+
+// stripCitationMarkersStream removes upstream citation markers
+// (\uE200cite\uE202<id>\uE201) from a text fragment and returns the cleaned
+// prefix plus the unconsumed remainder, which is an incomplete marker to carry
+// over to the next fragment. It keeps public API responses free of the private
+// upstream citation control markup (issue #79).
+func stripCitationMarkersStream(pending string) (string, string) {
+	var b strings.Builder
+	for {
+		i := strings.Index(pending, citationOpen)
+		if i < 0 {
+			break
+		}
+		b.WriteString(pending[:i])
+		after := pending[i+len(citationOpen):]
+		j := strings.Index(after, citationClose)
+		if j < 0 {
+			// Incomplete marker: keep from the marker start.
+			return b.String(), pending[i:]
+		}
+		pending = after[j+len(citationClose):]
+	}
+	// Hold back a trailing partial marker prefix so a marker split across
+	// fragments is not emitted half-formed.
+	keep := 0
+	max := len(citationOpen) - 1
+	if max > len(pending) {
+		max = len(pending)
+	}
+	for n := max; n > 0; n-- {
+		if strings.HasSuffix(pending, citationOpen[:n]) {
+			keep = n
+			break
+		}
+	}
+	b.WriteString(pending[:len(pending)-keep])
+	return b.String(), pending[len(pending)-keep:]
+}
+
 func sanitizePublicReasoningText(text string) string {
 	text = stripReplacementChars(text)
 	if !publicIdentityPolicyEnabled() {
@@ -443,6 +486,7 @@ func sanitizePublicJSONValue(value any) any {
 
 type publicIdentityStreamFilter struct {
 	pending         string
+	citePending     string
 	identityWritten bool
 	model           string
 }
@@ -464,7 +508,10 @@ func (f *publicIdentityStreamFilter) Push(fragment string) string {
 		cut := utf8SafeCut(f.pending)
 		out := f.pending[:cut]
 		f.pending = f.pending[cut:]
-		return stripReplacementChars(out)
+		f.citePending += stripReplacementChars(out)
+		cleaned, rest := stripCitationMarkersStream(f.citePending)
+		f.citePending = rest
+		return cleaned
 	}
 	f.pending += fragment
 	return f.consume(false)
@@ -475,9 +522,11 @@ func (f *publicIdentityStreamFilter) Flush() string {
 		return ""
 	}
 	if !publicIdentityPolicyEnabled() {
-		out := f.pending
+		out := stripReplacementChars(f.pending)
 		f.pending = ""
-		return stripReplacementChars(out)
+		cleaned, _ := stripCitationMarkersStream(f.citePending + out)
+		f.citePending = ""
+		return cleaned
 	}
 	out := f.consume(true)
 	f.pending = ""
@@ -513,7 +562,8 @@ func (f *publicIdentityStreamFilter) consume(final bool) string {
 }
 
 type publicReasoningStreamFilter struct {
-	pending string
+	pending     string
+	citePending string
 }
 
 func newPublicReasoningStreamFilter() *publicReasoningStreamFilter {
@@ -529,7 +579,10 @@ func (f *publicReasoningStreamFilter) Push(fragment string) string {
 		cut := utf8SafeCut(f.pending)
 		out := f.pending[:cut]
 		f.pending = f.pending[cut:]
-		return stripReplacementChars(out)
+		f.citePending += stripReplacementChars(out)
+		cleaned, rest := stripCitationMarkersStream(f.citePending)
+		f.citePending = rest
+		return cleaned
 	}
 	f.pending += fragment
 	return f.consume(false)
@@ -540,9 +593,11 @@ func (f *publicReasoningStreamFilter) Flush() string {
 		return ""
 	}
 	if !publicIdentityPolicyEnabled() {
-		out := f.pending
+		out := stripReplacementChars(f.pending)
 		f.pending = ""
-		return stripReplacementChars(out)
+		cleaned, _ := stripCitationMarkersStream(f.citePending + out)
+		f.citePending = ""
+		return cleaned
 	}
 	out := sanitizePublicReasoningText(f.pending)
 	f.pending = ""

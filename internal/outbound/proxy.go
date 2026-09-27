@@ -36,7 +36,7 @@ func directClients() *Clients {
 	wsTLSConf := &tls.Config{ClientSessionCache: tlsCache, NextProtos: []string{"http/1.1"}}
 	t := &http.Transport{
 		Proxy:                 nil,
-		DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           dialContextDirect,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
@@ -210,7 +210,7 @@ func (d httpsProxyDialer) DialContext(ctx context.Context, network, address stri
 	if d.proxyURL.Port() == "" {
 		a = net.JoinHostPort(d.proxyURL.Hostname(), "443")
 	}
-	raw, e := (&net.Dialer{}).DialContext(ctx, network, a)
+	raw, e := dialContextDirect(ctx, network, a)
 	if e != nil {
 		return nil, e
 	}

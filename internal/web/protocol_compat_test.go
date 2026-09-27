@@ -95,3 +95,28 @@ func TestAnthropicToolResult(t *testing.T) {
 		t.Fatalf("%+v %v", o, err)
 	}
 }
+
+func TestResponsesRequestMetadataAndNewConversation(t *testing.T) {
+	r := responsesRequest{Model: "gpt-5.5", Input: "hi", NewConversation: true}
+	o, err := r.openAI()
+	if err != nil || o.Metadata == nil || !o.Metadata.CopilotTempSession {
+		t.Fatalf("new_conversation not mapped to temp session: %#v err=%v", o.Metadata, err)
+	}
+	r2 := responsesRequest{Model: "gpt-5.5", Input: "hi", Metadata: &oaiMetadata{CopilotTempSession: true}}
+	o2, err := r2.openAI()
+	if err != nil || o2.Metadata == nil || !o2.Metadata.CopilotTempSession {
+		t.Fatalf("metadata not forwarded: %#v err=%v", o2.Metadata, err)
+	}
+	if r.Metadata != nil {
+		t.Fatal("source request metadata must not be mutated")
+	}
+}
+
+func TestIsKnownPublicModel(t *testing.T) {
+	if !isKnownPublicModel("gpt-5.5") || !isKnownPublicModel("flux-3") || !isKnownPublicModel("claude") {
+		t.Fatal("known model reported unknown")
+	}
+	if isKnownPublicModel("grok-4.6") {
+		t.Fatal("unknown model reported known")
+	}
+}

@@ -87,6 +87,34 @@ func isImageModel(model string) bool {
 	return false
 }
 
+// isKnownPublicModel reports whether the request model matches a built-in or
+// configured public model id (or a supported alias). Unknown ids are still
+// accepted for compatibility unless M365_STRICT_MODEL is enabled (issue #79).
+func isKnownPublicModel(model string) bool {
+	id := strings.ToLower(strings.TrimSpace(model))
+	if id == "" {
+		return true
+	}
+	for _, m := range configuredModelSpecs(currentSettings().ModelMappings) {
+		if strings.ToLower(m.ID) == id {
+			return true
+		}
+	}
+	switch id {
+	case "claude", "gpt-5.4-quick", "gpt-5.3-think-deeper":
+		return true
+	}
+	return false
+}
+
+func strictModelMode() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("M365_STRICT_MODEL"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
 func validUpstreamTone(tone string) bool {
 	for _, known := range liveUpstreamTones() {
 		if tone == known {

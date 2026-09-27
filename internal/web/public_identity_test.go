@@ -500,3 +500,33 @@ func TestStreamFilterReassemblesSplitRune(t *testing.T) {
 		t.Fatalf("reasoning reassembled=%q want %q", rout.String(), full)
 	}
 }
+
+func TestStripCitationMarkersStreamRemovesCompleteAndSplitMarkers(t *testing.T) {
+	marker := citationOpen + "turn0search1" + citationClose
+	if got, rest := stripCitationMarkersStream("hello " + marker + " world"); got != "hello  world" || rest != "" {
+		t.Fatalf("complete marker got=%q rest=%q", got, rest)
+	}
+	f1 := "hello " + citationOpen + "turn0"
+	f2 := "search1" + citationClose + " world"
+	got1, rest1 := stripCitationMarkersStream(f1)
+	got2, rest2 := stripCitationMarkersStream(rest1 + f2)
+	if got1 != "hello " || got2 != " world" || rest2 != "" {
+		t.Fatalf("split marker got1=%q got2=%q rest2=%q", got1, got2, rest2)
+	}
+}
+
+func TestIdentityStreamFilterStripsCitationMarkers(t *testing.T) {
+	t.Setenv("M365_PUBLIC_IDENTITY_POLICY", "")
+	marker := citationOpen + "turn1search2" + citationClose
+	f := newPublicIdentityStreamFilter("gpt-5.5")
+	var out strings.Builder
+	out.WriteString(f.Push("答案"))
+	out.WriteString(f.Push(marker + "结论"))
+	out.WriteString(f.Flush())
+	if strings.Contains(out.String(), citationOpen) || strings.Contains(out.String(), citationClose) {
+		t.Fatalf("citation marker leaked: %q", out.String())
+	}
+	if out.String() != "答案结论" {
+		t.Fatalf("unexpected stripped text: %q", out.String())
+	}
+}

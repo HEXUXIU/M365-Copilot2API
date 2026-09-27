@@ -1067,6 +1067,10 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 	p.Account = map[string]any{"id": acc.ID, "email": acc.Email, "displayName": acc.DisplayName, "status": acc.Status, "oid": acc.OID, "tid": acc.TID}
 	s.pkce[state] = p
 	s.mu.Unlock()
+	// Hot-reload the cloud client so conversation management works immediately
+	// after adding the first account at runtime (issue #84); it is otherwise
+	// only initialized at startup.
+	s.InitM365CloudClient()
 	// Browser loopback callbacks should finish in a friendly page instead of
 	// displaying a raw JSON response. Keep JSON for the manual/API flow.
 	if strings.HasPrefix(redirectURI, "http://127.0.0.1:") || strings.HasPrefix(redirectURI, "http://localhost:") {
@@ -1113,6 +1117,12 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 			retry := int(time.Until(until).Seconds())
 			if retry < 5 {
 				retry = 5
+			}
+			// A local network failure is not a quota problem: report 503 with a
+			// distinct error code instead of masquerading as 429 rate limiting
+			// (issue #79).
+			if cat, at := s.accountPool.LastCategory(); time.Since(at) < 5*time.Minute && IsTransportCategory(cat) {
+				return auth.AccountToken{}, &UpstreamHTTPError{Status: 503, ErrorCode: "network_error", RetryAfter: retry, Body: "all accounts cooling down after local network errors (last: " + string(cat) + "); check DNS/IPv6/proxy connectivity"}
 			}
 			return auth.AccountToken{}, &UpstreamHTTPError{Status: 429, RetryAfter: retry, Body: "all accounts are cooling down; try again later"}
 		}
@@ -1485,6 +1495,8 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 	}
 	s.accountPool.MarkSuccess(acc.ID)
 	s.applyResultMetering(acc.ID, res)
+	// Strip upstream citation control markup from public text (issue #79).
+	res.Text, _ = chathub.StripCitationMarkers(res.Text, res.References)
 	res.Text = sanitizePublicAssistantText(res.Text)
 	res.Reasoning = sanitizePublicReasoningText(res.Reasoning)
 	if body.SessionKey != "" {
@@ -1829,6 +1841,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "image model must use /v1/images/generations, not chat completions")
 		return
 	}
+	if !isKnownPublicModel(body.Model) {
+		if strictModelMode() {
+			writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "unknown model: "+body.Model)
+			return
+		}
+		log.Printf("[model] unknown model %q; routing to default tone", body.Model)
+	}
 	tone, toneErr := reasoningTone(body.Model, effort)
 	if toneErr != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", toneErr.Error())
@@ -2061,6 +2080,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.dropTransientConversation(routeRes.ConversationID)
 		}
 		if routeErr != nil {
+			log.Printf("[tool-router] failed account=%s err=%v", acc.ID, routeErr)
 			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "tool router: "+routeErr.Error())
 			return
 		}

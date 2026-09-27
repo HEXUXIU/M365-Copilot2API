@@ -473,6 +473,8 @@ type accountHealth struct {
 	lastThrottling         map[string]any
 	authFailReason         map[string]string
 	quotaAttempts          map[string]int
+	lastCategory           ErrorCategory
+	lastCategoryAt         time.Time
 }
 
 func newAccountHealth() *accountHealth {
@@ -490,6 +492,28 @@ func newAccountHealth() *accountHealth {
 		authFailReason:         map[string]string{},
 		quotaAttempts:          map[string]int{},
 	}
+}
+
+// LastCategory reports the most recent failure category recorded by
+// MarkFailure. resolveAccount uses it to distinguish local network failures
+// from upstream rate limiting (issue #79).
+func (h *accountHealth) LastCategory() (ErrorCategory, time.Time) {
+	if h == nil {
+		return CategoryUnknown, time.Time{}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lastCategory, h.lastCategoryAt
+}
+
+// IsTransportCategory reports whether the category is a local/transport
+// failure rather than an upstream quota or auth rejection.
+func IsTransportCategory(cat ErrorCategory) bool {
+	switch cat {
+	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout, CategoryOverload503:
+		return true
+	}
+	return false
 }
 
 func (h *accountHealth) cleanupExpiredCooldownLocked(accountID string) {
@@ -656,6 +680,10 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 	if cat == CategoryClientCanceled {
 		return
 	}
+	h.mu.Lock()
+	h.lastCategory = cat
+	h.lastCategoryAt = time.Now()
+	h.mu.Unlock()
 	if cat == CategoryGlobalUnavailable {
 		h.mu.Lock()
 		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, 0, 1))

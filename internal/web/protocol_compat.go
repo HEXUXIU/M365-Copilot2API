@@ -25,12 +25,26 @@ type responsesRequest struct {
 	Temperature        *float64         `json:"temperature,omitempty"`
 	TopP               *float64         `json:"top_p,omitempty"`
 	MaxOutputTokens    *int             `json:"max_output_tokens,omitempty"`
+	Metadata           *oaiMetadata     `json:"metadata,omitempty"`
 }
 
 const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`
 
 func (r responsesRequest) openAI() (oaiReq, error) {
 	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User}
+	// Forward request metadata so /v1/responses clients can use
+	// metadata.copilot_temp_session, and treat new_conversation as an explicit
+	// request to avoid reusing the cached conversation (issue #79).
+	if r.Metadata != nil || r.NewConversation {
+		m := oaiMetadata{}
+		if r.Metadata != nil {
+			m = *r.Metadata
+		}
+		if r.NewConversation {
+			m.CopilotTempSession = true
+		}
+		o.Metadata = &m
+	}
 	if r.Temperature != nil {
 		o.Temperature = r.Temperature
 	}

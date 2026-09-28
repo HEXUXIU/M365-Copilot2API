@@ -284,6 +284,9 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
 <!-- Login -->
 <div id="login" style="min-height:100vh;display:grid;place-items:center">
   <div style="width:min(400px,calc(100vw - 32px));animation:scaleIn .5s var(--ease-out)">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+      <select id="loginLanguageSelect" class="form-input" style="width:auto;padding:6px 28px 6px 10px;font-size:12px"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select>
+    </div>
     <div style="text-align:center;margin-bottom:24px">
       <div class="logo" style="display:flex;align-items:center;gap:10px;justify-content:center;margin:0 auto 12px;padding:0"><div class="logo-mark" style="width:32px;height:32px"><span></span><span></span><span></span><span></span></div><span style="font-size:24px;font-weight:700;letter-spacing:-0.02em">M365 Copilot2API</span></div>
       <p style="color:var(--muted);font-size:14px;margin-top:4px">Administrator Login</p>
@@ -291,8 +294,8 @@ body{background:var(--bg);color:var(--text);font-family:"Inter","SF Pro Display"
     <form id="loginForm" style="background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);padding:32px;box-shadow:var(--shadow-lg)">
       <div class="form-group">
         <label class="form-label">Password</label>
-        <input class="form-input" id="loginPassword" type="password" placeholder="请输入管理员密码（默认：admin123）" autofocus>
-        <div class="form-hint" style="margin-top:4px">默认密码为 <code>admin123</code>，首次登录后需修改密码。</div>
+        <input class="form-input" id="loginPassword" type="password" placeholder="Enter the administrator password (default: admin123)" autofocus>
+        <div class="form-hint" style="margin-top:4px">The default password is <code>admin123</code>. You must change it after your first login.</div>
       </div>
       <button type="submit" class="btn primary" style="width:100%;margin-top:8px">Log in</button>
     </form>
@@ -501,23 +504,23 @@ if (response.output_text) {
               <div class="onb-step">
                 <span class="onb-step-num">1</span>
                 <span class="onb-step-icon"><i data-lucide="mouse-pointer-click" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>点击下方"开始授权"</b><p>弹出窗口将打开 Microsoft 登录页面，完成登录后返回此页面。</p></span>
+                <span class="onb-step-text"><b>Click "Start authorization" below</b><p>A popup window will open the Microsoft sign-in page; return to this page after signing in.</p></span>
               </div>
               <div class="onb-step">
                 <span class="onb-step-num">2</span>
                 <span class="onb-step-icon"><i data-lucide="clipboard-copy" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>复制弹出页地址栏中的回调地址</b><p>登录后弹出页会显示空白或错误——这是正常的。复制<b>弹出页地址栏</b>的完整网址（包含 <code>code=...</code> 和 <code>state=...</code>）。</p></span>
+                <span class="onb-step-text"><b>Copy the callback URL from the popup's address bar</b><p>After signing in, the popup will show a blank or error page — this is expected. Copy the full URL from the popup's address bar (it includes code=... and state=...).</p></span>
               </div>
               <div class="onb-step">
                 <span class="onb-step-num">3</span>
                 <span class="onb-step-icon"><i data-lucide="check-check" style="width:15px;height:15px"></i></span>
-                <span class="onb-step-text"><b>粘贴并确认</b><p>粘贴到下方"回调地址"输入框，点击"确认添加"完成授权</p></span>
+                <span class="onb-step-text"><b>Paste and confirm</b><p>Paste it into the "Callback URL" field below and click "Confirm and add" to finish authorization</p></span>
               </div>
             </div>
             <button class="btn primary" onclick="startPKCE()" style="width:100%;margin-bottom:12px;"><i data-lucide="link" style="width:15px;height:15px"></i> Start authorization</button>
             <div class="highlight-box warning" style="margin-top:0;margin-bottom:16px">
-              <div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i> 必须手动粘贴回调地址以完成授权</div>
-              <p>在弹出窗口中登录后，页面会显示空白或错误——<strong>这是正常的</strong>，因为回调端点不是真正的网站。授权<strong>尚未</strong>完成。复制弹出页地址栏中的<strong>完整网址</strong>（形如 <code>http://localhost:4141/api/auth/callback?code=M.C5...&state=abc123</code>），粘贴到下方"回调地址"输入框。</p>
+              <div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i> You must manually paste the callback URL to finish authorization</div>
+              <p>After signing in inside the popup window, the page will show a blank or error page — this is expected, because the callback endpoint isn't a real website. Authorization is not yet complete. Copy the full URL from the popup's address bar (it looks like http://localhost:4141/api/auth/callback?code=M.C5...&state=abc123), then paste it into the "Callback URL" field below.</p>
             </div>
             <label class="form-label">Callback URL</label>
             <div class="copy-field">
@@ -617,12 +620,12 @@ if (response.output_text) {
       <!-- Settings -->
       <section id="page-settings" style="display:none">
         <h2 style="font-size:18px;font-weight:700;margin-bottom:16px">Settings</h2>
-        <div class="card"><div class="card-head"><span class="card-title">请求与模型</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Chat timeout (seconds, 5-3600)</label><input class="form-input" id="setTimeout" type="number" min="5" max="3600" placeholder="600"></div><div class="form-group"><label class="form-label">Image timeout (seconds, 5-3600)</label><input class="form-input" id="setImageTimeout" type="number" min="5" max="3600" placeholder="300"></div><div class="form-group"><label class="form-label">Context window (tokens)</label><input class="form-input" id="setContextWindow" type="number" min="1024" placeholder="512000"></div><div class="form-group"><label class="form-label">Max output tokens</label><input class="form-input" id="setMaxOutput" type="number" min="1" placeholder="65536"></div><div class="form-group"><label class="form-label">Max tool calls / turn (1-64)</label><input class="form-input" id="setMaxToolCalls" type="number" min="1" max="64" placeholder="64"></div><div class="form-group"><label class="form-label">Max tool rounds (1-512)</label><input class="form-input" id="setMaxToolRounds" type="number" min="1" max="512" placeholder="512"></div><div class="form-group"><label class="form-label">Max conversation messages</label><input class="form-input" id="setMaxConvMsgs" type="number" min="1" max="10000" placeholder="10000"></div></div></div></div>
-        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">账号与限流</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Account concurrency (1-64)</label><input class="form-input" id="setAcctConcurrency" type="number" min="1" max="64" placeholder="16"></div><div class="form-group"><label class="form-label">Rate limit cooldown (seconds, 5-3600)</label><input class="form-input" id="setCooldown" type="number" min="5" max="3600" placeholder="30"></div><div class="form-group"><label class="form-label">Transient throttle cooldown (seconds, 5-600)</label><input class="form-input" id="setTransientCooldown" type="number" min="5" max="600" placeholder="15"></div><div class="form-group"><label class="form-label">Scenario</label><select class="form-input" id="setScenario"><option value="OfficeWebIncludedCopilot">OfficeWebIncludedCopilot</option><option value="Bizchat">Bizchat</option><option value="CopilotConsumer">CopilotConsumer</option><option value="Chathub">Chathub</option></select></div><div class="form-group"><label class="form-label">License type</label><select class="form-input" id="setLicense"><option value="Starter">Starter</option><option value="Premium">Premium</option><option value="Free">Free</option><option value="BCAIS">BCAIS</option><option value="BCSWW">BCSWW</option><option value="BCWAF">BCWAF</option><option value="BCWBF">BCWBF</option></select></div><div class="form-group"><label class="form-label">Log level</label><select class="form-input" id="setLogLevel"><option value="silent">silent</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select></div></div></div></div>
-        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">功能开关</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px" id="featureFlags"></div><p class="form-hint">MemoryV2 / DeepWork / ComputerUse / RealtimeVoice / SystemPromptOverride / ImageAPI / DesignerImageGen4o / CodeCanvas / SydneyReconnect</p></div></div>
-        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">模型映射</span><span style="font-size:11px;color:var(--muted)">公开模型名 → 上游 tone</span></div><div class="table-wrap"><table class="table"><thead><tr><th>Public model</th><th>Upstream tone</th><th>Display name</th><th>Reasoning</th><th style="text-align:right">Actions</th></tr></thead><tbody id="modelMapRows"></tbody></table></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><div class="form-group" style="margin:0"><label class="form-label">Public model</label><input class="form-input" id="newModelId" placeholder="gpt-5.7-chat" style="width:160px"></div><div class="form-group" style="margin:0"><label class="form-label">Upstream tone</label><select class="form-input" id="newModelTone" style="width:200px"></select></div><div class="form-group" style="margin:0"><label class="form-label">Display name</label><input class="form-input" id="newModelDisplay" placeholder="GPT-5.7" style="width:140px"></div><div class="form-group" style="margin:0"><label class="form-label">Reasoning</label><select class="form-input" id="newModelEffort" style="width:110px"><option value="low">low</option><option value="minimal">minimal</option><option value="medium" selected>medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="none">none</option></select></div><button class="btn-sm btn primary" onclick="addModelMapping()">Add</button></div></div>
-        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">系统</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;align-items:end"><div class="form-group" style="margin:0" id="setAutoStartWrap"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input id="setAutoStart" type="checkbox"> 开机自启动（当前用户，免管理员）</label><p class="form-hint">写入 HKCU Run 注册表项，指向当前可执行文件。</p></div><div class="form-group" style="margin:0"><label class="form-label">日志位置</label><input class="form-input" id="setLogPath" readonly placeholder="stdout / stderr"><p class="form-hint">M365_DEBUG_LOG 环境变量设置 debug 日志文件；运行日志输出到进程 stdout/stderr。</p></div></div></div></div>
-        <div class="card" style="margin-top:16px"><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Listen address (需重启)</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div><div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select></div></div><div style="margin-top:16px;display:flex;gap:8px"><button class="btn primary" onclick="saveSettings()">Save settings</button><button class="btn" onclick="loadSettings()">Reload</button></div></div></div>
+        <div class="card"><div class="card-head"><span class="card-title">Request &amp; Model</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Chat timeout (seconds, 5-3600)</label><input class="form-input" id="setTimeout" type="number" min="5" max="3600" placeholder="600"></div><div class="form-group"><label class="form-label">Image timeout (seconds, 5-3600)</label><input class="form-input" id="setImageTimeout" type="number" min="5" max="3600" placeholder="300"></div><div class="form-group"><label class="form-label">Context window (tokens)</label><input class="form-input" id="setContextWindow" type="number" min="1024" placeholder="512000"></div><div class="form-group"><label class="form-label">Max output tokens</label><input class="form-input" id="setMaxOutput" type="number" min="1" placeholder="65536"></div><div class="form-group"><label class="form-label">Max tool calls / turn (1-64)</label><input class="form-input" id="setMaxToolCalls" type="number" min="1" max="64" placeholder="64"></div><div class="form-group"><label class="form-label">Max tool rounds (1-512)</label><input class="form-input" id="setMaxToolRounds" type="number" min="1" max="512" placeholder="512"></div><div class="form-group"><label class="form-label">Max conversation messages</label><input class="form-input" id="setMaxConvMsgs" type="number" min="1" max="10000" placeholder="10000"></div></div></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">Accounts &amp; Rate Limiting</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Account concurrency (1-64)</label><input class="form-input" id="setAcctConcurrency" type="number" min="1" max="64" placeholder="16"></div><div class="form-group"><label class="form-label">Rate limit cooldown (seconds, 5-3600)</label><input class="form-input" id="setCooldown" type="number" min="5" max="3600" placeholder="30"></div><div class="form-group"><label class="form-label">Transient throttle cooldown (seconds, 5-600)</label><input class="form-input" id="setTransientCooldown" type="number" min="5" max="600" placeholder="15"></div><div class="form-group"><label class="form-label">Scenario</label><select class="form-input" id="setScenario"><option value="OfficeWebIncludedCopilot">OfficeWebIncludedCopilot</option><option value="Bizchat">Bizchat</option><option value="CopilotConsumer">CopilotConsumer</option><option value="Chathub">Chathub</option></select></div><div class="form-group"><label class="form-label">License type</label><select class="form-input" id="setLicense"><option value="Starter">Starter</option><option value="Premium">Premium</option><option value="Free">Free</option><option value="BCAIS">BCAIS</option><option value="BCSWW">BCSWW</option><option value="BCWAF">BCWAF</option><option value="BCWBF">BCWBF</option></select></div><div class="form-group"><label class="form-label">Log level</label><select class="form-input" id="setLogLevel"><option value="silent">silent</option><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option></select></div></div></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">Feature Flags</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px" id="featureFlags"></div><p class="form-hint">MemoryV2 / DeepWork / ComputerUse / RealtimeVoice / SystemPromptOverride / ImageAPI / DesignerImageGen4o / CodeCanvas / SydneyReconnect</p></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">Model Mapping</span><span style="font-size:11px;color:var(--muted)">Public model name → upstream tone</span></div><div class="table-wrap"><table class="table"><thead><tr><th>Public model</th><th>Upstream tone</th><th>Display name</th><th>Reasoning</th><th style="text-align:right">Actions</th></tr></thead><tbody id="modelMapRows"></tbody></table></div><div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end"><div class="form-group" style="margin:0"><label class="form-label">Public model</label><input class="form-input" id="newModelId" placeholder="gpt-5.7-chat" style="width:160px"></div><div class="form-group" style="margin:0"><label class="form-label">Upstream tone</label><select class="form-input" id="newModelTone" style="width:200px"></select></div><div class="form-group" style="margin:0"><label class="form-label">Display name</label><input class="form-input" id="newModelDisplay" placeholder="GPT-5.7" style="width:140px"></div><div class="form-group" style="margin:0"><label class="form-label">Reasoning</label><select class="form-input" id="newModelEffort" style="width:110px"><option value="low">low</option><option value="minimal">minimal</option><option value="medium" selected>medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="none">none</option></select></div><button class="btn-sm btn primary" onclick="addModelMapping()">Add</button></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-head"><span class="card-title">System</span></div><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;align-items:end"><div class="form-group" style="margin:0" id="setAutoStartWrap"><label style="display:flex;align-items:center;gap:8px;font-size:13px"><input id="setAutoStart" type="checkbox"> Start at login (current user, no admin required)</label><p class="form-hint">Writes an HKCU Run registry entry pointing at the current executable.</p></div><div class="form-group" style="margin:0"><label class="form-label">Log location</label><input class="form-input" id="setLogPath" readonly placeholder="stdout / stderr"><p class="form-hint">The M365_DEBUG_LOG environment variable sets the debug log file; runtime logs are written to the process's stdout/stderr.</p></div></div></div></div>
+        <div class="card" style="margin-top:16px"><div class="card-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px"><div class="form-group"><label class="form-label">Listen address (requires restart)</label><input class="form-input" id="setListen" placeholder="127.0.0.1:4141"></div><div class="form-group"><label class="form-label" for="languageSelect">Language</label><select class="form-input" id="languageSelect"><option value="en">English</option><option value="zh-CN">简体中文</option><option value="zh-TW">繁體中文</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="es">Español</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="pt-BR">Português (Brasil)</option><option value="ru">Русский</option><option value="ar">العربية</option></select></div></div><div style="margin-top:16px;display:flex;gap:8px"><button class="btn primary" onclick="saveSettings()">Save settings</button><button class="btn" onclick="loadSettings()">Reload</button></div></div></div>
       </section>
     </div>
   </main>
@@ -632,12 +635,12 @@ if (response.output_text) {
 <div class="modal-overlay" id="keyModal">
   <div class="modal">
     <h3>Create API key</h3>
-    <p class="subtitle">此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。</p>
+    <p class="subtitle">This key authenticates requests to the OpenAI / Anthropic-compatible API. The full key is shown only once — copy and save it immediately. After creation, click "Use API key" in the key list to see client configuration examples.</p>
     <form onsubmit="createKey(event)">
       <div class="form-group">
         <label class="form-label">Name</label>
         <input class="form-input" id="keyName" value="default" autofocus>
-        <div class="form-hint">用于标识此密钥的标签（如"my-laptop"、"claude-code"）</div>
+        <div class="form-hint">A label to identify this key (e.g. "my-laptop", "claude-code")</div>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn" onclick="closeKeyModal()">Cancel</button>
@@ -880,7 +883,66 @@ const localeText={
   'Mapping already exists': {'zh-CN':'映射已存在','zh-TW':'映射已存在','ja':'マッピングは既に存在します','ko':'매핑이 이미 존재합니다','es':'El mapeo ya existe','fr':'Le mappage existe déjà','de':'Zuordnung existiert bereits','pt-BR':'O mapeamento já existe','ru':'Сопоставление уже существует','ar':'التعيين موجود بالفعل'},
   'Bind proxy for this account…': {'zh-CN':'为此账号绑定代理…','zh-TW':'為此帳號綁定代理…','ja':'このアカウントにプロキシをバインド…','ko':'이 계정에 프록시 바인딩…','es':'Vincular proxy a esta cuenta…','fr':'Lier un proxy à ce compte…','de':'Proxy für dieses Konto binden…','pt-BR':'Vincular proxy a esta conta…','ru':'Привязать прокси к этому аккаунту…','ar':'ربط وكيل بهذا الحساب…'},
   'Proxy bound': {'zh-CN':'已绑定代理','zh-TW':'已綁定代理','ja':'プロキシをバインドしました','ko':'프록시 바인딩됨','es':'Proxy vinculado','fr':'Proxy lié','de':'Proxy gebunden','pt-BR':'Proxy vinculado','ru':'Прокси привязан','ar':'تم ربط الوكيل'},
-  'Proxy unbound': {'zh-CN':'已解绑代理','zh-TW':'已解綁代理','ja':'プロキシを解除しました','ko':'프록시 해제됨','es':'Proxy desvinculado','fr':'Proxy délié','de':'Proxy getrennt','pt-BR':'Proxy desvinculado','ru':'Прокси отвязан','ar':'تم فصل الوكيل'}
+  'Proxy unbound': {'zh-CN':'已解绑代理','zh-TW':'已解綁代理','ja':'プロキシを解除しました','ko':'프록시 해제됨','es':'Proxy desvinculado','fr':'Proxy délié','de':'Proxy getrennt','pt-BR':'Proxy desvinculado','ru':'Прокси отвязан','ar':'تم فصل الوكيل'},
+  'Enter the administrator password (default: admin123)': {'zh-CN':'请输入管理员密码（默认：admin123）','zh-TW':'請輸入管理員密碼（預設：admin123）'},
+  'The default password is ': {'zh-CN':'默认密码为 ','zh-TW':'預設密碼為 '},
+  '. You must change it after your first login.': {'zh-CN':'，首次登录后需修改密码。','zh-TW':'，首次登入後需修改密碼。'},
+  'This key authenticates requests to the OpenAI / Anthropic-compatible API. The full key is shown only once — copy and save it immediately. After creation, click "Use API key" in the key list to see client configuration examples.': {'zh-CN':'此密钥用于认证 OpenAI / Anthropic 兼容接口的请求。完整密钥仅显示一次——请立即复制保存。创建后可在密钥列表中点击"使用密钥"查看客户端配置示例。','zh-TW':'此金鑰用於認證 OpenAI / Anthropic 相容介面的請求。完整金鑰僅顯示一次——請立即複製儲存。建立後可在金鑰列表中點擊「使用金鑰」查看客戶端設定範例。'},
+  'A label to identify this key (e.g. "my-laptop", "claude-code")': {'zh-CN':'用于标识此密钥的标签（如"my-laptop"、"claude-code"）','zh-TW':'用於標識此金鑰的標籤（如「my-laptop」、「claude-code」）'},
+  'curl command copied': {'zh-CN':'curl 已复制','zh-TW':'curl 已複製'},
+  'Login successful': {'zh-CN':'登录成功','zh-TW':'登入成功'},
+  'Copied': {'zh-CN':'已复制','zh-TW':'已複製'},
+  'Deleted': {'zh-CN':'已删除','zh-TW':'已刪除'},
+  'Key updated': {'zh-CN':'已更新','zh-TW':'已更新'},
+  'Added': {'zh-CN':'已添加','zh-TW':'已新增'},
+  'Cleanup complete': {'zh-CN':'清理完成','zh-TW':'清理完成'},
+  'Health check complete': {'zh-CN':'健康检查完成','zh-TW':'健康檢查完成'},
+  'Model test complete': {'zh-CN':'模型测试完成','zh-TW':'模型測試完成'},
+  'Settings saved': {'zh-CN':'设置已保存','zh-TW':'設定已儲存'},
+  'Checking all proxies…': {'zh-CN':'正在检测所有代理…','zh-TW':'正在檢測所有代理…'},
+  'Starting cleanup of all conversations…': {'zh-CN':'开始清理所有对话…','zh-TW':'開始清理所有對話…'},
+  'Are you sure you want to delete this account?': {'zh-CN':'确定删除此账号？','zh-TW':'確定刪除此帳號？'},
+  'Are you sure you want to delete this API key?': {'zh-CN':'确定删除此密钥？','zh-TW':'確定刪除此金鑰？'},
+  'Are you sure you want to delete this conversation?': {'zh-CN':'确定删除此对话？','zh-TW':'確定刪除此對話？'},
+  'Are you sure you want to delete this proxy?': {'zh-CN':'确定删除此代理？','zh-TW':'確定刪除此代理？'},
+  'Are you sure you want to clean up all conversations?\nEach conversation will be deleted one by one, logged in the terminal below.': {'zh-CN':'确定清理所有对话？\n每条对话将逐一删除并在终端记录日志。','zh-TW':'確定清理所有對話？\n每條對話將逐一刪除並在終端機記錄日誌。'},
+  'Please paste the callback URL': {'zh-CN':'请粘贴回调地址','zh-TW':'請貼上回呼位址'},
+  'Name cannot be empty': {'zh-CN':'名称不能为空','zh-TW':'名稱不能為空'},
+  'Please enter a proxy address': {'zh-CN':'请输入代理地址','zh-TW':'請輸入代理地址'},
+  'Please load the model list first': {'zh-CN':'请先加载模型列表','zh-TW':'請先載入模型列表'},
+  'Key not found': {'zh-CN':'找不到密钥','zh-TW':'找不到金鑰'},
+  'Full key not available': {'zh-CN':'完整密钥不可用','zh-TW':'完整金鑰不可用'},
+  'Connection failed': {'zh-CN':'连接失败','zh-TW':'連線失敗'},
+  'Authorization succeeded': {'zh-CN':'授权成功','zh-TW':'授權成功'},
+  'Authorization timed out. Please restart the authorization.': {'zh-CN':'授权超时，请重新开始授权。','zh-TW':'授權逾時，請重新開始授權。'},
+  'The authorization window was closed before it finished.': {'zh-CN':'授权窗口在完成前已关闭。','zh-TW':'授權視窗在完成前已關閉。'},
+  'Authorization failed or expired': {'zh-CN':'授权失败或已过期','zh-TW':'授權失敗或已過期'},
+  'The popup window was blocked by your browser': {'zh-CN':'弹出窗口被浏览器拦截','zh-TW':'彈出視窗被瀏覽器攔截'},
+  'Please allow popups for this site and try again.': {'zh-CN':'请允许此网站的弹出窗口后重试。','zh-TW':'請允許此網站的彈出視窗後重試。'},
+  'The authorization page has opened in a new window': {'zh-CN':'授权页面已在新窗口打开','zh-TW':'授權頁面已在新視窗開啟'},
+  'Complete the sign-in in the popup window. After signing in, the popup will show a blank or error page — this is expected.': {'zh-CN':'请在弹出窗口中完成登录。登录后弹出页会显示空白或错误——这是正常现象。','zh-TW':'請在彈出視窗中完成登入。登入後彈出頁會顯示空白或錯誤——這是正常現象。'},
+  'Paste the full callback URL from the popup window\'s address bar…': {'zh-CN':'粘贴弹出页地址栏中的完整回调地址…','zh-TW':'貼上彈出頁地址欄中的完整回呼位址…'},
+  'Current key: ': {'zh-CN':'当前密钥：','zh-TW':'目前金鑰：'},
+  'Unnamed conversation': {'zh-CN':'未命名对话','zh-TW':'未命名對話'},
+  'Unnamed': {'zh-CN':'未命名','zh-TW':'未命名'},
+  'Failed to load the conversation list: ': {'zh-CN':'获取对话列表失败：','zh-TW':'取得對話列表失敗：'},
+  'The account has been added to the account pool.': {'zh-CN':'账号已加入账号池。','zh-TW':'帳號已加入帳號池。'},
+  'Request & Model': {'zh-CN':'请求与模型','zh-TW':'請求與模型'},
+  'Accounts & Rate Limiting': {'zh-CN':'账号与限流','zh-TW':'帳號與限流'},
+  'Feature Flags': {'zh-CN':'功能开关','zh-TW':'功能開關'},
+  'Model Mapping': {'zh-CN':'模型映射','zh-TW':'模型映射'},
+  'Public model name → upstream tone': {'zh-CN':'公开模型名 → 上游 tone','zh-TW':'公開模型名 → 上游 tone'},
+  'Start at login (current user, no admin required)': {'zh-CN':'开机自启动（当前用户，免管理员）','zh-TW':'開機自啟動（目前使用者，免管理員）'},
+  'Writes an HKCU Run registry entry pointing at the current executable.': {'zh-CN':'写入 HKCU Run 注册表项，指向当前可执行文件。','zh-TW':'寫入 HKCU Run 登錄機碼，指向目前可執行檔。'},
+  'Log location': {'zh-CN':'日志位置','zh-TW':'日誌位置'},
+  'The M365_DEBUG_LOG environment variable sets the debug log file; runtime logs are written to the process\'s stdout/stderr.': {'zh-CN':'M365_DEBUG_LOG 环境变量设置 debug 日志文件；运行日志输出到进程 stdout/stderr。','zh-TW':'M365_DEBUG_LOG 環境變數設定 debug 日誌檔；執行日誌輸出到程序 stdout/stderr。'},
+  'stdout / stderr (configurable via M365_DEBUG_LOG)': {'zh-CN':'stdout / stderr（M365_DEBUG_LOG 可配置）','zh-TW':'stdout / stderr（M365_DEBUG_LOG 可配置）'},
+  'Autostart setup failed: ': {'zh-CN':'自启动设置失败: ','zh-TW':'自啟動設定失敗: '},
+  'Autostart enabled': {'zh-CN':'已开启开机自启动','zh-TW':'已開啟開機自啟動'},
+  'Autostart disabled': {'zh-CN':'已关闭开机自启动','zh-TW':'已關閉開機自啟動'},
+  'Click "Test all"': {'zh-CN':'点击"测试全部"','zh-TW':'點擊「測試全部」'},
+  'Detect': {'zh-CN':'检测','zh-TW':'檢測'},
+  '(empty reply)': {'zh-CN':'（空回复）','zh-TW':'（空回覆）'}
 };
 function preferredLocale(){
   try{
@@ -940,6 +1002,7 @@ function translateText(value){
   if(!translated||translated===trimmed)return value;
   return value.replace(trimmed,translated);
 }
+function T(en){const entry=localeText[en];return (entry&&entry[currentLocale])||en;}
 function translatePage(){
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   const nodes=[];let node;
@@ -1006,7 +1069,7 @@ function buildCurl(keyPrefix){
   return `curl ${base}/v1/chat/completions \\\n  -H "Content-Type: application/json" \\\n  -H "Authorization: Bearer ${keyPrefix}..." \\\n  -d '{"model":"auto","messages":[{"role":"user","content":"Say hello in one sentence."}]}'`;
 }
 async function copyCurl(){
-  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice('curl 已复制','success');}catch(e){}
+  try{await navigator.clipboard.writeText($('onbCurl').textContent.trim());showNotice(T('curl command copied'),'success');}catch(e){}
 }
 async function loadOnboarding(){
   let acc=0,key=0,prefix='sk-';
@@ -1040,7 +1103,7 @@ $('loginForm')?.addEventListener('submit',async e=>{
     if(d.must_change_password){location.replace('/login');return;}
     $('login').style.display='none';$('app').style.display='flex';
     showPage('dashboard');loadStats();
-    showNotice('登录成功','success');
+    showNotice(T('Login successful'),'success');
   }catch(e){showNotice(e.message,'error');}
 });
 
@@ -1145,8 +1208,8 @@ async function toggleAccountSchedule(id,enabled){
 }
 
 async function deleteAccount(id){
-  if(!confirm('确定删除此账号？'))return;
-  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice('已删除','success');loadAccounts();showPage('dashboard');}
+  if(!confirm(T('Are you sure you want to delete this account?')))return;
+  try{await api('/api/accounts/delete',{method:'POST',body:JSON.stringify({id})});showNotice(T('Deleted'),'success');loadAccounts();showPage('dashboard');}
   catch(e){showNotice(e.message,'error');}
 }
 
@@ -1161,18 +1224,18 @@ async function startPKCE(){
     const d=await api('/api/auth/start');
     $('callbackInput').dataset.state=d.state;
     const popup=window.open(d.url,'pkce','width=600,height=800');
-    if(!popup){$('authStatus').innerHTML='<div class="highlight-box warning"><div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i>弹出窗口被浏览器拦截</div><p>请允许此网站的弹出窗口，然后重新点击"开始授权"。</p></div>';lucide.createIcons();return;}
-    $('authStatus').innerHTML='<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>授权页面已在新窗口打开</div><p>请在弹出窗口中完成登录。登录后弹出页会显示空白或错误——这是正常的。复制弹出页地址栏的<b>完整网址</b>，粘贴到下方"回调地址"输入框。</p></div>';
+    if(!popup){$('authStatus').innerHTML=`<div class="highlight-box warning"><div class="highlight-box-title"><i data-lucide="alert-circle" style="width:14px;height:14px"></i>${T('The popup window was blocked by your browser')}</div><p>${T('Please allow popups for this site and try again.')}</p></div>`;lucide.createIcons();return;}
+    $('authStatus').innerHTML=`<div class="highlight-box"><div class="highlight-box-title"><i data-lucide="info" style="width:14px;height:14px"></i>${T('The authorization page has opened in a new window')}</div><p>${T('Complete the sign-in in the popup window. After signing in, the popup will show a blank or error page — this is expected.')}</p></div>`;
     $('callbackInput').focus();
-    $('callbackInput').placeholder='粘贴弹出页地址栏中的完整回调地址…';
+    $('callbackInput').placeholder=T('Paste the full callback URL from the popup window\'s address bar…');
     if(pkceTimer)clearInterval(pkceTimer);
     const start=Date.now();
     pkceTimer=setInterval(async()=>{
-      if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权超时，请重新开始授权。</b></div>';return;}
-      if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权窗口在完成前已关闭。</b></div>';return;}
+      if(Date.now()-start>600000){clearInterval(pkceTimer);$('authStatus').innerHTML=`<div class="highlight-box warning"><b>${T('Authorization timed out. Please restart the authorization.')}</b></div>`;return;}
+      if(popup&&popup.closed){clearInterval(pkceTimer);$('authStatus').innerHTML=`<div class="highlight-box warning"><b>${T('The authorization window was closed before it finished.')}</b></div>`;return;}
       try{const s=await api('/api/auth/status?state='+d.state);
-        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>授权成功</div><p>账号已加入账号池。</p></div>';showNotice('授权成功','success');loadAccounts();try{lucide.createIcons();}catch(e){}}
-        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML='<div class="highlight-box warning"><b>授权失败或已过期</b></div>';}
+        if(s.status==='authenticated'){clearInterval(pkceTimer);$('authStatus').innerHTML=`<div class="highlight-box success"><div class="highlight-box-title"><i data-lucide="check-circle" style="width:14px;height:14px"></i>${T('Authorization succeeded')}</div><p>${T('The account has been added to the account pool.')}</p></div>`;showNotice(T('Authorization succeeded'),'success');loadAccounts();try{lucide.createIcons();}catch(e){}}
+        if(s.status==='error'||s.status==='expired'){clearInterval(pkceTimer);$('authStatus').innerHTML=`<div class="highlight-box warning"><b>${T('Authorization failed or expired')}</b></div>`;}
       }catch(e){}
     },2000);
   }catch(e){showNotice(e.message,'error');}
@@ -1180,12 +1243,12 @@ async function startPKCE(){
 
 async function submitCallback(){
   const raw=$('callbackInput').value.trim();
-  if(!raw)return showNotice('请粘贴回调地址','error');
+  if(!raw)return showNotice(T('Please paste the callback URL'),'error');
   try{
     let u='/api/auth/callback?';
     if(raw.includes('://')){u+='url='+encodeURIComponent(raw);}
     else{u+=raw.replace(/^\?/,'');if(!raw.includes('state='))$('callbackInput').dataset.state&&(u+='&state='+$('callbackInput').dataset.state);}
-    await api(u);showNotice('授权成功','success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
+    await api(u);showNotice(T('Authorization succeeded'),'success');$('callbackInput').value='';loadAccounts();showPage('dashboard');
   }catch(e){showNotice(e.message,'error');}
 }
 
@@ -1207,8 +1270,8 @@ function editKey(id,name){editKeyId=id;$('editKeyName').value=name;$('editKeyMod
 function closeEditKeyModal(){$('editKeyModal').classList.remove('open');editKeyId=null;}
 async function saveEditKey(){
   const name=$('editKeyName').value.trim();
-  if(!name)return showNotice('名称不能为空','error');
-  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice('已更新','success');loadKeys();}
+  if(!name)return showNotice(T('Name cannot be empty'),'error');
+  try{await api('/api/admin/keys',{method:'PUT',body:JSON.stringify({id:editKeyId,name})});closeEditKeyModal();showNotice(T('Key updated'),'success');loadKeys();}
   catch(e){showNotice(e.message,'error');}
 }
 async function toggleKey(id,revoked){
@@ -1218,7 +1281,7 @@ async function toggleKey(id,revoked){
 
 function openKeyModal(){$('keyModal').classList.add('open');$('keyResult').style.display='none';$('keyName').value='default';setTimeout(()=>$('keyName').focus(),50);}
 function closeKeyModal(){$('keyModal').classList.remove('open');}
-async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice('已复制','success');}catch(e){}}
+async function copyKey(){try{await navigator.clipboard.writeText($('keyValue').value);showNotice(T('Copied'),'success');}catch(e){}}
 async function createKey(e){
   e.preventDefault();
   try{
@@ -1226,7 +1289,7 @@ async function createKey(e){
     $('keyValue').value=d.key;$('keyResult').style.display='block';copyKey();loadKeys();
   }catch(e){showNotice(e.message,'error');}
 }
-async function revokeKey(id){if(!confirm('确定删除此密钥？'))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
+async function revokeKey(id){if(!confirm(T('Are you sure you want to delete this API key?')))return;try{await api('/api/admin/keys?id='+id,{method:'DELETE'});loadKeys();}catch(e){showNotice(e.message,'error');}}
 
 // ===== Usage page =====
 let usageDays=7, ugPageNo=0, ugTotal=0;
@@ -1369,8 +1432,8 @@ async function openUseKey(id){
   useKeyId=id;
   const d=await api('/api/admin/keys');
   const rec=(d.keys||[]).find(x=>x.id===id);
-  if(!rec){showNotice('找不到密钥','error');return;}
-  $('useKeyName').textContent='当前密钥：'+rec.name+' ('+rec.prefix+')';
+  if(!rec){showNotice(T('Key not found'),'error');return;}
+  $('useKeyName').textContent=T('Current key: ')+rec.name+' ('+rec.prefix+')';
   $('useKeyVal').value=rec.raw||'';
   $('useKeyModal').classList.add('open');
   renderUkeTabs();
@@ -1385,7 +1448,7 @@ function renderUkeTabs(){
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function ukeFile(path,content){
   return `<div class="uke-file">
-    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice('已复制','success')">Copy</button></div>
+    <div class="uke-file-head"><code>${esc(path)}</code><button class="btn btn-sm" onclick="navigator.clipboard.writeText(this.closest('.uke-file').querySelector('pre').textContent.trim());showNotice(${JSON.stringify(T('Copied'))},'success')">Copy</button></div>
     <pre>${esc(content)}</pre>
   </div>`;
 }
@@ -1455,8 +1518,8 @@ goals = true`;
 }
 async function copyUseKey(){
   const v=$('useKeyVal').value;
-  if(!v){showNotice('完整密钥不可用','error');return;}
-  try{await navigator.clipboard.writeText(v);showNotice('已复制','success');}catch(e){}
+  if(!v){showNotice(T('Full key not available'),'error');return;}
+  try{await navigator.clipboard.writeText(v);showNotice(T('Copied'),'success');}catch(e){}
 }
 
 async function loadConversations(){
@@ -1467,7 +1530,7 @@ async function loadConversations(){
       const id=String(x.conversationId||'');
       const updated=x.updateTimeUtc||x.createTimeUtc;
       return `<tr class="conv-row" data-conversation-id="${esc(id)}">
-        <td><button class="conv-link" type="button">${esc(x.chatName||'未命名对话')}</button><div class="conv-meta"><code>${esc(id)}</code></div></td>
+        <td><button class="conv-link" type="button">${esc(x.chatName||T('Unnamed conversation'))}</button><div class="conv-meta"><code>${esc(id)}</code></div></td>
         <td>${Number(x.messageCount||0)}</td>
         <td>${esc(x.accountEmail||x.accountId||'-')}</td>
         <td style="font-size:12px;color:var(--muted)">${updated?new Date(updated).toLocaleString():'-'}</td>
@@ -1491,16 +1554,16 @@ function termOpen(title){$('termTitle').textContent=title;$('termBody').innerHTM
 function termLine(msg,cls){const d=document.createElement('div');if(cls)d.className=cls;d.textContent='> '+msg;$('termBody').appendChild(d);$('termBody').scrollTop=$('termBody').scrollHeight;}
 function termClear(){$('termBody').innerHTML='';}
 
-async function deleteConv(id){if(!confirm('确定删除此对话？'))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice('已删除','success');loadConversations();}catch(e){showNotice(e.message,'error');}}
+async function deleteConv(id){if(!confirm(T('Are you sure you want to delete this conversation?')))return;try{await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:id})});showNotice(T('Deleted'),'success');loadConversations();}catch(e){showNotice(e.message,'error');}}
 async function cleanupAll(){
-  const total=confirm('确定清理所有对话？\n每条对话将逐一删除并在终端记录日志。');
+  const total=confirm(T('Are you sure you want to clean up all conversations?\nEach conversation will be deleted one by one, logged in the terminal below.'));
   if(!total)return;
   termOpen('cleanup — m365-copilot2api');
-  termLine('开始清理所有对话…');
+  termLine(T('Starting cleanup of all conversations…'));
   let ok=0,fail=0,round=0;
   for(round=1;round<=100;round++){
     let d;
-    try{d=await api('/api/m365/conversations');}catch(e){termLine('获取对话列表失败：'+e.message,'err');break;}
+    try{d=await api('/api/m365/conversations');}catch(e){termLine(T('Failed to load the conversation list: ')+e.message,'err');break;}
     const c=d.data||[];
     if(!c.length){
       termLine('Round '+round+': list is empty.','dim');
@@ -1509,7 +1572,7 @@ async function cleanupAll(){
     termLine('Round '+round+': found '+c.length+' conversations (paged loading; fetch the next batch after deletion)','dim');
     for(let i=0;i<c.length;i++){
       const x=c[i];
-      const name=x.chatName||'未命名';
+      const name=x.chatName||T('Unnamed');
       termLine('['+(i+1)+'/'+c.length+'] Deleting "'+name+'" '+String(x.conversationId||'').slice(0,8)+'…');
       try{
         await api('/api/m365/conversations/delete',{method:'POST',body:JSON.stringify({conversation_id:x.conversationId})});
@@ -1520,7 +1583,7 @@ async function cleanupAll(){
     await new Promise(r=>setTimeout(r,500));
   }
   termLine('Finished: '+ok+' succeeded, '+fail+' failed, '+round+' rounds total.',fail?'warn':'ok');
-  showNotice('清理完成','success');loadConversations();
+  showNotice(T('Cleanup complete'),'success');loadConversations();
 }
 
 function proxyRow(x){
@@ -1533,7 +1596,7 @@ function proxyRow(x){
     <td style="font-size:12px;color:var(--muted)">${x.failures||0}</td>
     <td style="font-size:12px;color:var(--muted)">${x.cooldownUntil?new Date(x.cooldownUntil).toLocaleString():'-'}</td>
     <td style="text-align:right;white-space:nowrap">
-      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">检测</button>
+      <button class="btn-sm btn" onclick="proxyCheckOne('${esc(x.url)}')">${T('Detect')}</button>
       <button class="btn-sm btn danger" onclick="proxyRemove('${esc(x.url)}')">Delete</button>
     </td>
   </tr>`;
@@ -1547,15 +1610,15 @@ async function loadProxies(){
 }
 async function proxyAdd(){
   const raw=$('proxyInput').value.trim();
-  if(!raw)return showNotice('请输入代理地址','error');
+  if(!raw)return showNotice(T('Please enter a proxy address'),'error');
   try{
     const d=await api('/api/admin/proxy-pool',{method:'POST',body:JSON.stringify({urls:[raw]})});
     showNotice('Added '+d.added+' proxies','success');$('proxyInput').value='';loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyRemove(url){
-  if(!confirm('确定删除代理 '+url+'？'))return;
-  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice('已删除','success');loadProxies();}
+  if(!confirm(T('Are you sure you want to delete this proxy?')))return;
+  try{await api('/api/admin/proxy-pool?url='+encodeURIComponent(url),{method:'DELETE'});showNotice(T('Deleted'),'success');loadProxies();}
   catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckOne(url){
@@ -1563,13 +1626,13 @@ async function proxyCheckOne(url){
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT',body:JSON.stringify({url})});
     const rec=(d.proxies||[]).find(x=>x.url===url);
     if(rec&&rec.health==='reachable')showNotice('Connection healthy: '+rec.latencyMs+' ms','success');
-    else showNotice(rec&&rec.lastError?rec.lastError:'连接失败','error');
+    else showNotice(rec&&rec.lastError?rec.lastError:T('Connection failed'),'error');
     loadProxies();
   }catch(e){showNotice(e.message,'error');}
 }
 async function proxyCheckAll(){
   termOpen('proxy check — m365-copilot2api');
-  termLine('正在检测所有代理…');
+  termLine(T('Checking all proxies…'));
   try{
     const d=await api('/api/admin/proxy-pool?action=check',{method:'PUT'});
     const p=d.proxies||[];
@@ -1579,7 +1642,7 @@ async function proxyCheckAll(){
       else termLine('✗ '+x.url+(x.lastError?' — '+x.lastError:''),'err');
     }
     termLine('Finished: '+ok+'/'+p.length+' proxies available.',ok===p.length&&p.length?'ok':'warn');
-    showNotice('健康检查完成','success');loadProxies();
+    showNotice(T('Health check complete'),'success');loadProxies();
   }catch(e){termLine('Check failed: '+e.message,'err');}
 }
 async function proxyTest(){
@@ -1592,7 +1655,7 @@ async function loadModelTest(){
     const d=await api('/api/admin/models');
     const models=d.data||[];
     if(!models.length){$('modelTestRows').innerHTML='<tr><td colspan="4" class="empty">No models available</td></tr>';return;}
-    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">点击"测试全部"</td></tr>`).join('');
+    $('modelTestRows').innerHTML=models.map(m=>`<tr data-model="${esc(m.id)}"><td><b>${esc(m.id)}</b></td><td><span class="status"><i></i>Not tested</span></td><td style="font-size:12px;color:var(--muted)">-</td><td style="font-size:12px;color:var(--muted)">${T('Click "Test all"')}</td></tr>`).join('');
   }catch(e){$('modelTestRows').innerHTML=`<tr><td colspan="4" class="empty">${e.message}</td></tr>`;}
 }
 async function modelTestOne(id,row){
@@ -1605,7 +1668,7 @@ async function modelTestOne(id,row){
   try{
     const d=await api('/api/admin/models/test',{method:'POST',body:JSON.stringify({model:id})});
     const ms=Math.round(performance.now()-start);
-    const content=d.reply||'（空回复）';
+    const content=d.reply||T('(empty reply)');
     badge.innerHTML='<span class="status online"><i></i>Healthy</span>';
     lat.textContent=ms+' ms';
     reply.textContent=String(content).slice(0,80);
@@ -1617,12 +1680,12 @@ async function modelTestOne(id,row){
 }
 async function modelTestAll(){
   const rows=[...document.querySelectorAll('#modelTestRows tr[data-model]')];
-  if(!rows.length){showNotice('请先加载模型列表','error');return;}
+  if(!rows.length){showNotice(T('Please load the model list first'),'error');return;}
   for(let i=0;i<rows.length;i++){
     modelTestOne(rows[i].dataset.model,rows[i]);
     await new Promise(r=>setTimeout(r,250));
   }
-  showNotice('模型测试完成','success');
+  showNotice(T('Model test complete'),'success');
 }
 
 const _featureFlagDefs=[["enableMemoryV2","Memory V2"],["enableDeepWork","Deep Work"],["enableComputerUse","Computer Use"],["enableRealtimeVoice","Realtime Voice"],["enableSystemPromptOverride","System Prompt Override"],["enableImageApi","Image API"],["enableDesignerImageGen4o","Designer Image 4o"],["enableCodeCanvas","Code Canvas"],["enableSydneyReconnect","Sydney Reconnect"]];
@@ -1647,7 +1710,7 @@ async function loadSettings(){
     $('setScenario').value=v.scenario||'OfficeWebIncludedCopilot';
     $('setLicense').value=v.licenseType||'Starter';
     $('setLogLevel').value=v.logLevel||'info';
-    $('setLogPath').value=v.debugLogPath||'stdout / stderr（M365_DEBUG_LOG 可配置）';
+    $('setLogPath').value=v.debugLogPath||T('stdout / stderr (configurable via M365_DEBUG_LOG)');
     const asWrap=$('setAutoStartWrap');
     if(d.autoStartSupported===false){if(asWrap)asWrap.style.display='none';}
     else{$('setAutoStart').checked=!!d.autoStart;}
@@ -1696,9 +1759,9 @@ async function saveSettings(){
     if(as)body.autoStart=as.checked;
     document.querySelectorAll('[data-ff]').forEach(c=>{body[c.dataset.ff]=c.checked;});
     const resp=await api('/api/admin/settings',{method:'PUT',body:JSON.stringify(body)});
-    if(resp&&resp.autoStartError)showNotice('自启动设置失败: '+resp.autoStartError,'error');
-    else if(resp&&resp.autoStartApplied!==undefined)showNotice(resp.autoStartApplied?'已开启开机自启动':'已关闭开机自启动','success');
-    showNotice('设置已保存','success');
+    if(resp&&resp.autoStartError)showNotice(T('Autostart setup failed: ')+resp.autoStartError,'error');
+    else if(resp&&resp.autoStartApplied!==undefined)showNotice(resp.autoStartApplied?T('Autostart enabled'):T('Autostart disabled'),'success');
+    showNotice(T('Settings saved'),'success');
   }catch(e){showNotice(e.message,'error');}
 }
 

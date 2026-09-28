@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>对话详情 - M365 Copilot2API</title>
+<title>Conversation - M365 Copilot2API</title>
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -64,40 +64,40 @@ pre{margin:0;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;word-break
 <body>
 <header class="topbar">
   <div class="top-left">
-    <button class="icon-btn" type="button" title="返回" aria-label="返回" onclick="goBack()"><i data-lucide="arrow-left"></i></button>
+    <button id="backBtn" class="icon-btn" type="button" onclick="goBack()"><i data-lucide="arrow-left"></i></button>
     <span class="divider"></span>
     <span class="brand">M365 Copilot2API</span>
   </div>
   <div class="top-actions">
-    <div class="segmented" role="tablist" aria-label="视图">
-      <button id="conversationTab" class="active" type="button" onclick="setView('conversation')">对话</button>
+    <div id="viewTabs" class="segmented" role="tablist">
+      <button id="conversationTab" class="active" type="button" onclick="setView('conversation')">Conversation</button>
       <button id="jsonTab" type="button" onclick="setView('json')">JSON</button>
     </div>
-    <button class="icon-btn" type="button" title="复制 JSON" aria-label="复制 JSON" onclick="copyJSON()"><i data-lucide="copy"></i></button>
-    <button class="icon-btn" type="button" title="刷新" aria-label="刷新" onclick="loadConversation()"><i data-lucide="refresh-cw"></i></button>
+    <button id="copyBtn" class="icon-btn" type="button" onclick="copyJSON()"><i data-lucide="copy"></i></button>
+    <button id="refreshBtn" class="icon-btn" type="button" onclick="loadConversation()"><i data-lucide="refresh-cw"></i></button>
   </div>
 </header>
 <main>
-  <div id="loading" class="loading">加载中...</div>
+  <div id="loading" class="loading">Loading...</div>
   <div id="error" class="error" hidden></div>
   <div id="conversationView" hidden>
     <section class="heading">
       <div class="heading-copy">
-        <div class="eyebrow">对话详情</div>
+        <div class="eyebrow" id="eyebrow">Conversation detail</div>
         <h1 id="title">-</h1>
         <div class="identity" id="conversationId">-</div>
       </div>
     </section>
-    <section class="meta" aria-label="会话元数据">
-      <div class="meta-item"><div class="meta-label">消息数</div><div class="meta-value" id="messageCount">0</div></div>
-      <div class="meta-item"><div class="meta-label">账号</div><div class="meta-value" id="account">-</div></div>
-      <div class="meta-item"><div class="meta-label">创建时间</div><div class="meta-value" id="createdAt">-</div></div>
-      <div class="meta-item"><div class="meta-label">最近更新</div><div class="meta-value" id="updatedAt">-</div></div>
+    <section id="metaSection" class="meta">
+      <div class="meta-item"><div class="meta-label" id="labelMessageCount">Messages</div><div class="meta-value" id="messageCount">0</div></div>
+      <div class="meta-item"><div class="meta-label" id="labelAccount">Account</div><div class="meta-value" id="account">-</div></div>
+      <div class="meta-item"><div class="meta-label" id="labelCreatedAt">Created</div><div class="meta-value" id="createdAt">-</div></div>
+      <div class="meta-item"><div class="meta-label" id="labelUpdatedAt">Last updated</div><div class="meta-value" id="updatedAt">-</div></div>
     </section>
     <section class="timeline" id="timeline"></section>
   </div>
   <section id="jsonView" class="raw" hidden>
-    <div class="raw-head"><span>原始 JSON</span><span id="jsonSize"></span></div>
+    <div class="raw-head"><span id="rawJsonLabel">Raw JSON</span><span id="jsonSize"></span></div>
     <pre id="rawJSON"></pre>
   </section>
 </main>
@@ -105,31 +105,82 @@ pre{margin:0;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;word-break
 const state={data:null,view:'conversation'};
 const $=id=>document.getElementById(id);
 
+// Lightweight i18n: follows the same `m365_locale` choice made in the main console
+// (Settings > Language / the login-screen language switcher). Defaults to zh-CN.
+const locale=localStorage.getItem('m365_locale')==='en'?'en':'zh-CN';
+const L={
+  back:{en:'Back',zhCN:'返回'},
+  view:{en:'View',zhCN:'视图'},
+  conversation:{en:'Conversation',zhCN:'对话'},
+  copyJson:{en:'Copy JSON',zhCN:'复制 JSON'},
+  refresh:{en:'Refresh',zhCN:'刷新'},
+  loading:{en:'Loading...',zhCN:'加载中...'},
+  conversationDetail:{en:'Conversation detail',zhCN:'对话详情'},
+  sessionMeta:{en:'Session metadata',zhCN:'会话元数据'},
+  messages:{en:'Messages',zhCN:'消息数'},
+  account:{en:'Account',zhCN:'账号'},
+  createdAt:{en:'Created',zhCN:'创建时间'},
+  updatedAt:{en:'Last updated',zhCN:'最近更新'},
+  rawJson:{en:'Raw JSON',zhCN:'原始 JSON'},
+  roleUser:{en:'User',zhCN:'用户'},
+  roleAssistant:{en:'Assistant',zhCN:'助手'},
+  roleTool:{en:'Tool result',zhCN:'工具结果'},
+  roleSystem:{en:'System',zhCN:'系统'},
+  roleDeveloper:{en:'Developer',zhCN:'开发者'},
+  roleMessage:{en:'Message',zhCN:'消息'},
+  emptyContent:{en:'(empty content)',zhCN:'空内容'},
+  image:{en:'Image',zhCN:'图片'},
+  reasoning:{en:'Reasoning',zhCN:'推理'},
+  noMessages:{en:'No messages yet',zhCN:'暂无消息'},
+  missingId:{en:'Missing conversation ID',zhCN:'缺少会话 ID'},
+  loadFailed:{en:'Failed to load',zhCN:'加载失败'},
+  unnamedConversation:{en:'Unnamed conversation',zhCN:'未命名对话'},
+  title:{en:'Conversation - M365 Copilot2API',zhCN:'对话详情 - M365 Copilot2API'}
+};
+function T(k){const e=L[k];return e?(locale==='en'?e.en:e.zhCN):k;}
+function applyI18n(){
+  document.documentElement.lang=locale==='en'?'en':'zh-CN';
+  document.title=T('title');
+  $('backBtn').title=T('back');$('backBtn').setAttribute('aria-label',T('back'));
+  $('viewTabs').setAttribute('aria-label',T('view'));
+  $('conversationTab').textContent=T('conversation');
+  $('copyBtn').title=T('copyJson');$('copyBtn').setAttribute('aria-label',T('copyJson'));
+  $('refreshBtn').title=T('refresh');$('refreshBtn').setAttribute('aria-label',T('refresh'));
+  $('loading').textContent=T('loading');
+  $('eyebrow').textContent=T('conversationDetail');
+  $('metaSection').setAttribute('aria-label',T('sessionMeta'));
+  $('labelMessageCount').textContent=T('messages');
+  $('labelAccount').textContent=T('account');
+  $('labelCreatedAt').textContent=T('createdAt');
+  $('labelUpdatedAt').textContent=T('updatedAt');
+  $('rawJsonLabel').textContent=T('rawJson');
+}
+
 function escapeHTML(value){return String(value??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function formatDate(value){if(!value)return '-';const date=new Date(value);return Number.isNaN(date.getTime())?'-':date.toLocaleString();}
 function pretty(value){if(typeof value==='string'){try{return JSON.stringify(JSON.parse(value),null,2)}catch(_){return value}}return JSON.stringify(value,null,2);}
 function roleMeta(role){
-  if(role==='user')return{name:'用户',icon:'user'};
-  if(role==='assistant')return{name:'助手',icon:'sparkles'};
-  if(role==='tool')return{name:'工具结果',icon:'wrench'};
-  if(role==='system'||role==='developer')return{name:role==='system'?'系统':'开发者',icon:'settings'};
-  return{name:role||'消息',icon:'message-square'};
+  if(role==='user')return{name:T('roleUser'),icon:'user'};
+  if(role==='assistant')return{name:T('roleAssistant'),icon:'sparkles'};
+  if(role==='tool')return{name:T('roleTool'),icon:'wrench'};
+  if(role==='system'||role==='developer')return{name:role==='system'?T('roleSystem'):T('roleDeveloper'),icon:'settings'};
+  return{name:role||T('roleMessage'),icon:'message-square'};
 }
 function contentHTML(content){
-  if(typeof content==='string')return content?`<div class="message-content">${escapeHTML(content)}</div>`:'<div class="empty-content">空内容</div>';
+  if(typeof content==='string')return content?`<div class="message-content">${escapeHTML(content)}</div>`:`<div class="empty-content">${T('emptyContent')}</div>`;
   if(Array.isArray(content)){
     const parts=content.map(part=>{
       if(typeof part==='string')return `<div class="message-content">${escapeHTML(part)}</div>`;
       if(part&&typeof part==='object'&&(part.type==='text'||part.type==='input_text'||part.type==='output_text'))return `<div class="message-content">${escapeHTML(part.text||'')}</div>`;
       if(part&&typeof part==='object'&&part.type==='image_url'){
         const url=typeof part.image_url==='string'?part.image_url:part.image_url?.url;
-        return `<div class="tool-call"><div class="tool-call-head"><i data-lucide="image"></i>图片</div><pre>${escapeHTML(url||pretty(part))}</pre></div>`;
+        return `<div class="tool-call"><div class="tool-call-head"><i data-lucide="image"></i>${T('image')}</div><pre>${escapeHTML(url||pretty(part))}</pre></div>`;
       }
       return `<div class="tool-call"><div class="tool-call-head"><i data-lucide="braces"></i>${escapeHTML(part?.type||'content')}</div><pre>${escapeHTML(pretty(part))}</pre></div>`;
     });
-    return parts.join('')||'<div class="empty-content">空内容</div>';
+    return parts.join('')||`<div class="empty-content">${T('emptyContent')}</div>`;
   }
-  if(content==null)return '<div class="empty-content">空内容</div>';
+  if(content==null)return `<div class="empty-content">${T('emptyContent')}</div>`;
   return `<pre>${escapeHTML(pretty(content))}</pre>`;
 }
 function toolCallsHTML(calls){
@@ -149,19 +200,19 @@ function messageHTML(message,index){
       <div class="message-head"><span class="role-name">${escapeHTML(meta.name)}</span><span class="message-index">#${index+1}</span></div>
       ${contentHTML(message?.content)}
       ${toolCallsHTML(message?.tool_calls)}
-      ${reasoning?`<details><summary>推理</summary><div class="reasoning">${escapeHTML(reasoning)}</div></details>`:''}
+      ${reasoning?`<details><summary>${T('reasoning')}</summary><div class="reasoning">${escapeHTML(reasoning)}</div></details>`:''}
     </div>
   </article>`;
 }
 function render(data){
-  $('title').textContent=data.chatName||'未命名对话';
+  $('title').textContent=data.chatName||T('unnamedConversation');
   $('conversationId').textContent=data.conversationId||'-';
   $('messageCount').textContent=String(data.messageCount??data.messages?.length??0);
   $('account').textContent=data.accountEmail||data.accountId||'-';
   $('createdAt').textContent=formatDate(data.createdAt);
   $('updatedAt').textContent=formatDate(data.updatedAt);
   const messages=Array.isArray(data.messages)?data.messages:[];
-  $('timeline').innerHTML=messages.length?messages.map(messageHTML).join(''):'<div class="empty">暂无消息</div>';
+  $('timeline').innerHTML=messages.length?messages.map(messageHTML).join(''):`<div class="empty">${T('noMessages')}</div>`;
   const raw=JSON.stringify(data,null,2);
   $('rawJSON').textContent=raw;
   $('jsonSize').textContent=new Intl.NumberFormat().format(new Blob([raw]).size)+' bytes';
@@ -172,20 +223,21 @@ function render(data){
 }
 async function loadConversation(){
   const id=new URLSearchParams(location.search).get('id');
-  if(!id){showError('缺少会话 ID');return;}
+  if(!id){showError(T('missingId'));return;}
   $('loading').hidden=false;$('error').hidden=true;$('conversationView').hidden=true;$('jsonView').hidden=true;
   try{
     const response=await fetch('/api/m365/conversations/detail?id='+encodeURIComponent(id),{credentials:'same-origin'});
     if(response.status===401){location.replace('/');return;}
     const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(data?.error?.message||'加载失败');
+    if(!response.ok)throw new Error(data?.error?.message||T('loadFailed'));
     state.data=data;render(data);
-  }catch(error){showError(error.message||'加载失败');}
+  }catch(error){showError(error.message||T('loadFailed'));}
 }
 function showError(message){$('loading').hidden=true;$('conversationView').hidden=true;$('jsonView').hidden=true;$('error').textContent=message;$('error').hidden=false;}
 function setView(view){state.view=view==='json'?'json':'conversation';$('conversationTab').classList.toggle('active',state.view==='conversation');$('jsonTab').classList.toggle('active',state.view==='json');if(state.data){$('conversationView').hidden=state.view!=='conversation';$('jsonView').hidden=state.view!=='json';}}
 async function copyJSON(){if(!state.data)return;try{await navigator.clipboard.writeText(JSON.stringify(state.data,null,2));}catch(_){}}
 function goBack(){if(history.length>1)history.back();else location.href='/?page=conversations';}
+applyI18n();
 lucide.createIcons();
 loadConversation();
 </script>

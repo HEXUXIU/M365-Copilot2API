@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
+import { AnimatePresence } from "motion/react";
+import { KeyRound, Copy, Check } from "lucide-react";
 import { api } from "../api";
 import { t } from "../i18n";
+import { Modal } from "../components";
 
 type KeyRec = {
   id: string;
@@ -16,10 +19,12 @@ type Push = (m: string, k?: "success" | "error" | "info") => void;
 export function ApiKeysPage({ push }: { push: Push }) {
   const [keys, setKeys] = useState<KeyRec[]>([]);
   const [loading, setLoading] = useState(true);
+  const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("default");
   const [busy, setBusy] = useState(false);
-  const [createdKey, setCreatedKey] = useState<string>("");
-  const [editId, setEditId] = useState<string>("");
+  const [createdKey, setCreatedKey] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [editId, setEditId] = useState("");
   const [editName, setEditName] = useState("");
 
   const load = useCallback(async () => {
@@ -34,6 +39,13 @@ export function ApiKeysPage({ push }: { push: Push }) {
   }, [push]);
 
   useEffect(() => { load(); }, [load]);
+
+  const openCreate = () => {
+    setName("default");
+    setCreatedKey("");
+    setCopied(false);
+    setCreateOpen(true);
+  };
 
   const create = async () => {
     setBusy(true);
@@ -52,6 +64,7 @@ export function ApiKeysPage({ push }: { push: Push }) {
   const copyCreated = async () => {
     try {
       await navigator.clipboard.writeText(createdKey);
+      setCopied(true);
       push(t("Copied"), "success");
     } catch {
       push(t("Copy failed"), "error");
@@ -91,38 +104,23 @@ export function ApiKeysPage({ push }: { push: Push }) {
 
   return (
     <div>
-      <div className="card">
-        <div className="card-head">
-          <span>{t("Create key")}</span>
+      <div className="page-head">
+        <div>
+          <h2 className="page-title">{t("API Keys")}</h2>
+          <p className="page-sub">{t("Manage access keys")}</p>
         </div>
-        <div className="card-body" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div className="form-group" style={{ flex: 1, minWidth: 180, marginBottom: 0 }}>
-            <label className="form-label">{t("Name")}</label>
-            <input className="form-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="default" />
-          </div>
-          <button className="btn primary" disabled={busy} onClick={create}>{busy ? "…" : t("Create key")}</button>
-        </div>
-        {createdKey ? (
-          <div className="card-body" style={{ borderTop: "1px solid var(--line)" }}>
-            <div className="form-hint" style={{ marginBottom: 6 }}>{t("Copy this key now — it will not be shown again.")}</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <code style={{ flex: 1, minWidth: 200, padding: "9px 12px", background: "var(--bg)", borderRadius: "var(--radius-sm)", border: "1px solid var(--line)", overflowWrap: "anywhere", fontSize: 12 }}>{createdKey}</code>
-              <button className="btn" onClick={copyCreated}>{t("Copy")}</button>
-              <button className="btn" onClick={() => setCreatedKey("")}>{t("Done")}</button>
-            </div>
-          </div>
-        ) : null}
+        <button className="btn primary" onClick={openCreate}><KeyRound size={14} /> {t("Create key")}</button>
       </div>
 
       <div className="card">
         <div className="card-head">
-          <span>{t("API keys")}</span>
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>{keys.length} {t("total")}</span>
+          <span className="card-title">{t("Key list")}</span>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>{t("The full key is shown only once after creation")}</span>
         </div>
         <div className="table-wrap">
           <table className="table">
             <thead>
-              <tr><th>{t("Name")}</th><th>{t("Prefix")}</th><th>{t("Created")}</th><th>{t("Status")}</th><th>{t("Last used")}</th><th>{t("Actions")}</th></tr>
+              <tr><th>{t("Name")}</th><th>{t("Prefix")}</th><th>{t("Created")}</th><th>{t("Status")}</th><th>{t("Last used")}</th><th style={{ textAlign: "right" }}>{t("Actions")}</th></tr>
             </thead>
             <tbody>
               {loading ? (
@@ -145,12 +143,10 @@ export function ApiKeysPage({ push }: { push: Push }) {
                     </td>
                     <td><code style={{ fontSize: 12 }}>{k.prefix}</code></td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>{k.createdAt ? new Date(k.createdAt).toLocaleString() : "-"}</td>
-                    <td>
-                      <span className={`status ${k.revoked ? "offline" : "online"}`}><span className="dot" />{t(k.revoked ? "Disabled" : "Active")}</span>
-                    </td>
+                    <td><span className={`status ${k.revoked ? "offline" : "online"}`}><span className="dot" />{t(k.revoked ? "Disabled" : "Active")}</span></td>
                     <td style={{ color: "var(--muted)", fontSize: 12 }}>{k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : "-"}</td>
-                    <td>
-                      <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+                    <td style={{ textAlign: "right" }}>
+                      <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                         <button className="btn btn-sm" onClick={() => { setEditId(k.id); setEditName(k.name); }}>{t("Edit")}</button>
                         <button className="btn btn-sm" onClick={() => toggleRevoked(k)}>{t(k.revoked ? "Enable" : "Disable")}</button>
                         <button className="btn btn-sm danger" onClick={() => remove(k)}>{t("Delete")}</button>
@@ -163,6 +159,38 @@ export function ApiKeysPage({ push }: { push: Push }) {
           </table>
         </div>
       </div>
+
+      <AnimatePresence>
+        {createOpen && (
+          <Modal title={t("Create key")} subtitle={t("The full key is shown only once after creation")} onClose={() => setCreateOpen(false)}>
+            {createdKey ? (
+              <div>
+                <div className="form-hint" style={{ marginBottom: 8 }}>{t("Copy this key now — it will not be shown again.")}</div>
+                <div className="copy-field">
+                  <input className="form-input" readOnly value={createdKey} onFocus={(e) => e.currentTarget.select()} />
+                  <button className="btn primary" style={{ minWidth: 96 }} onClick={copyCreated}>
+                    {copied ? <><Check size={14} /> {t("Copied")}</> : <><Copy size={14} /> {t("Copy")}</>}
+                  </button>
+                </div>
+                <div className="modal-actions">
+                  <button className="btn primary" onClick={() => setCreateOpen(false)}>{t("Done")}</button>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <div className="form-group">
+                  <label className="form-label">{t("Name")}</label>
+                  <input className="form-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="default" autoFocus />
+                </div>
+                <div className="modal-actions">
+                  <button className="btn" onClick={() => setCreateOpen(false)}>{t("Cancel")}</button>
+                  <button className="btn primary" disabled={busy} onClick={create}>{busy ? "…" : t("Create key")}</button>
+                </div>
+              </div>
+            )}
+          </Modal>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

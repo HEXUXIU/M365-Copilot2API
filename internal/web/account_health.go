@@ -507,10 +507,12 @@ func (h *accountHealth) LastCategory() (ErrorCategory, time.Time) {
 }
 
 // IsTransportCategory reports whether the category is a local/transport
-// failure rather than an upstream quota or auth rejection.
+// failure rather than an upstream quota or auth rejection. Upstream overload
+// (503) is deliberately excluded: it is a server-side capacity signal, not a
+// local connectivity fault, so it must not be reported as network_error.
 func IsTransportCategory(cat ErrorCategory) bool {
 	switch cat {
-	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout, CategoryOverload503:
+	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout:
 		return true
 	}
 	return false

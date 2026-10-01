@@ -92,15 +92,15 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
   const addMapping = () => {
     const id = newModel.publicModel.trim();
     if (!id) {
-      push("Enter public model id", "error");
+      push(t("Enter public model id"), "error");
       return;
     }
     if (!/^[A-Za-z0-9._-]{1,128}$/.test(id)) {
-      push("Invalid model id", "error");
+      push(t("Invalid model id"), "error");
       return;
     }
     if (mappings.some((m) => m.publicModel.toLowerCase() === id.toLowerCase())) {
-      push("Mapping already exists", "error");
+      push(t("Mapping already exists"), "error");
       return;
     }
     setMappings([...mappings, { ...newModel, publicModel: id, displayName: newModel.displayName?.trim() || id }]);
@@ -118,7 +118,7 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
         <div className="card-body" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
           {NUM_FIELDS.slice(0, 7).map((f) => (
             <div className="form-group" style={{ margin: 0 }} key={f.id}>
-              <label className="form-label" htmlFor={f.id}>{f.label}</label>
+              <label className="form-label" htmlFor={f.id}>{t(f.label)}</label>
               <input className="form-input" id={f.id} type="number" defaultValue={gr(f.key) as number} key={`${f.id}-${gr(f.key)}`} />
             </div>
           ))}
@@ -131,12 +131,12 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
         <div className="card-body" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 14 }}>
           {NUM_FIELDS.slice(7).map((f) => (
             <div className="form-group" style={{ margin: 0 }} key={f.id}>
-              <label className="form-label" htmlFor={f.id}>{f.label}</label>
+              <label className="form-label" htmlFor={f.id}>{t(f.label)}</label>
               <input className="form-input" id={f.id} type="number" defaultValue={gr(f.key) as number} key={`${f.id}-${gr(f.key)}`} />
             </div>
           ))}
           <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label" htmlFor="fScenario">Scenario</label>
+            <label className="form-label" htmlFor="fScenario">{t("Scenario")}</label>
             <select className="form-input" id="fScenario" defaultValue={gr("scenario") as string}>
               {["OfficeWebIncludedCopilot", "Bizchat", "CopilotConsumer", "Chathub"].map((s) => (
                 <option key={s} value={s}>{s}</option>
@@ -144,7 +144,7 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
             </select>
           </div>
           <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label" htmlFor="fLicense">License</label>
+            <label className="form-label" htmlFor="fLicense">{t("License")}</label>
             <select className="form-input" id="fLicense" defaultValue={gr("licenseType") as string}>
               {["Starter", "Premium", "Free", "BCAIS", "BCSWW", "BCWAF", "BCWBF"].map((s) => (
                 <option key={s} value={s}>{s}</option>
@@ -152,7 +152,7 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
             </select>
           </div>
           <div className="form-group" style={{ margin: 0 }}>
-            <label className="form-label" htmlFor="fLogLevel">Log level</label>
+            <label className="form-label" htmlFor="fLogLevel">{t("Log level")}</label>
             <select className="form-input" id="fLogLevel" defaultValue={gr("logLevel") as string}>
               {["silent", "error", "warn", "info", "debug"].map((s) => (
                 <option key={s} value={s}>{s}</option>
@@ -169,7 +169,7 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
           {FLAGS.map(([key, label]) => (
             <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
               <input type="checkbox" data-ff={key} defaultChecked={gc(key)} key={`ff-${key}-${gc(key)}`} />
-              {label}
+              {t(label)}
             </label>
           ))}
         </div>
@@ -179,7 +179,7 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
       <div className="card">
         <div className="card-head"><span>{t("Model mappings")}</span></div>
         <div className="table-wrap">
-          <table className="table" style={{ minWidth: 520 }}>
+          <table className="table">
             <thead>
               <tr><th>{t("Public model")}</th><th>{t("Upstream tone")}</th><th>{t("Display name")}</th><th>{t("Reasoning")}</th><th></th></tr>
             </thead>

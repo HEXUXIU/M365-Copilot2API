@@ -120,6 +120,50 @@ func (s *usageLog) flush() error {
 	return f.Sync()
 }
 
+// trendGranularity picks the bucket size for the trend chart: daily for
+// multi-day ranges, hourly for a 24h range, and per-minute when that window
+// holds less than an hour of data — so the chart never collapses to a single bar
+// (or none) for short histories. It returns the label layout and bucket width
+// (0 meaning "no truncation").
+func trendGranularity(days int, recs []UsageRecord, cutoff time.Time) (string, time.Duration) {
+	if days > 1 {
+		return "01-02", 0
+	}
+	var minT, maxT time.Time
+	for _, rec := range recs {
+		if rec.Time.Before(cutoff) {
+			continue
+		}
+		if minT.IsZero() || rec.Time.Before(minT) {
+			minT = rec.Time
+		}
+		if rec.Time.After(maxT) {
+			maxT = rec.Time
+		}
+	}
+	if !minT.IsZero() && maxT.Sub(minT) < time.Hour {
+		return "15:04", time.Minute
+	}
+	return "15:04", time.Hour
+}
+
+// trendBucketer labels a timestamp for its trend bucket. Buckets are cut on
+// local calendar boundaries rather than with time.Truncate, which rounds against
+// the Unix epoch and therefore lands on the wrong clock boundary in zones with a
+// fractional UTC offset (e.g. UTC+05:30).
+func trendBucketer(layout string, width time.Duration, loc *time.Location) func(time.Time) string {
+	return func(t time.Time) string {
+		lt := t.In(loc)
+		switch width {
+		case time.Hour:
+			return time.Date(lt.Year(), lt.Month(), lt.Day(), lt.Hour(), 0, 0, 0, loc).Format(layout)
+		case time.Minute:
+			return time.Date(lt.Year(), lt.Month(), lt.Day(), lt.Hour(), lt.Minute(), 0, 0, loc).Format(layout)
+		}
+		return lt.Format(layout)
+	}
+}
+
 func (s *usageLog) snapshot(days int) map[string]any {
 	s.mu.Lock()
 	recs := append([]UsageRecord(nil), s.records...)
@@ -127,7 +171,8 @@ func (s *usageLog) snapshot(days int) map[string]any {
 
 	cutoff := time.Now().AddDate(0, 0, -days)
 	loc := time.Now().Location()
-	today := time.Now().In(loc).Truncate(24 * time.Hour)
+	nowLocal := time.Now().In(loc)
+	today := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 	dayAgo := time.Now().Add(-24 * time.Hour)
 
 	var (
@@ -140,6 +185,9 @@ func (s *usageLog) snapshot(days int) map[string]any {
 	endpointCounts := map[string]*usageCountStat{}
 	trendMap := map[string]*usageTrendPoint{}
 
+	trendFmt, trendTruncate := trendGranularity(days, recs, cutoff)
+	bucketKey := trendBucketer(trendFmt, trendTruncate, loc)
+
 	for _, rec := range recs {
 		if rec.Time.Before(cutoff) {
 			continue
@@ -150,7 +198,7 @@ func (s *usageLog) snapshot(days int) map[string]any {
 		out += rec.OutputTokens
 		cache += rec.CacheTokens
 		durationMs += rec.DurationMs
-		if rec.Time.After(today) {
+		if !rec.Time.Before(today) {
 			todayReq++
 			todayTok += reqTok
 		}
@@ -178,7 +226,7 @@ func (s *usageLog) snapshot(days int) map[string]any {
 		} else {
 			endpointCounts[rec.Endpoint] = &usageCountStat{Requests: 1, Tokens: reqTok}
 		}
-		date := rec.Time.In(loc).Format("01-02")
+		date := bucketKey(rec.Time)
 		if tp, ok := trendMap[date]; ok {
 			tp.Requests++
 			tp.Tokens += reqTok

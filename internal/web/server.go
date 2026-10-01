@@ -280,8 +280,14 @@ func (s *Server) PreheatPool() {
 		if acc.OID == "" {
 			continue
 		}
+		// Warm through the account's own client so a proxy-bound account warms
+		// its proxy pool instead of leaking a direct connection past the proxy.
+		client := s.accountClient(acc.ID)
+		if client == nil || client.Pool == nil {
+			continue
+		}
 		for i := 0; i < 2; i++ {
-			go func(a auth.AccountToken) {
+			go func(a auth.AccountToken, cl *chathub.Client) {
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				reqID := uuid.NewString()
@@ -291,8 +297,8 @@ func (s *Server) PreheatPool() {
 				if err != nil {
 					return
 				}
-				s.chat.Pool.Warm(ctx, chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, wsURL)
-			}(acc)
+				cl.Pool.Warm(ctx, chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, wsURL)
+			}(acc, client)
 		}
 	}
 }
@@ -312,6 +318,102 @@ func (s *Server) InitM365CloudClient() {
 	}
 	InitM365CloudClient(clientID, acc.TID, acc.RefreshToken)
 	log.Printf("[m365-cloud] client initialized for account %s", acc.Email)
+}
+
+// keepPoolWarm re-warms the active account plus one standby so a new request
+// reuses a pooled socket instead of paying the ~0.7s dial. Pooled sockets have
+// a 2-minute TTL, so this runs well inside that window.
+func (s *Server) keepPoolWarm() {
+	if s.chat == nil || s.chat.Pool == nil {
+		return
+	}
+	s.mu.Lock()
+	active := s.lastHealthyAccount
+	s.mu.Unlock()
+	accounts := s.tokens.List()
+	if len(accounts) == 0 {
+		return
+	}
+	targets := make([]auth.AccountToken, 0, 2)
+	seen := map[string]bool{}
+	add := func(a auth.AccountToken) {
+		if a.ID == "" || seen[a.ID] {
+			return
+		}
+		if a.OID == "" || a.TID == "" {
+			oid, tid := extractOIDTID(a.AccessToken)
+			a.OID, a.TID = oid, tid
+		}
+		if a.OID == "" || a.TID == "" {
+			return
+		}
+		seen[a.ID] = true
+		targets = append(targets, a)
+	}
+	if acc, ok := s.tokens.Get(active); ok && s.accountAvailable(acc.ID) {
+		add(acc)
+	}
+	for _, a := range accounts {
+		if len(targets) >= 2 {
+			break
+		}
+		if a.ID != active && s.accountAvailable(a.ID) {
+			add(a)
+		}
+	}
+	if len(targets) == 0 {
+		for _, a := range accounts {
+			if s.accountAvailable(a.ID) {
+				add(a)
+			}
+			if len(targets) >= 2 {
+				break
+			}
+		}
+	}
+	cfg := s.settings.get()
+	now := time.Now()
+	for _, acc := range targets {
+		// Warm through the account's own client so a proxy-bound account warms
+		// the correct pool instead of leaking a direct connection past its proxy.
+		client := s.accountClient(acc.ID)
+		if client == nil || client.Pool == nil {
+			continue
+		}
+		// Skip accounts whose token is already expired; dialing would just fail.
+		if !acc.ExpiresAt.IsZero() && acc.ExpiresAt.Before(now) {
+			continue
+		}
+		for i := 0; i < 2; i++ {
+			go func(a auth.AccountToken, cl *chathub.Client) {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				wsURL, err := chathub.BuildWSURL(chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, uuid.NewString(), uuid.NewString(), uuid.NewString(), cfg.LicenseType, cfg.Scenario)
+				if err != nil {
+					return
+				}
+				cl.Pool.Warm(ctx, chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, wsURL)
+			}(acc, client)
+		}
+	}
+}
+
+// StartPoolKeeper keeps a small set of pooled WebSocket connections warm so the
+// first request of a session does not pay a fresh dial. It stops when ctx is
+// cancelled during shutdown.
+func (s *Server) StartPoolKeeper(ctx context.Context) {
+	go func() {
+		t := time.NewTicker(90 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.keepPoolWarm()
+			}
+		}
+	}()
 }
 
 func (s *Server) RefreshExpiredTokens() {
@@ -1573,9 +1675,10 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var b struct {
-		Model string `json:"model"`
+		Model  string `json:"model"`
+		Prompt string `json:"prompt"`
 	}
-	if json.NewDecoder(r.Body).Decode(&b) != nil || strings.TrimSpace(b.Model) == "" {
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&b) != nil || strings.TrimSpace(b.Model) == "" {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad json: model required")
 		return
 	}
@@ -1594,12 +1697,16 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tone, _ := reasoningTone(b.Model, "")
+	prompt := strings.TrimSpace(b.Prompt)
+	if prompt == "" {
+		prompt = `Say "OK" in one word.`
+	}
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 	defer cancel()
 	testCfg := s.settings.get()
 	res, err := s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, chathub.Request{
-		Text:         `Say "OK" in one word.`,
+		Text:         prompt,
 		Tone:         tone,
 		LicenseType:  testCfg.LicenseType,
 		Scenario:     testCfg.Scenario,

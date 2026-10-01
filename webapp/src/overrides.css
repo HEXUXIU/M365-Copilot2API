@@ -1,0 +1,221 @@
+/* App-level overrides on top of the extracted legacy stylesheet. */
+
+/* Login submit: black (primary) when usable, muted when empty — matches the
+   legacy login page. Autofill is detected so the button enables without a click. */
+.login-submit {
+  width: 100%;
+  border: 0;
+  background: var(--primary);
+  color: var(--bg);
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 15px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 140ms ease-out, opacity 140ms ease-out,
+    transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.login-submit:hover {
+  background: var(--primary-hover);
+}
+.login-submit:active {
+  transform: scale(0.97);
+}
+.login-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+@keyframes onAutoFillStart {
+  from { opacity: 0.99; }
+  to { opacity: 1; }
+}
+input:-webkit-autofill {
+  animation-name: onAutoFillStart;
+  animation-duration: 0.001s;
+}
+
+/* The sidebar is pinned to the viewport and never scrolls with the content. */
+.app {
+  display: flex;
+  align-items: stretch;
+  min-height: 100vh;
+}
+.sidebar {
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  height: 100vh;
+  z-index: 20;
+}
+.main {
+  margin-left: var(--sidebar-w);
+  width: calc(100% - var(--sidebar-w));
+  min-width: 0;
+}
+
+/* Tables fill their container instead of forcing a fixed minimum width. The
+   legacy rule is `.table-wrap .table{min-width:640px}` (specificity 0,2,0), so
+   this override must match that specificity to win. */
+.table-wrap .table {
+  min-width: 0;
+  width: 100%;
+}
+.table td,
+.table th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The markup uses `.status .dot`, but legacy CSS only styles `.status i`, so
+   status dots never rendered. Style the class that is actually used. */
+.status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+
+/* Logo: the mark stays visible when the sidebar collapses; only the wordmark
+   is hidden. */
+.logo .logo-mark {
+  display: grid;
+}
+.logo .logo-text {
+  display: inline;
+}
+/* Kept in CSS (not inline) so the narrow-screen rule below can hide it. */
+.topbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (max-width: 640px) {
+  /* Legacy hides every `.logo span`, which also kills the four mark blocks;
+     restore them so the collapsed sidebar still shows the logo. */
+  .logo .logo-mark span {
+    display: block;
+  }
+  .logo .logo-text {
+    display: none;
+  }
+  /* Legacy hides the whole topbar-right on narrow screens. Keep it so the log
+     out button stays reachable on phones; only drop the status and locale. */
+  .topbar-right {
+    display: flex;
+  }
+  .topbar-status,
+  .topbar-locale {
+    display: none;
+  }
+  .sidebar {
+    width: 48px;
+    padding: 16px 4px;
+  }
+  .main {
+    margin-left: 48px;
+    width: calc(100% - 48px);
+  }
+}
+
+/* Press feedback: instant, on pointer-down. */
+.btn,
+.quick-action,
+.modal-close,
+.seg button {
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1),
+    background 140ms ease-out, border-color 140ms ease-out, color 140ms ease-out;
+}
+.btn:active,
+.quick-action:active {
+  transform: scale(0.97);
+}
+.nav button {
+  transition: background 140ms ease-out, color 140ms ease-out,
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.nav button:active {
+  transform: scale(0.98);
+}
+
+/* The legacy `.modal{animation:scaleIn}` fights Motion's transform on the same
+   element; Motion owns the entrance, so drop the CSS keyframe. The extracted
+   legacy rule also lost the old inline max-height/overflow, which clipped tall
+   dialogs on short viewports. */
+.modal {
+  animation: none;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+}
+
+/* Keep entry animations within the UI budget (<300ms). */
+.app,
+.stat,
+.usage-overview-item,
+.onboarding,
+.chart,
+.bar-fill {
+  animation-duration: 240ms;
+}
+
+/* The slideUp keyframe uses fill-mode `both`, which pins transform and kills
+   the hover lift; the animation outranks a plain author declaration, so it has
+   to be cancelled for the hover state to take effect. */
+.stat:hover {
+  animation: none;
+  transform: translateY(-3px);
+}
+
+/* Hover motion only on devices with a real pointer. */
+@media (hover: none) {
+  .stat:hover,
+  .card:hover,
+  .quick-action:hover,
+  .onb-step:hover {
+    transform: none;
+  }
+}
+
+/* Reduced motion: keep opacity/colour, drop transform-based movement. */
+/* Legacy references an undefined `--hover`, so the close button had no hover
+   feedback. Use the theme-aware line tint instead. */
+.modal-close:hover {
+  background: var(--line);
+}
+
+/* Quick actions are real buttons now, so reset the UA button chrome and keep the
+   legacy card layout. */
+.quick-action {
+  appearance: none;
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+}
+.quick-action-text h4,
+.quick-action-text p {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+  .stat:hover,
+  .card:hover,
+  .btn:active,
+  .nav button:active,
+  .quick-action:active {
+    transform: none !important;
+  }
+}

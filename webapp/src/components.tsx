@@ -1,5 +1,7 @@
 import { motion, AnimatePresence } from "motion/react";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { X } from "lucide-react";
+import { t } from "./i18n";
 
 export function Toast({
   message,
@@ -19,10 +21,10 @@ export function Toast({
   const bg = kind === "success" ? "var(--green)" : kind === "error" ? "var(--red)" : "var(--accent)";
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 8, scale: 0.98 }}
-      transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+      initial={{ opacity: 0, transform: "translateY(12px) scale(0.97)" }}
+      animate={{ opacity: 1, transform: "translateY(0px) scale(1)" }}
+      exit={{ opacity: 0, transform: "translateY(8px) scale(0.98)" }}
+      transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
       style={{
         position: "fixed",
         right: 24,
@@ -72,54 +74,86 @@ export function useToasts() {
 
 export function Modal({
   title,
+  subtitle,
   children,
   onClose,
-  width = 460,
+  width = 480,
 }: {
   title: string;
+  subtitle?: string;
   children: React.ReactNode;
   onClose: () => void;
   width?: number;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  // Callers pass a fresh arrow on every render, so the effect must not depend on
+  // onClose; keep it in a ref and run the setup exactly once.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    boxRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !boxRef.current) return;
+      const focusables = boxRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const onContainer = document.activeElement === boxRef.current;
+      if (e.shiftKey && (document.activeElement === first || onContainer)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      previous?.focus?.();
+    };
+  }, []);
+
   return (
     <motion.div
+      className="modal-overlay"
+      style={{ display: "flex" }}
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
+      transition={{ duration: 0.15, ease: [0.23, 1, 0.32, 1] }}
       onClick={onClose}
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.4)",
-        backdropFilter: "blur(4px)",
-        display: "grid",
-        placeItems: "center",
-        zIndex: 100,
-        padding: 16,
-      }}
     >
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 8 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.97, y: 6 }}
-        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        ref={boxRef}
+        tabIndex={-1}
+        className="modal"
+        style={{ width: `min(${width}px, calc(100vw - 32px))` }}
+        initial={{ opacity: 0, transform: "scale(0.96) translateY(8px)" }}
+        animate={{ opacity: 1, transform: "scale(1) translateY(0)" }}
+        exit={{ opacity: 0, transform: "scale(0.97) translateY(6px)" }}
+        transition={{ duration: 0.22, ease: [0.23, 1, 0.32, 1] }}
         onClick={(e) => e.stopPropagation()}
-        style={{
-          background: "var(--surface-solid)",
-          border: "1px solid var(--line)",
-          borderRadius: "var(--radius)",
-          boxShadow: "var(--shadow)",
-          width: `min(${width}px, 100%)`,
-          maxHeight: "calc(100vh - 48px)",
-          overflow: "auto",
-          padding: 22,
-        }}
         role="dialog"
         aria-modal="true"
         aria-label={title}
       >
-        <h3 style={{ margin: "0 0 10px", fontSize: 16 }}>{title}</h3>
+        <div className="modal-head">
+          <div>
+            <h3>{title}</h3>
+            {subtitle ? <div className="subtitle">{subtitle}</div> : null}
+          </div>
+          <button className="modal-close" onClick={onClose} aria-label={t("Close")}><X size={16} /></button>
+        </div>
         {children}
       </motion.div>
     </motion.div>

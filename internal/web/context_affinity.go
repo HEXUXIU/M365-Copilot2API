@@ -219,7 +219,7 @@ func (c *contextAffinity) Resolve(s *Server, r *http.Request, body *oaiReq) (str
 		c.evictLocked(time.Now())
 		if key, ok := c.byExplicit[explicitID]; ok {
 			if b, ok := c.bindings[key]; ok {
-				if s.accountAvailable(b.AccountID) {
+				if s.accountUsable(b.AccountID) {
 					b.LastUsedAt = time.Now()
 					c.bindings[key] = b
 					return b.AccountID, true
@@ -253,7 +253,7 @@ func (c *contextAffinity) Resolve(s *Server, r *http.Request, body *oaiReq) (str
 	c.evictLocked(time.Now())
 	if key, ok := c.byHash[hash]; ok {
 		if b, ok := c.bindings[key]; ok {
-			if s.accountAvailable(b.AccountID) {
+			if s.accountUsable(b.AccountID) {
 				b.LastUsedAt = time.Now()
 				c.bindings[key] = b
 				return b.AccountID, true
@@ -262,7 +262,7 @@ func (c *contextAffinity) Resolve(s *Server, r *http.Request, body *oaiReq) (str
 	}
 	if key, _ := c.lookupPrefixLocked(body.Messages); key != "" {
 		if b, ok := c.bindings[key]; ok {
-			if s.accountAvailable(b.AccountID) {
+			if s.accountUsable(b.AccountID) {
 				newHash := hash
 				// migrate binding to new hash (sticky continuation)
 				oldHash := b.Hash
@@ -290,6 +290,29 @@ func (c *contextAffinity) Resolve(s *Server, r *http.Request, body *oaiReq) (str
 	c.bindings[key] = b
 	c.byHash[hash] = key
 	return accID, true
+}
+
+// ForgetAccount drops every sticky binding that points at accountID. Call it
+// when an account turns out to be unusable so later requests are re-routed
+// instead of repeatedly hitting a dead account.
+func (c *contextAffinity) ForgetAccount(accountID string) {
+	if c == nil || accountID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, b := range c.bindings {
+		if b.AccountID != accountID {
+			continue
+		}
+		delete(c.bindings, k)
+		if b.Hash != "" && c.byHash[b.Hash] == k {
+			delete(c.byHash, b.Hash)
+		}
+		if b.ExplicitID != "" && c.byExplicit[b.ExplicitID] == k {
+			delete(c.byExplicit, b.ExplicitID)
+		}
+	}
 }
 
 func (c *contextAffinity) pickNextHealthyLocked(s *Server) string {

@@ -101,6 +101,17 @@ func (s *Server) accountAvailable(accountID string) bool {
 	return s.accountPool.Available(accountID) && s.accountConcurrency.Available(accountID)
 }
 
+// accountUsable reports whether an account can be used at all, ignoring the
+// transient concurrency limit. A busy account is still the correct owner of its
+// sticky conversation, so this is the predicate to use when deciding whether a
+// sticky binding is worth keeping.
+func (s *Server) accountUsable(accountID string) bool {
+	if s.tokens != nil && !s.tokens.ScheduleEnabled(accountID) {
+		return false
+	}
+	return s.accountPool.Available(accountID)
+}
+
 func (s *Server) accountClient(accountID string) *chathub.Client {
 	if acc, ok := s.tokens.Get(accountID); ok && acc.BoundProxy != "" {
 		return s.clientForProxy(acc.BoundProxy)

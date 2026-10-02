@@ -29,6 +29,7 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "message required")
 		return
 	}
+	explicitAccount := strings.TrimSpace(body.AccountID) != ""
 	if body.SessionKey != "" {
 		if v, ok := s.sessions.get(body.SessionKey); ok {
 			body.AccountID = firstNonEmpty(body.AccountID, v.AccountID)
@@ -36,7 +37,16 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 			body.SessionID = firstNonEmpty(body.SessionID, v.SessionID)
 		}
 	}
+	if !explicitAccount && body.AccountID != "" && !s.accountUsable(body.AccountID) {
+		log.Printf("[account-route] legacy sticky account %q unavailable, re-routing", body.AccountID)
+		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
+	}
 	acc, err := s.resolveAccount(body.AccountID)
+	if err != nil && !explicitAccount && body.AccountID != "" {
+		log.Printf("[account-route] legacy sticky account %q unusable, re-routing: %v", body.AccountID, err)
+		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
+		acc, err = s.resolveAccount("")
+	}
 	if err != nil {
 		writeUpstreamError(w, err)
 		return

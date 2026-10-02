@@ -1188,75 +1188,130 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 	if accountID == "" {
-		// Failover mode: prefer the last healthy account, only rotate on failure
+		// Failover mode: try the last healthy account first, then round-robin.
+		// Every candidate is validated with EnsureValid before use, so an account
+		// whose token has gone bad cannot short-circuit the failover and leave a
+		// healthy account unused.
+		accounts := s.tokens.List()
+		if len(accounts) == 0 {
+			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
+		}
+		enabled := 0
+		for _, a := range accounts {
+			if s.tokens.ScheduleEnabled(a.ID) {
+				enabled++
+			}
+		}
+		if enabled == 0 {
+			return auth.AccountToken{}, fmt.Errorf("no accounts enabled for scheduling")
+		}
 		s.mu.Lock()
 		preferred := s.lastHealthyAccount
 		s.mu.Unlock()
-		if preferred != "" && s.accountAvailable(preferred) && s.accountPool.Available(preferred) && s.accountConcurrency.Available(preferred) {
-			if acc, err := s.tokens.EnsureValid(preferred); err == nil {
-				accountID = preferred
-				return acc, nil
+		// Visit each account at most once. Without this the round-robin would
+		// re-probe the same unvalidatable account up to maxAccountProbe times,
+		// firing a burst of token refreshes at it.
+		tried := make(map[string]bool, len(accounts))
+		// Next() rotates, so len(accounts) iterations visit every account; the
+		// doubled bound is only a safety net against a stuck cursor.
+		for i := 0; len(tried) < len(accounts) && i < len(accounts)*2+1; i++ {
+			candidate := ""
+			if i == 0 && preferred != "" && s.accountAvailable(preferred) {
+				candidate = preferred
+			} else {
+				acc, ok := s.tokens.Next()
+				if !ok {
+					break
+				}
+				candidate = acc.ID
 			}
-		}
-		// No preferred account or it's unavailable; fall back to round-robin
-		acc, ok := s.tokens.Next()
-		if !ok {
-			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
-		}
-		accountID = acc.ID
-		for i := 0; !s.accountAvailable(accountID) && i < maxAccountProbe; i++ {
-			acc, ok = s.tokens.Next()
-			if !ok {
-				break
+			if candidate == "" || tried[candidate] {
+				continue
 			}
-			accountID = acc.ID
-		}
-		if !s.tokens.ScheduleEnabled(accountID) {
-			return auth.AccountToken{}, fmt.Errorf("no accounts enabled for scheduling")
-		}
-		if !s.accountPool.Available(accountID) {
-			until := s.accountPool.EarliestRecovery()
-			retry := int(time.Until(until).Seconds())
-			if retry < 5 {
-				retry = 5
+			tried[candidate] = true
+			if !s.tokens.ScheduleEnabled(candidate) || !s.accountAvailable(candidate) {
+				continue
 			}
-			// A local network failure is not a quota problem: report 503 with a
-			// distinct error code instead of masquerading as 429 rate limiting
-			// (issue #79).
-			if cat, at := s.accountPool.LastCategory(); time.Since(at) < 5*time.Minute && IsTransportCategory(cat) {
-				return auth.AccountToken{}, &UpstreamHTTPError{Status: 503, ErrorCode: "network_error", RetryAfter: retry, Body: "all accounts cooling down after local network errors (last: " + string(cat) + "); check DNS/IPv6/proxy connectivity"}
+			tok, err := s.tokens.EnsureValid(candidate)
+			if err == nil {
+				s.mu.Lock()
+				s.lastHealthyAccount = candidate
+				s.mu.Unlock()
+				return tok, nil
 			}
-			return auth.AccountToken{}, &UpstreamHTTPError{Status: 429, RetryAfter: retry, Body: "all accounts are cooling down; try again later"}
+			s.markResolveFailure(candidate, err)
 		}
-		if !s.accountConcurrency.Available(accountID) {
-			return auth.AccountToken{}, &UpstreamHTTPError{Status: 429, RetryAfter: 1, Body: "all accounts are at their concurrency limit; try again shortly"}
+		// No account could be validated. Report the most useful reason.
+		until := s.accountPool.EarliestRecovery()
+		retry := int(time.Until(until).Seconds())
+		if retry < 5 {
+			retry = 5
 		}
+		// A local network failure is not a quota problem: report 503 with a
+		// distinct error code instead of masquerading as 429 rate limiting
+		// (issue #79).
+		if cat, at := s.accountPool.LastCategory(); time.Since(at) < 5*time.Minute && IsTransportCategory(cat) {
+			return auth.AccountToken{}, &UpstreamHTTPError{Status: 503, ErrorCode: "network_error", RetryAfter: retry, Body: "all accounts cooling down after local network errors (last: " + string(cat) + "); check DNS/IPv6/proxy connectivity"}
+		}
+		return auth.AccountToken{}, &UpstreamHTTPError{Status: 429, RetryAfter: retry, Body: "all accounts are cooling down; try again later"}
 	}
 	result, err := s.tokens.EnsureValid(accountID)
 	if err == nil {
 		s.mu.Lock()
 		s.lastHealthyAccount = accountID
 		s.mu.Unlock()
+		return result, nil
 	}
+	// EnsureValid accepts an id, oid or email; cool the account under its
+	// canonical id so later availability checks match.
+	canonical := accountID
+	if acc, ok := s.tokens.Get(accountID); ok {
+		canonical = acc.ID
+	}
+	s.markResolveFailure(canonical, err)
 	return result, err
+}
+
+// markResolveFailure cools down an account whose token could not be validated
+// while routing. A rejected refresh token (invalid_grant/AADSTS) needs the
+// account to be re-authenticated, so it is sidelined until it recovers.
+func (s *Server) markResolveFailure(accountID string, err error) {
+	if s == nil || s.accountPool == nil || accountID == "" || err == nil {
+		return
+	}
+	if ClassifyError(err) == CategoryAuthExpired401 {
+		s.accountPool.MarkFailure(accountID, err, 0)
+	}
 }
 
 // nextHealthyAccount returns the next round-robin account that is still
 // healthy, skipping the given id first, and validates its token. Used by the
 // failover path after a rate-limited or auth-failed attempt.
 func (s *Server) nextHealthyAccount(avoidID string) (auth.AccountToken, error) {
-	for i := 0; i < maxAccountProbe; i++ {
+	accounts := s.tokens.List()
+	tried := make(map[string]bool, len(accounts))
+	// Next() rotates, so len(accounts) iterations visit every account; the
+	// doubled bound is only a safety net against a stuck cursor.
+	for i := 0; len(tried) < len(accounts) && i < len(accounts)*2+1; i++ {
 		acc, ok := s.tokens.Next()
 		if !ok {
 			return auth.AccountToken{}, fmt.Errorf("no accounts; login first")
 		}
+		if tried[acc.ID] {
+			continue
+		}
+		tried[acc.ID] = true
 		if avoidID != "" && acc.ID == avoidID {
 			continue
 		}
 		if !s.accountAvailable(acc.ID) {
 			continue
 		}
-		return s.tokens.EnsureValid(acc.ID)
+		tok, err := s.tokens.EnsureValid(acc.ID)
+		if err == nil {
+			return tok, nil
+		}
+		s.markResolveFailure(acc.ID, err)
 	}
 	return auth.AccountToken{}, fmt.Errorf("no healthy account available for failover")
 }
@@ -1422,6 +1477,7 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "message or attachment required")
 		return
 	}
+	explicitAccount := strings.TrimSpace(body.AccountID) != ""
 	if body.SessionKey != "" {
 		if v, ok := s.sessions.get(body.SessionKey); ok {
 			body.AccountID = firstNonEmpty(body.AccountID, v.AccountID)
@@ -1429,7 +1485,18 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 			body.SessionID = firstNonEmpty(body.SessionID, v.SessionID)
 		}
 	}
+	// A sticky session binding that points at an unusable account must not pin
+	// the request to it; fall back to a healthy account with a fresh conversation.
+	if !explicitAccount && body.AccountID != "" && !s.accountUsable(body.AccountID) {
+		log.Printf("[account-route] legacy sticky account %q unavailable, re-routing", body.AccountID)
+		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
+	}
 	acc, err := s.resolveAccount(body.AccountID)
+	if err != nil && !explicitAccount && body.AccountID != "" {
+		log.Printf("[account-route] legacy sticky account %q unusable, re-routing: %v", body.AccountID, err)
+		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
+		acc, err = s.resolveAccount("")
+	}
 	if err != nil {
 		if isThrottledForFailover(err) {
 			s.writeFailoverExhausted(w, nil)
@@ -1942,6 +2009,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad json")
 		return
 	}
+	// Captured before any sticky mechanism (session key, user session, session
+	// resolver, context affinity) fills body.AccountID, so a later routing
+	// failure can tell an explicit client choice from an automatic binding.
+	explicitAccount := strings.TrimSpace(body.AccountID) != ""
 	responseFormat := body.ResponseFormat
 	effort := body.ReasoningEffort
 	if body.Reasoning != nil && strings.TrimSpace(body.Reasoning.Effort) != "" {
@@ -2051,10 +2122,17 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[temp-session] copilot_temp_session=true, clearing conversation/session for one-shot request")
 	}
 	answerPrompt := prompt
+	fullAttachments := body.Attachments
 	resolvedConversationID := ""
 	if body.ConversationID == "" && len(body.Messages) > 0 && (body.Metadata == nil || !body.Metadata.CopilotTempSession) {
 		resolved := s.sessionResolver.Resolve(r, &body)
-		if !resolved.IsNew {
+		if !resolved.IsNew && resolved.AccountID != "" && !s.accountUsable(resolved.AccountID) {
+			// The matched session is pinned to an account that is no longer
+			// usable. Ignore the match so routing picks a healthy account; the
+			// stored conversation belongs to the dead account and must not be
+			// reused.
+			log.Printf("[session-resolver] matched account %q unavailable; ignoring match", resolved.AccountID)
+		} else if !resolved.IsNew {
 			resolvedConversationID = resolved.ConversationID
 			body.ConversationID = resolved.ConversationID
 			body.SessionID = resolved.SessionID
@@ -2077,7 +2155,35 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	accountID := body.AccountID
+	// A sticky (non-explicit) binding that points at an unusable account must be
+	// dropped so routing can pick a healthy one. The request also has to be sent
+	// with the full prompt, not the incremental slice that was prepared for the
+	// dead account's conversation.
+	rerouteSticky := func() {
+		// Only drop the binding when the account is genuinely unusable; a
+		// transient resolve failure must not wipe the conversation ownership.
+		if !s.accountUsable(accountID) {
+			s.contextAffinity.ForgetAccount(accountID)
+		}
+		accountID = ""
+		body.AccountID = ""
+		body.ConversationID = ""
+		body.SessionID = ""
+		answerPrompt = prompt
+		body.Attachments = fullAttachments
+	}
+	if !explicitAccount && accountID != "" && !s.accountUsable(accountID) {
+		log.Printf("[account-route] sticky account %q already unavailable, re-routing", accountID)
+		rerouteSticky()
+	}
 	acc, err := s.resolveAccount(accountID)
+	if err != nil && !explicitAccount && accountID != "" {
+		// The sticky binding could not be resolved; re-route so the request still
+		// has a chance on a healthy account instead of failing outright.
+		log.Printf("[account-route] sticky account %q unusable, re-routing: %v", accountID, err)
+		rerouteSticky()
+		acc, err = s.resolveAccount("")
+	}
 	if err != nil {
 		log.Printf("[account-route] resolve failed requested=%q err=%v", accountID, err)
 		if isThrottledForFailover(err) {
@@ -2608,6 +2714,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 			}
 			s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
+			if body.SessionKey != "" {
+				s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: prompt})
+			}
 			s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 			return
 		}
@@ -2635,6 +2744,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			s.userSessions.Put(tenantFromRequest(r), body.User, res.ConversationID, res.SessionID, acc.ID)
 		}
 		s.bindConversation(acc, &body, r, res, answerPrompt, startedAt)
+		if body.SessionKey != "" {
+			s.sessions.upsert(conversation{ID: body.SessionKey, AccountID: acc.ID, ConversationID: res.ConversationID, SessionID: res.SessionID, Title: prompt})
+		}
 		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 		return
 	}

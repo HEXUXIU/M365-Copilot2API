@@ -80,7 +80,16 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "model "+b.Model+" does not support image generation; use flux-3 or flux-4")
 		return
 	}
-	acc, err := s.resolveAccount(firstNonEmpty(b.AccountID, b.User))
+	explicitAccount := strings.TrimSpace(b.AccountID) != ""
+	requestedAccount := firstNonEmpty(b.AccountID, b.User)
+	acc, err := s.resolveAccount(requestedAccount)
+	if err != nil && !explicitAccount && requestedAccount != "" {
+		// The account came from the OpenAI `user` field rather than an explicit
+		// accountId; if it is unusable, fall back to a healthy account instead of
+		// failing every image request.
+		log.Printf("[account-route] image account %q unusable, re-routing: %v", requestedAccount, err)
+		acc, err = s.resolveAccount("")
+	}
 	if err != nil {
 		writeUpstreamError(w, err)
 		return

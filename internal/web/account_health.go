@@ -155,10 +155,18 @@ func ClassifyError(err error) ErrorCategory {
 			return CategoryTCP
 		}
 	}
+	msg := strings.ToLower(err.Error())
+	// A rejected refresh token is an auth failure, not a transient transport
+	// fault; it stays until the account is re-authenticated. Match only the
+	// canonical OAuth rejection signals so a service-wide error (e.g. a bad
+	// client secret, AADSTS7000215) is not mistaken for a per-account issue.
+	// Checked before the global circuit so an open circuit cannot mask it.
+	if strings.Contains(msg, "invalid_grant") || strings.Contains(msg, "token_expired") {
+		return CategoryAuthExpired401
+	}
 	if globalCircuit != nil && globalCircuit.IsOpen() {
 		return CategoryGlobalUnavailable
 	}
-	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "socks"):
 		return CategorySOCKS5

@@ -43,6 +43,14 @@ var contentPolicyPatterns = []string{
 	"i'm sorry, i can't respond",
 	"i'm sorry, i cannot respond",
 	"i apologize, i cannot",
+	// Copilot's canned "could not answer" fallback. Passing this through as a
+	// normal assistant turn hides the real failure from the caller.
+	"wasn't able to respond to that",
+	"wasn't able to respond",
+	"unable to respond to that",
+	"something else i can help with",
+	"抱歉，我无法回答这个问题",
+	"抱歉，我现在无法回答",
 }
 
 func IsContentPolicyBlock(text string) bool {

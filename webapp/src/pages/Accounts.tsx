@@ -169,6 +169,18 @@ export function AccountsPage({ push }: { push: Push }) {
     }
   };
 
+  const bindProxy = async (a: Account) => {
+    const input = window.prompt(t("Bound proxy URL (leave empty for direct)"), a.boundProxy ?? "");
+    if (input === null) return;
+    try {
+      await api("/api/accounts/bind-proxy", { method: "POST", body: JSON.stringify({ id: a.id, proxyUrl: input.trim() }) });
+      push(t("Proxy updated"), "success");
+      await load();
+    } catch (e: any) {
+      push(String(e?.message ?? e), "error");
+    }
+  };
+
   const msgClass = authMsg?.kind === "success" ? "highlight-box success" : authMsg?.kind === "error" ? "highlight-box warning" : "highlight-box";
 
   return (
@@ -258,14 +270,15 @@ export function AccountsPage({ push }: { push: Push }) {
                 <th>{t("Status")}</th>
                 <th>{t("Updated")}</th>
                 <th>{t("Scheduling")}</th>
+                <th>{t("Proxy")}</th>
                 <th>{t("Actions")}</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="empty">{t("Loading")}</td></tr>
+                <tr><td colSpan={8} className="empty">{t("Loading")}</td></tr>
               ) : visible.length === 0 ? (
-                <tr><td colSpan={7} className="empty">{t("No matching accounts")}</td></tr>
+                <tr><td colSpan={8} className="empty">{t("No matching accounts")}</td></tr>
               ) : (
                 visible.map((a) => {
                   const statusKey = a.status === "online" ? "Online" : a.status === "cooldown" ? "Cooldown" : "Offline";
@@ -299,6 +312,12 @@ export function AccountsPage({ push }: { push: Push }) {
                         <button className={`btn btn-sm${a.scheduleEnabled ? "" : " danger"}`} onClick={() => setSchedule(a.id, !a.scheduleEnabled)}>
                           {a.scheduleEnabled ? t("Enabled") : t("Disabled")}
                         </button>
+                      </td>
+                      <td style={{ fontSize: 11, color: "var(--muted)", maxWidth: 180, overflowWrap: "anywhere" }}>
+                        {a.boundProxy ? <span className="status online"><span className="dot" />{a.boundProxy}</span> : t("Direct")}
+                        <div style={{ marginTop: 4 }}>
+                          <button className="btn btn-sm" onClick={() => bindProxy(a)}>{t("Bind")}</button>
+                        </div>
                       </td>
                       <td>
                         <button className="btn btn-sm danger" onClick={() => remove(a.id)}>{t("Delete")}</button>

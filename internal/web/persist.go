@@ -25,6 +25,9 @@ func (p *persistStore) markDirty() {
 }
 
 func (p *persistStore) flushPending() {
+	if p == nil {
+		return
+	}
 	p.dirtyMu.Lock()
 	if !p.dirty {
 		p.dirtyMu.Unlock()
@@ -34,6 +37,9 @@ func (p *persistStore) flushPending() {
 	p.dirtyMu.Unlock()
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
+	if p.flush == nil {
+		return
+	}
 	if err := p.flush(); err != nil {
 		p.dirtyMu.Lock()
 		p.dirty = true
@@ -43,11 +49,17 @@ func (p *persistStore) flushPending() {
 }
 
 func (p *persistStore) flushNowBlocking() error {
+	if p == nil {
+		return nil
+	}
 	p.dirtyMu.Lock()
 	p.dirty = false
 	p.dirtyMu.Unlock()
 	p.writeMu.Lock()
 	defer p.writeMu.Unlock()
+	if p.flush == nil {
+		return nil
+	}
 	if err := p.flush(); err != nil {
 		p.dirtyMu.Lock()
 		p.dirty = true

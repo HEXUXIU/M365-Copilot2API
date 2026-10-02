@@ -89,6 +89,75 @@ func TestAccountHealthLifecycle(t *testing.T) {
 	}
 }
 
+func TestQuota429HonoursRetryAfterAndBacksOff(t *testing.T) {
+	h := newAccountHealth()
+	serverErr := &UpstreamHTTPError{Status: 429, RetryAfter: 45}
+	h.MarkFailure("quota-retry", serverErr, 0)
+	until, ok := h.CooldownUntil("quota-retry")
+	if !ok {
+		t.Fatal("429 with RetryAfter must set a cooldown")
+	}
+	if remain := time.Until(until); remain < 40*time.Second || remain > 46*time.Second {
+		t.Fatalf("429 RetryAfter cooldown = %v, want ~45s", remain)
+	}
+	if !h.RateLimited("quota-retry") {
+		t.Fatal("429 must set rate-limit state")
+	}
+
+	plainErr := &UpstreamHTTPError{Status: 429}
+	h.MarkFailure("quota-base", plainErr, 0)
+	if _, ok := h.CooldownUntil("quota-base"); !ok {
+		t.Fatal("plain 429 must set a cooldown")
+	}
+	h.MarkFailure("quota-base", plainErr, 0)
+	until2, ok := h.CooldownUntil("quota-base")
+	if !ok {
+		t.Fatal("second consecutive 429 lost its cooldown")
+	}
+	if remain := time.Until(until2); remain < 28*time.Second {
+		t.Fatalf("consecutive 429 backoff = %v, want >= 29s", remain)
+	}
+	h.MarkSuccess("quota-base")
+	if h.RateLimited("quota-base") {
+		t.Fatal("success must clear rate-limit state")
+	}
+	if _, ok := h.CooldownUntil("quota-base"); ok {
+		t.Fatal("success must clear the cooldown")
+	}
+}
+
+func TestWarmSkipsRecentlyLimitedAccount(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("M365_SESSION_CACHE", filepath.Join(dir, "sessions.json"))
+	t.Setenv("M365_CONVERSATION_CACHE", filepath.Join(dir, "conversations.json"))
+	t.Setenv("M365_USER_SESSION_CACHE", filepath.Join(dir, "users.json"))
+	t.Setenv("M365_DATA_DIR", dir)
+	toks := map[string]auth.TokenSet{
+		"u-1": {HomeOID: "u-1", Email: "one@example.com", AccessToken: "tok", RefreshToken: "r", ExpiresAt: time.Now().Add(time.Hour)},
+	}
+	path := filepath.Join(dir, "accounts.json")
+	store, err := auth.OpenStore(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	for _, tok := range toks {
+		if _, err := store.Upsert(tok); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+	}
+	s := &Server{
+		tokens:             store,
+		accountPool:        newAccountHealth(),
+		accountConcurrency: newAccountConcurrency(),
+		chat:               chathub.NewClient(),
+	}
+	// 刚被 429 的账号：保活必须跳过，等冷却过去再补水。
+	s.accountPool.MarkFailure("u-1", &UpstreamHTTPError{Status: 429}, 0)
+	if attempts, limited, _ := s.accountPool.QuotaDetail("u-1"); !limited || attempts == 0 {
+		t.Fatalf("fresh 429 must mark the account limited, got attempts=%d limited=%v", attempts, limited)
+	}
+}
+
 func TestCooldownExpiryClearsCallCount(t *testing.T) {
 	h := newAccountHealth()
 	const id = "acct-expiry"

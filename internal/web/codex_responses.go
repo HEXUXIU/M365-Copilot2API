@@ -61,14 +61,19 @@ func writeResponsesResult(w http.ResponseWriter, model string, stream bool, src 
 	for i, item := range output {
 		m, _ := item.(map[string]any)
 		addedItem := item
-		if m["type"] == "function_call" {
-			// Arguments arrive in function_call_arguments.delta. Including them
-			// here too would make conforming clients append duplicate JSON.
+		if m["type"] == "function_call" || m["type"] == "custom_tool_call" {
+			// The body arrives through the matching *.delta event. Leaving it in
+			// the added item too makes conforming clients append it a second time,
+			// which corrupts the JSON/exec input.
 			added := make(map[string]any, len(m))
 			for k, v := range m {
 				added[k] = v
 			}
-			added["arguments"] = ""
+			if m["type"] == "function_call" {
+				added["arguments"] = ""
+			} else {
+				added["input"] = ""
+			}
 			added["status"] = "in_progress"
 			addedItem = added
 		}

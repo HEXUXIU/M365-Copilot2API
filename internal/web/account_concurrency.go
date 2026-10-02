@@ -94,6 +94,19 @@ func (c *accountConcurrency) Inflight(accountID string) int {
 	return c.inflight[accountID]
 }
 
+// Limit reports the configured per-account in-flight ceiling.
+func (c *accountConcurrency) Limit() int {
+	if c == nil {
+		return defaultAccountConcurrency
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.limit <= 0 {
+		return defaultAccountConcurrency
+	}
+	return c.limit
+}
+
 func (s *Server) accountAvailable(accountID string) bool {
 	if s.tokens != nil && !s.tokens.ScheduleEnabled(accountID) {
 		return false

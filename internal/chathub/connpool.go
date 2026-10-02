@@ -18,6 +18,10 @@ type pooledConn struct {
 
 const maxPoolPerKey = 2
 
+// MaxPoolPerKey is the number of idle connections kept per account. Exported so
+// the keep-alive loop refills only to the pool's real capacity.
+const MaxPoolPerKey = maxPoolPerKey
+
 type ConnPool struct {
 	mu     sync.Mutex
 	conns  map[string][]*pooledConn // key = oid|tid, up to maxPoolPerKey connections
@@ -67,16 +71,16 @@ func (p *ConnPool) Take(ctx context.Context, oid, tid string, wsURL string) (*we
 	return conn, false, nil
 }
 
-func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) {
+func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) bool {
 	if wsURL == "" {
-		return
+		return false
 	}
 	key := p.key(acc.OID, acc.TID)
 
 	p.mu.Lock()
 	if len(p.conns[key]) >= maxPoolPerKey {
 		p.mu.Unlock()
-		return
+		return false
 	}
 	p.mu.Unlock()
 
@@ -87,20 +91,20 @@ func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) {
 		} else {
 			log.Printf("[connpool] warm dial failed oid=%s err=%v", acc.OID, err)
 		}
-		return
+		return false
 	}
 
 	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"protocol":"json","version":1}`+"\x1e")); err != nil {
 		log.Printf("[connpool] warm handshake send failed: %v", err)
 		conn.Close()
-		return
+		return false
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, _, err = conn.ReadMessage()
 	if err != nil {
 		log.Printf("[connpool] warm handshake recv failed: %v", err)
 		conn.Close()
-		return
+		return false
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 
@@ -108,12 +112,31 @@ func (p *ConnPool) Warm(ctx context.Context, acc Account, wsURL string) {
 	if len(p.conns[key]) >= maxPoolPerKey {
 		conn.Close()
 		p.mu.Unlock()
-		return
+		return false
 	}
 	p.conns[key] = append(p.conns[key], &pooledConn{conn: conn, created: time.Now(), handshook: true})
 	p.mu.Unlock()
 
 	log.Printf("[connpool] warmed connection oid=%s tid=%s", acc.OID, acc.TID)
+	return true
+}
+
+// Idle returns how many pooled, still-fresh connections this pool currently
+// holds for the account. Used by the keeper to refill only the real gap.
+func (p *ConnPool) Idle(oid, tid string) int {
+	if p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	n := 0
+	for _, pc := range p.conns[p.key(oid, tid)] {
+		if now.Sub(pc.created) < 2*time.Minute && pc.handshook {
+			n++
+		}
+	}
+	return n
 }
 
 func (p *ConnPool) Return(oid, tid string, conn *websocket.Conn) {

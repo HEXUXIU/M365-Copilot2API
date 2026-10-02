@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -111,16 +112,10 @@ func TestWhitelistPersistsAcrossReload(t *testing.T) {
 
 	cm2 := openConversationManager()
 	if !cm2.IsWhitelisted("conv-pinned") {
-		t.Error("whitelist lost after reload")
+		t.Error("whitelist entry conv-pinned must survive reload")
 	}
-	found := false
-	for _, id := range cm2.WhitelistedIDs() {
-		if id == "conv-pinned" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("WhitelistedIDs missing pinned conversation")
+	if cm2.IsWhitelisted("conv-b") {
+		t.Error("unwhitelisted conv-b must not survive reload")
 	}
 }
 
@@ -172,5 +167,20 @@ func TestLegacyConversationFileLoads(t *testing.T) {
 	cm := openConversationManager()
 	if _, ok := cm.data["conv-old"]; !ok {
 		t.Error("legacy conversation file must still load")
+	}
+}
+
+func TestConversationTitleStaysSmall(t *testing.T) {
+	huge := strings.Repeat("prompt-filler ", 40000)
+	cm := openConversationManager()
+	cm.Record("conv-huge", "acc1", huge)
+	if got := len([]rune(cm.data["conv-huge"].Title)); got > 130 {
+		t.Fatalf("stored Title has %d runes, want at most 130", got)
+	}
+	if cm.data["conv-huge"].Title == huge {
+		t.Fatal("full prompt must not be retained as the conversation title")
+	}
+	if got := cm.data["conv-huge"].Title; got != "" && !strings.HasPrefix(got, "prompt-filler") {
+		t.Fatalf("title should still read like the prompt head, got %q", got)
 	}
 }

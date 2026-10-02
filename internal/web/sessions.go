@@ -85,6 +85,10 @@ func (s *sessionStore) upsert(v conversation) conversation {
 		v.CreatedAt = now
 	}
 	v.UpdatedAt = now
+	// The title is a client-facing label, not storage for the request body: the
+	// flattened prompt can be hundreds of KB and this store is re-marshalled on
+	// every flush, so keep only a short snippet.
+	v.Title = conversationTitleSnippet(v.Title)
 	s.data[v.ID] = v
 	s.persist.markDirty()
 	return v

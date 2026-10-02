@@ -18,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -157,6 +158,11 @@ type Server struct {
 	convCache            *conversationCache
 	lastHealthyAccount   string
 	contextAffinity      *contextAffinity
+	poolWarmMu           sync.Mutex
+	poolWarmRound        uint64
+	poolWarmSucceeded    map[string]uint64
+	poolWarmDials        uint64
+	poolWarmSkippedCool  uint64
 }
 
 const maxResponsesPerTenant = 256
@@ -320,71 +326,73 @@ func (s *Server) InitM365CloudClient() {
 	log.Printf("[m365-cloud] client initialized for account %s", acc.Email)
 }
 
-// keepPoolWarm re-warms the active account plus one standby so a new request
-// reuses a pooled socket instead of paying the ~0.7s dial. Pooled sockets have
-// a 2-minute TTL, so this runs well inside that window.
+// keepPoolWarm re-warms the accounts most likely to serve the next requests,
+// in least-recently-warmed order, skipping cooled-down and picked-over ones.
+// Each account holds at most maxPoolPerKey*concurrency shed-load margin of
+// warmed sockets, but never more than it can actually use before the 2-minute
+// TTL expires.
 func (s *Server) keepPoolWarm() {
 	if s.chat == nil || s.chat.Pool == nil {
 		return
 	}
-	s.mu.Lock()
-	active := s.lastHealthyAccount
-	s.mu.Unlock()
 	accounts := s.tokens.List()
 	if len(accounts) == 0 {
 		return
 	}
-	targets := make([]auth.AccountToken, 0, 2)
-	seen := map[string]bool{}
-	add := func(a auth.AccountToken) {
-		if a.ID == "" || seen[a.ID] {
-			return
-		}
+	cands := make([]auth.AccountToken, 0, len(accounts))
+	now := time.Now()
+	s.poolWarmMu.Lock()
+	s.poolWarmRound++
+	s.poolWarmMu.Unlock()
+	cfg := s.settings.get()
+	for _, a := range accounts {
 		if a.OID == "" || a.TID == "" {
 			oid, tid := extractOIDTID(a.AccessToken)
 			a.OID, a.TID = oid, tid
 		}
-		if a.OID == "" || a.TID == "" {
-			return
+		// Skip accounts unavailable for scheduling, already cooling down, about
+		// to be cooled, or whose token is expired: warming them either cannot
+		// serve traffic or keeps hammering an upstream that just said back off.
+		if a.OID == "" || a.TID == "" ||
+			!s.tokens.ScheduleEnabled(a.ID) ||
+			!s.accountPool.Available(a.ID) ||
+			(!a.ExpiresAt.IsZero() && a.ExpiresAt.Before(now)) {
+			continue
 		}
-		seen[a.ID] = true
-		targets = append(targets, a)
-	}
-	if acc, ok := s.tokens.Get(active); ok && s.accountAvailable(acc.ID) {
-		add(acc)
-	}
-	for _, a := range accounts {
-		if len(targets) >= 2 {
-			break
+		if attempts, limited, _ := s.accountPool.QuotaDetail(a.ID); limited || attempts > 0 {
+			s.poolWarmMu.Lock()
+			s.poolWarmSkippedCool++
+			s.poolWarmMu.Unlock()
+			continue
 		}
-		if a.ID != active && s.accountAvailable(a.ID) {
-			add(a)
-		}
-	}
-	if len(targets) == 0 {
-		for _, a := range accounts {
-			if s.accountAvailable(a.ID) {
-				add(a)
-			}
-			if len(targets) >= 2 {
-				break
-			}
-		}
-	}
-	cfg := s.settings.get()
-	now := time.Now()
-	for _, acc := range targets {
-		// Warm through the account's own client so a proxy-bound account warms
-		// the correct pool instead of leaking a direct connection past its proxy.
-		client := s.accountClient(acc.ID)
+		client := s.accountClient(a.ID)
 		if client == nil || client.Pool == nil {
 			continue
 		}
-		// Skip accounts whose token is already expired; dialing would just fail.
-		if !acc.ExpiresAt.IsZero() && acc.ExpiresAt.Before(now) {
+		cands = append(cands, a)
+	}
+	if len(cands) == 0 {
+		return
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		return s.warmGeneration(cands[i].ID) < s.warmGeneration(cands[j].ID)
+	})
+	// Refill only the neediest accounts, capped so a cold start does not dump
+	// dozens of handshakes at once; the keeper runs every 90s and tops up again.
+	budget := 8
+	for _, acc := range cands {
+		if budget <= 0 {
+			break
+		}
+		need := s.poolRefillNeed(acc)
+		if need <= 0 {
 			continue
 		}
-		for i := 0; i < 2; i++ {
+		if need > budget {
+			need = budget
+		}
+		budget -= need
+		for i := 0; i < need; i++ {
 			go func(a auth.AccountToken, cl *chathub.Client) {
 				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
@@ -392,10 +400,73 @@ func (s *Server) keepPoolWarm() {
 				if err != nil {
 					return
 				}
-				cl.Pool.Warm(ctx, chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, wsURL)
-			}(acc, client)
+				ok := cl.Pool.Warm(ctx, chathub.Account{AccessToken: a.AccessToken, OID: a.OID, TID: a.TID}, wsURL)
+				s.noteWarmResult(a.ID, ok)
+			}(acc, s.accountClient(acc.ID))
 		}
 	}
+}
+
+// warmGeneration returns how many keeper rounds have already refilled this
+// account, so keepPoolWarm always serves the stalest accounts first.
+func (s *Server) warmGeneration(accountID string) uint64 {
+	s.poolWarmMu.Lock()
+	defer s.poolWarmMu.Unlock()
+	if s.poolWarmSucceeded == nil {
+		s.poolWarmSucceeded = map[string]uint64{}
+	}
+	return s.poolWarmSucceeded[accountID]
+}
+
+// noteWarmResult records one keeper dial so the next round prefers accounts
+// that have not been warmed yet, and publishes keeper counters for the admin
+// dashboard.
+func (s *Server) noteWarmResult(accountID string, ok bool) {
+	if !ok || accountID == "" {
+		return
+	}
+	s.poolWarmMu.Lock()
+	if s.poolWarmSucceeded == nil {
+		s.poolWarmSucceeded = map[string]uint64{}
+	}
+	s.poolWarmSucceeded[accountID]++
+	s.poolWarmDials++
+	s.poolWarmMu.Unlock()
+}
+
+// PoolWarmStats snapshots the keeper counters for admin visibility.
+func (s *Server) PoolWarmStats() map[string]any {
+	s.poolWarmMu.Lock()
+	defer s.poolWarmMu.Unlock()
+	byAccount := make(map[string]uint64, len(s.poolWarmSucceeded))
+	for k, v := range s.poolWarmSucceeded {
+		byAccount[k] = v
+	}
+	return map[string]any{
+		"refills":       s.poolWarmDials,
+		"skipped_cool":  s.poolWarmSkippedCool,
+		"rounds":        s.poolWarmRound,
+		"by_account_id": byAccount,
+	}
+}
+
+// poolRefillNeed returns how many sockets this account still needs so that it
+// can serve in-flight plus queued demand from the pool instead of dialing.
+// It is intentionally conservative: at most maxPoolPerKey*concurrency shed-load
+// slots, and never more than the account can plausibly consume within one
+// 2-minute TTL.
+func (s *Server) poolRefillNeed(acc auth.AccountToken) int {
+	client := s.accountClient(acc.ID)
+	if client == nil || client.Pool == nil {
+		return 0
+	}
+	have := client.Pool.Idle(acc.OID, acc.TID)
+	want := chathub.MaxPoolPerKey
+	need := want - have
+	if need < 0 {
+		need = 0
+	}
+	return need
 }
 
 // StartPoolKeeper keeps a small set of pooled WebSocket connections warm so the
@@ -3236,9 +3307,11 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			return
 		}
 	}
-	// Recover natural-language tool intent in native mode, and repair any
-	// structured event that failed the declared-name/schema boundary.
-	if (planningMode == "native" || invalidDetectedTool) && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
+	// Repair a structured event that failed the declared-name/schema boundary,
+	// and honor an explicit tool_choice=required that the model answered with
+	// prose instead of a call. A plain text answer with tool_choice=auto is a
+	// legitimate "no tool" decision and never triggers a second model call.
+	if (invalidDetectedTool || (planningMode == "native" && fmt.Sprint(body.ToolChoice) == "required")) && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
 		routePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
 		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
 		if routeErr == nil {

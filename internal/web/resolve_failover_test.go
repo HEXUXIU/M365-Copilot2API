@@ -42,6 +42,19 @@ func TestResolveAccountFailsOverPastDeadAccount(t *testing.T) {
 	if s.accountAvailable("u-dead") {
 		t.Fatal("the dead account should have been cooled down after a failed validation")
 	}
+
+	// A healthy account already warmed by the keeper must not accumulate
+	// backoff generations: resolving it again has to succeed without cooling
+	// or penalising it, otherwise warm rounds would lengthen its own outages.
+	s.mu.Lock()
+	s.lastHealthyAccount = "u-live"
+	s.mu.Unlock()
+	if acc2, err := s.resolveAccount(""); err != nil || acc2.ID != "u-live" {
+		t.Fatalf("warm hit should stay on u-live, got %q err=%v", acc2.ID, err)
+	}
+	if _, limited, _ := s.accountPool.QuotaDetail("u-live"); limited {
+		t.Fatal("repeated healthy resolves must not mark the account rate-limited")
+	}
 }
 
 // A busy account is still the right owner of its sticky conversation; only a

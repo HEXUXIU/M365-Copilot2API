@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -191,6 +192,66 @@ func TestResolverPersistsHistoryAcrossReload(t *testing.T) {
 	if res.HistoryLen != 2 {
 		t.Fatalf("expected HistoryLen=2 after reload, got %d", res.HistoryLen)
 	}
+}
+
+func TestStoredHistoryStaysBounded(t *testing.T) {
+	t.Setenv("M365_SESSION_CACHE", filepath.Join(t.TempDir(), "sessions.json"))
+	sr := openSessionResolver()
+
+	msgs := []oaiMsg{
+		{Role: "user", Content: "anchor one"},
+		{Role: "assistant", Content: "anchor answer"},
+	}
+	for i := 0; i < 600; i++ {
+		msgs = append(msgs, oaiMsg{Role: "user", Content: "context-filler message"})
+	}
+	small := append([]oaiMsg{}, msgs[:2]...)
+	sr.Bind("", "conv-small", "acc1",
+		&oaiReq{User: "alice", Messages: append([]oaiMsg{}, small...)},
+		"",
+		resolverTestRequest("203.0.113.10", "client-a", "alice"))
+
+	// 前缀匹配不能因为淘汰而失效：续接请求仍应命中同一云端对话。
+	res := sr.Resolve(resolverTestRequest("203.0.113.10", "client-a", "alice"),
+		&oaiReq{User: "alice", Messages: append(small, oaiMsg{Role: "user", Content: "继续"})})
+	if res.IsNew || res.ConversationID != "conv-small" {
+		t.Fatalf("fresh continuation must still match, got new=%v conv=%q", res.IsNew, res.ConversationID)
+	}
+
+	// 超出字节预算后，老会话被淘汰，新会话不受影响。
+	bigger := append([]oaiMsg{}, msgs...)
+	for i := 0; i < 200; i++ {
+		bigger = append(bigger, oaiMsg{Role: "user", Content: strings.Repeat("burst-context-filler ", 4000)})
+	}
+	for i := 0; i < 12 && historyTotal(sr) <= maxRetainedBytes; i++ {
+		sr.Bind("", "conv-huge", "acc1",
+			&oaiReq{User: "alice", Messages: append([]oaiMsg{}, bigger...)},
+			"",
+			resolverTestRequest("203.0.113.10", "client-a", "alice"))
+	}
+	if err := sr.persist.flushNowBlocking(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	for _, sess := range sr.sessions {
+		if sess.ContextFinger == "" {
+			t.Fatal("kept session must retain its fingerprint")
+		}
+	}
+	if total := historyTotal(sr); total > maxRetainedBytes {
+		t.Fatalf("retained history %d exceeds budget %d", total, maxRetainedBytes)
+	}
+	if len(sr.sessions) == 0 {
+		t.Fatal("eviction must keep the most recent sessions")
+	}
+	t.Logf("after budget eviction: sessions=%d historyBytes=%d budget=%d", len(sr.sessions), historyTotal(sr), maxRetainedBytes)
+}
+
+func historyTotal(sr *sessionResolver) int64 {
+	var total int64
+	for _, sess := range sr.sessions {
+		total += int64(historyBytes(sess.ContextHistory))
+	}
+	return total
 }
 
 func TestAutoCleanupDefaultMaxAgeTwoHours(t *testing.T) {

@@ -700,6 +700,19 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 		h.mu.Unlock()
 		return
 	}
+	// 429 keeps the upstream-advised window: RetryAfter wins when present,
+	// otherwise the backoff grows with consecutive attempts. MarkSuccess clears
+	// quotaAttempts, so a recovered account returns to the short base window.
+	if cat == CategoryQuota429 {
+		h.mu.Lock()
+		h.quotaAttempts[accountID] = h.quotaAttempts[accountID] + 1
+		h.limited[accountID] = true
+		delete(h.authFail, accountID)
+		delete(h.authFailReason, accountID)
+		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, RetryAfterSeconds(err), h.quotaAttempts[accountID]))
+		h.mu.Unlock()
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	switch cat {
@@ -744,15 +757,6 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 				h.authFailReason[accountID] = fmt.Sprintf("%d", dialErr403.Status)
 			}
 		}
-		return
-	case CategoryQuota429:
-		delete(h.authFail, accountID)
-		delete(h.authFailReason, accountID)
-		h.limited[accountID] = true
-		attempt := h.quotaAttempts[accountID] + 1
-		h.quotaAttempts[accountID] = attempt
-		cd := CooldownForCategory(cat, RetryAfterSeconds(err), attempt)
-		h.cooldown[accountID] = time.Now().Add(cd)
 		return
 	case CategoryOverload503:
 		delete(h.authFail, accountID)
@@ -850,6 +854,20 @@ func (h *accountHealth) Available(accountID string) bool {
 		return false
 	}
 	return true
+}
+
+// QuotaDetail reports how many consecutive 429s the account has accumulated
+// and until when it is cooling down. The pool keeper reads it to stop warming
+// freshly-throttled accounts sooner than the generic Available() check, which
+// only hides them after their cooldown is registered.
+func (h *accountHealth) QuotaDetail(accountID string) (attempts int, limited bool, until time.Time) {
+	if h == nil || accountID == "" {
+		return 0, false, time.Time{}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.cleanupExpiredCooldownLocked(accountID)
+	return h.quotaAttempts[accountID], h.limited[accountID], h.cooldown[accountID]
 }
 
 func (h *accountHealth) CooldownUntil(accountID string) (time.Time, bool) {

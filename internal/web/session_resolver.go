@@ -57,6 +57,16 @@ type sessionResolver struct {
 
 const defaultMaxSessions = 1000
 
+// maxRetainedBytes caps the serialized size of every history-bearing store
+// (sessions.json, conversations.json). Long requests share the same few
+// hundred KB slices, so without a byte budget a burst of long-context calls
+// makes the next flush (every M365_PERSIST_INTERVAL) re-marshal gigabytes.
+const maxRetainedBytes = 32 << 20
+
+// historyBytes approximates the retained size of one session's stored request
+// history. It reuses the same JSON encoding the flush path writes, so the
+// eviction budget tracks what the disk actually receives.
+
 func openSessionResolver() *sessionResolver {
 	// 闂茬疆 2 灏忔椂鍗宠涓鸿繃鏈燂紙鐢ㄦ埛锛? 灏忔椂涓嶆椿璺冨凡缁忕畻涔咃級銆備細璇濊繃鏈熷悗
 	// 浠?sessions.json 鍓旈櫎锛屼簯绔璇濅氦缁?auto_cleanup 鎸夌浉鍚岀獥鍙ｅ洖鏀躲€?
@@ -157,6 +167,71 @@ func (sr *sessionResolver) evictLocked() {
 		for _, id := range ids[:len(sr.sessions)-sr.maxSessions] {
 			sr.dropLocked(id, sr.sessions[id])
 		}
+	}
+	sr.evictBytesLocked()
+}
+
+// evictBytesLocked drops the least recently used sessions until the stored
+// request history fits the byte budget. Count caps alone cannot bound memory
+// when each session may hold hundreds of KB of context.
+func (sr *sessionResolver) evictBytesLocked() {
+	for {
+		total := int64(0)
+		oldest := ""
+		var oldestAt time.Time
+		for id, s := range sr.sessions {
+			total += int64(historyBytes(s.ContextHistory))
+			if oldest == "" || s.LastUsedAt.Before(oldestAt) {
+				oldest, oldestAt = id, s.LastUsedAt
+			}
+		}
+		if total <= maxRetainedBytes || oldest == "" {
+			return
+		}
+		sr.dropLocked(oldest, sr.sessions[oldest])
+	}
+}
+
+// historyBytes approximates the JSON cost of one stored request history.
+func historyBytes(msgs []oaiMsg) int {
+	n := 16
+	for _, m := range msgs {
+		n += 32 + len(m.Role) + len(m.Name) + len(m.ToolCallID) + len(m.ReasoningContent)
+		n += contentBytes(m.Content)
+		for _, call := range m.ToolCalls {
+			if b, err := json.Marshal(call); err == nil {
+				n += len(b)
+			}
+		}
+	}
+	return n
+}
+
+// contentBytes sizes message content without allocating: plain strings are
+// measured directly, multipart payloads reuse the same flattening the request
+// pipeline uses.
+func contentBytes(c any) int {
+	switch v := c.(type) {
+	case nil:
+		return 0
+	case string:
+		return len(v)
+	case []byte:
+		return len(v)
+	case []any:
+		n := 0
+		for _, part := range v {
+			if m, ok := part.(map[string]any); ok {
+				n += contentBytes(m["text"]) + contentBytes(m["input_text"]) + contentBytes(m["image_url"]) + contentBytes(m["file_url"])
+			}
+		}
+		return n
+	default:
+		if b, err := json.Marshal(v); err == nil {
+			return len(b)
+		}
+		text := strings.Join(strings.Fields(contentToString(v)), " ")
+		return len(text)
 	}
 }
 

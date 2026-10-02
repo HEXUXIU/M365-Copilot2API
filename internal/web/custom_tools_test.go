@@ -50,3 +50,34 @@ func TestResponsesStreamWritesCustomToolEvents(t *testing.T) {
 		}
 	}
 }
+
+// The custom tool input must appear only in the *.delta event. If the added
+// frame repeats it, conforming clients append it twice and the exec input is
+// corrupted.
+func TestResponsesStreamCustomToolAddedHasEmptyInput(t *testing.T) {
+	rr := httptest.NewRecorder()
+	writeResponsesResult(rr, "m", true, customCallSource())
+	body := rr.Body.String()
+	var added map[string]any
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var frame map[string]any
+		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &frame) != nil {
+			continue
+		}
+		if frame["type"] != "response.output_item.added" {
+			continue
+		}
+		if item, ok := frame["item"].(map[string]any); ok && item["type"] == "custom_tool_call" {
+			added = item
+		}
+	}
+	if added == nil {
+		t.Fatalf("no custom_tool_call added frame in stream: %s", body)
+	}
+	if added["input"] != "" {
+		t.Fatalf("added frame must leave input empty, got %#v", added["input"])
+	}
+}

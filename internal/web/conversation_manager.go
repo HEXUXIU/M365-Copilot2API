@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -108,6 +109,19 @@ func (cm *conversationManager) flush() error {
 	return writeFileAtomic(cm.path, b, 0o600)
 }
 
+// conversationTitleSnippet keeps the management index a display snippet.
+// The raw flattened prompt can be hundreds of KB, and this map is re-marshalled
+// on every flush, so storing it whole would turn conversations.json into a
+// second copy of every long request.
+func conversationTitleSnippet(title string) string {
+	text := strings.Join(strings.Fields(strings.TrimSpace(title)), " ")
+	runes := []rune(text)
+	if len(runes) > 120 {
+		return string(runes[:120]) + "..."
+	}
+	return text
+}
+
 func (cm *conversationManager) Record(conversationID, accountID, title string) {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -118,7 +132,7 @@ func (cm *conversationManager) Record(conversationID, accountID, title string) {
 		AccountID:  accountID,
 		CreatedAt:  now,
 		LastUsedAt: now,
-		Title:      title,
+		Title:      conversationTitleSnippet(title),
 	}
 	if hasExisting {
 		rec.CreatedAt = existing.CreatedAt

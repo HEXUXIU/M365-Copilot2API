@@ -213,7 +213,7 @@ func sanitizePublicAssistantText(text string) string {
 }
 
 func sanitizePublicAssistantTextForModel(text, model string) string {
-	text = stripReplacementChars(text)
+	text = stripEntityTags(stripReplacementChars(text))
 	if !publicIdentityPolicyEnabled() {
 		return text
 	}
@@ -320,7 +320,22 @@ func stripCitationMarkersStream(pending string) (string, string) {
 		}
 	}
 	b.WriteString(pending[:len(pending)-keep])
-	return b.String(), pending[len(pending)-keep:]
+	return stripEntityTags(b.String()), pending[len(pending)-keep:]
+}
+
+// publicEntityTagPattern matches the inline entity markup the upstream model
+// emits in answer text, for example <Organization>NodeLoc</Organization>. The
+// client should read the entity name, not the markup, so a complete tag is
+// removed and its text content is kept.
+var publicEntityTagPattern = regexp.MustCompile(`</?(?:Organization|Product|Person|Event|Location|DateTime|Quantity|URL|Reference|Topic|Skill|File|Image|Video|Audio|Code|Table|Math|Citation|Source|Query|Intent|Domain|Brand|Technology|Company|Team|Project|Tool|Model|Service|API|Dataset|Repository|Term|Definition|Entity|Concept)\b[^>]*>`)
+
+// stripEntityTags removes upstream entity markup while preserving the text it
+// wraps, so "<Organization>NodeLoc</Organization>" becomes "NodeLoc".
+func stripEntityTags(text string) string {
+	if text == "" || strings.IndexByte(text, '<') < 0 {
+		return text
+	}
+	return publicEntityTagPattern.ReplaceAllString(text, "")
 }
 
 func sanitizePublicReasoningText(text string) string {

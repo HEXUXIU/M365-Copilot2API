@@ -1257,7 +1257,28 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resolveWaitWindow bounds how long account selection will wait for a cooling
+// account to recover before giving up and reporting the failure.
+const (
+	resolveWaitWindow = 8 * time.Second
+	resolveMaxWait    = 5 * time.Second
+)
+
 func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
+	return s.resolveAccountCtx(context.Background(), accountID)
+}
+
+// resolveAccountCtx is resolveAccount with request cancellation and a bounded
+// wait for imminent recovery.
+func (s *Server) resolveAccountCtx(ctx context.Context, accountID string) (auth.AccountToken, error) {
+	return s.resolveAccountUntil(ctx, accountID, time.Now().Add(resolveWaitWindow))
+}
+
+// resolveAccountUntil selects a usable account. When every candidate is
+// momentarily cooling down it waits for the earliest recovery and retries
+// (bounded by deadline) instead of failing the request, so a client never has
+// to implement its own retry/backoff for a blip the gateway can absorb.
+func (s *Server) resolveAccountUntil(ctx context.Context, accountID string, deadline time.Time) (auth.AccountToken, error) {
 	if accountID == "" {
 		// Failover mode: try the last healthy account first, then round-robin.
 		// Every candidate is validated with EnsureValid before use, so an account
@@ -1312,17 +1333,38 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 			}
 			s.markResolveFailure(candidate, err)
 		}
-		// No account could be validated. Report the most useful reason.
+		// No account could be validated. If a cooldown is about to expire,
+		// wait it out and retry rather than failing the request outright.
 		until := s.accountPool.EarliestRecovery()
+		if !until.IsZero() {
+			wait := time.Until(until)
+			if wait <= resolveMaxWait && time.Now().Add(wait).Before(deadline) {
+				if wait < 0 {
+					wait = 0
+				}
+				timer := time.NewTimer(wait + 50*time.Millisecond)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return auth.AccountToken{}, ctx.Err()
+				case <-timer.C:
+					return s.resolveAccountUntil(ctx, "", deadline)
+				}
+			}
+		}
 		retry := int(time.Until(until).Seconds())
 		if retry < 5 {
 			retry = 5
 		}
-		// A local network failure is not a quota problem: report 503 with a
-		// distinct error code instead of masquerading as 429 rate limiting
-		// (issue #79).
+		// Name the reason we actually observed. Only when a real transport
+		// fault is the latest signal do we call it a transport problem; a
+		// quota cooldown is reported as rate limiting rather than disguised as
+		// a network fault, and we never invent connectivity advice.
+		if s.accountPool.AnyRateLimited() {
+			return auth.AccountToken{}, &UpstreamHTTPError{Status: 429, RetryAfter: retry, Body: "all accounts are rate limited by upstream; retry after cooldown"}
+		}
 		if cat, at := s.accountPool.LastCategory(); time.Since(at) < 5*time.Minute && IsTransportCategory(cat) {
-			return auth.AccountToken{}, &UpstreamHTTPError{Status: 503, ErrorCode: "network_error", RetryAfter: retry, Body: "all accounts cooling down after local network errors (last: " + string(cat) + "); check DNS/IPv6/proxy connectivity"}
+			return auth.AccountToken{}, &UpstreamHTTPError{Status: 503, ErrorCode: "transport_error", RetryAfter: retry, Body: "all accounts cooling down after transport errors (last: " + string(cat) + ")"}
 		}
 		return auth.AccountToken{}, &UpstreamHTTPError{Status: 429, RetryAfter: retry, Body: "all accounts are cooling down; try again later"}
 	}
@@ -1562,11 +1604,11 @@ func (s *Server) chatOnce(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[account-route] legacy sticky account %q unavailable, re-routing", body.AccountID)
 		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
 	}
-	acc, err := s.resolveAccount(body.AccountID)
+	acc, err := s.resolveAccountCtx(r.Context(), body.AccountID)
 	if err != nil && !explicitAccount && body.AccountID != "" {
 		log.Printf("[account-route] legacy sticky account %q unusable, re-routing: %v", body.AccountID, err)
 		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
-		acc, err = s.resolveAccount("")
+		acc, err = s.resolveAccountCtx(r.Context(), "")
 	}
 	if err != nil {
 		if isThrottledForFailover(err) {
@@ -1820,7 +1862,7 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "bad json: model required")
 		return
 	}
-	acc, err := s.resolveAccount("")
+	acc, err := s.resolveAccountCtx(r.Context(), "")
 	if err != nil {
 		writeUpstreamError(w, err)
 		return
@@ -2247,13 +2289,13 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[account-route] sticky account %q already unavailable, re-routing", accountID)
 		rerouteSticky()
 	}
-	acc, err := s.resolveAccount(accountID)
+	acc, err := s.resolveAccountCtx(r.Context(), accountID)
 	if err != nil && !explicitAccount && accountID != "" {
 		// The sticky binding could not be resolved; re-route so the request still
 		// has a chance on a healthy account instead of failing outright.
 		log.Printf("[account-route] sticky account %q unusable, re-routing: %v", accountID, err)
 		rerouteSticky()
-		acc, err = s.resolveAccount("")
+		acc, err = s.resolveAccountCtx(r.Context(), "")
 	}
 	if err != nil {
 		log.Printf("[account-route] resolve failed requested=%q err=%v", accountID, err)

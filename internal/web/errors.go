@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"m365-copilot2api/internal/auth"
@@ -22,13 +23,65 @@ func logOAuthError(stage string, err error) {
 	log.Printf("oauth_error stage=%s error=%q", stage, "request_failed")
 }
 
-// upstreamError keeps transport details, including URLs and credentials, out
-// of client-visible responses while retaining a server-side diagnostic.
+// upstreamError keeps transport details, including hosts, IPs and credentials,
+// out of client-visible responses, but still names the reason we actually know
+// about. A caller that cannot tell a timeout from a rate limit cannot decide
+// whether to retry, so the classification is reported even though the address
+// that failed is not.
 func upstreamError(err error) string {
 	if err == nil {
 		return "upstream request failed"
 	}
 	log.Printf("upstream request failed: %v", err)
+
+	var dialErr *chathub.DialError
+	if errors.As(err, &dialErr) && dialErr.Kind != "" {
+		switch dialErr.Kind {
+		case "WS_READ_TIMEOUT":
+			return "upstream timed out waiting for the response stream (WS_READ_TIMEOUT)"
+		case "WS_WRITE_TIMEOUT":
+			return "upstream timed out while sending the request (WS_WRITE_TIMEOUT)"
+		case "WS_HANDSHAKE":
+			return "upstream websocket handshake failed (WS_HANDSHAKE)"
+		case "CLIENT_CANCELED":
+			return "request canceled before upstream responded"
+		}
+		return "upstream connection failed (" + dialErr.Kind + ")"
+	}
+
+	var httpErr *UpstreamHTTPError
+	if errors.As(err, &httpErr) {
+		if body := strings.TrimSpace(httpErr.Body); body != "" {
+			return body
+		}
+	}
+
+	switch ClassifyError(err) {
+	case CategoryDNS:
+		return "upstream DNS resolution failed"
+	case CategoryTCP:
+		return "upstream connection reset or refused (TCP)"
+	case CategoryTLS:
+		return "upstream TLS handshake failed"
+	case CategorySOCKS5:
+		return "outbound proxy (SOCKS5) connection failed"
+	case CategoryWSReadTimeout:
+		return "upstream timed out waiting for the response stream (WS_READ_TIMEOUT)"
+	case CategoryWSHandshake:
+		return "upstream websocket handshake failed (WS_HANDSHAKE)"
+	case CategoryQuota429:
+		return "upstream is rate limiting this account"
+	case CategoryRetryable422:
+		return "upstream rejected the request as retryable"
+	case CategoryOverload503:
+		return "upstream reported overload (503)"
+	case CategoryGlobalUnavailable:
+		return "upstream service is temporarily unavailable"
+	case CategoryAuthExpired401:
+		return "upstream rejected the stored credentials"
+	case CategoryForbidden403:
+		return "upstream refused this account for the request"
+	}
 	return "upstream request failed"
 }
 
@@ -140,9 +193,20 @@ func writeUpstreamErrorWithAccount(w http.ResponseWriter, err error, accountID s
 		writeOpenAIError(w, http.StatusServiceUnavailable, "upstream_content_blocked", "M365 content policy blocked this request; try again or switch account")
 		return
 	}
-	var netErr *UpstreamHTTPError
-	if errors.As(err, &netErr) && netErr.ErrorCode == "network_error" {
-		writeOpenAIError(w, http.StatusServiceUnavailable, "network_error", netErr.Body)
+	// We only rewrite what we actually understand. For anything else, pass the
+	// upstream status and body through unchanged so the caller sees the real
+	// reason instead of a fabricated diagnosis.
+	var httpErr *UpstreamHTTPError
+	if errors.As(err, &httpErr) && httpErr.Status > 0 {
+		code := "upstream_error"
+		if httpErr.ErrorCode != "" {
+			code = httpErr.ErrorCode
+		}
+		msg := strings.TrimSpace(httpErr.Body)
+		if msg == "" {
+			msg = httpErr.Error()
+		}
+		writeOpenAIError(w, httpErr.Status, code, msg)
 		return
 	}
 	writeOpenAIError(w, status, "upstream_error", upstreamError(err))

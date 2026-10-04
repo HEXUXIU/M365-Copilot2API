@@ -26,6 +26,19 @@ func (w *streamingWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Flush forwards to the wrapped writer so streaming responses are delivered
+// incrementally. Without it this outermost wrapper would swallow every inner
+// Flush (the assertion below fails on a wrapper that lacks the method), and the
+// whole response would buffer until the handler returned.
+func (w *streamingWriter) Flush() {
+	if !w.headerWritten {
+		w.headerWritten = true
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // recoverPanics 捕获 handler panic，已开始流式时不写错误体，否则返回 JSON 500。
 func recoverPanics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

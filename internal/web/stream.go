@@ -41,11 +41,11 @@ func (s *Server) chatStream(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[account-route] legacy sticky account %q unavailable, re-routing", body.AccountID)
 		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
 	}
-	acc, err := s.resolveAccount(body.AccountID)
+	acc, err := s.resolveAccountCtx(r.Context(), body.AccountID)
 	if err != nil && !explicitAccount && body.AccountID != "" {
 		log.Printf("[account-route] legacy sticky account %q unusable, re-routing: %v", body.AccountID, err)
 		body.AccountID, body.ConversationID, body.SessionID = "", "", ""
-		acc, err = s.resolveAccount("")
+		acc, err = s.resolveAccountCtx(r.Context(), "")
 	}
 	if err != nil {
 		writeUpstreamError(w, err)

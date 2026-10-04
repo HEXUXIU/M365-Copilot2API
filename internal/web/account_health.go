@@ -116,6 +116,10 @@ func ClassifyError(err error) ErrorCategory {
 				return CategoryWSHandshake
 			case "WS_READ_TIMEOUT":
 				return CategoryWSReadTimeout
+			case "WS_WRITE_TIMEOUT":
+				// Same transport class and failover behaviour as a read timeout,
+				// but kept as its own kind so the reported reason is accurate.
+				return CategoryWSReadTimeout
 			case "CLIENT_CANCELED":
 				return CategoryClientCanceled
 			}
@@ -1004,4 +1008,19 @@ func (h *accountHealth) EarliestRecovery() time.Time {
 		}
 	}
 	return earliest
+}
+
+// AnyRateLimited reports whether any cooling account was sidelined by an
+// upstream quota signal. It separates a quota exhaustion from a transport
+// outage when every account is cooling, so the error we return names the
+// reason we actually observed instead of guessing.
+func (h *accountHealth) AnyRateLimited() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for id := range h.cooldown {
+		if h.limited[id] {
+			return true
+		}
+	}
+	return false
 }

@@ -61,3 +61,13 @@ node_modules/
 test-artifacts/
 tmp_dump/
 tmp_lab/
+
+# Agent test harness: upstream repos are large and cloned on demand
+/tests/agents/opencode/
+/tests/agents/codex/
+/tests/agents/claude-code-restored/
+/tests/agents/claude-code-safphere/
+/tests/agents/harness/runs/
+/tests/agents/harness/repos/
+/tests/agents/harness/godview.exe
+/tests/agents/harness/api-key.txt

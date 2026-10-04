@@ -82,13 +82,13 @@ func (s *Server) imageGenerations(w http.ResponseWriter, r *http.Request) {
 	}
 	explicitAccount := strings.TrimSpace(b.AccountID) != ""
 	requestedAccount := firstNonEmpty(b.AccountID, b.User)
-	acc, err := s.resolveAccount(requestedAccount)
+	acc, err := s.resolveAccountCtx(r.Context(), requestedAccount)
 	if err != nil && !explicitAccount && requestedAccount != "" {
 		// The account came from the OpenAI `user` field rather than an explicit
 		// accountId; if it is unusable, fall back to a healthy account instead of
 		// failing every image request.
 		log.Printf("[account-route] image account %q unusable, re-routing: %v", requestedAccount, err)
-		acc, err = s.resolveAccount("")
+		acc, err = s.resolveAccountCtx(r.Context(), "")
 	}
 	if err != nil {
 		writeUpstreamError(w, err)

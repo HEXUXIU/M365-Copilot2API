@@ -2536,52 +2536,20 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			text.WriteString(ev.Text)
-			pending.WriteString(ev.Text)
-			v := pending.String()
 			// Detect fenced code blocks (tool calls) that must not be emitted as text.
 			// They will be caught by fencedToolCalls after the stream completes.
-			if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
+			if strings.Contains(pending.String()+ev.Text, "```bash") || strings.Contains(pending.String()+ev.Text, "\"command\"") {
+				pending.WriteString(ev.Text)
 				return nil
 			}
-			// If we see an opening ```, buffer until the closing ``` or until we're sure it's not a tool call.
-			if i := strings.Index(v, "```"); i >= 0 {
-				after := v[i+3:]
-				// If there's a closing ```, emit everything up to and including the block.
-				if j := strings.Index(after, "```"); j >= 0 {
-					closeIdx := i + 3 + j + 3
-					if err := emitText(v[:i]); err != nil {
-						return err
-					}
-					pending.Reset()
-					pending.WriteString(v[i:closeIdx])
-					return nil
-				}
-				// Opening ``` without closing yet: emit everything before it, keep the fence buffered.
-				if err := emitText(v[:i]); err != nil {
-					return err
-				}
-				pending.Reset()
-				pending.WriteString(v[i:])
-				return nil
+			// Hold back only an in-flight fence; everything else, including the
+			// text that follows a closed fence, is released in order.
+			emitted, held := fenceStream(pending.String(), ev.Text, 3)
+			if err := emitText(emitted); err != nil {
+				return err
 			}
-			// No fence detected: emit immediately with a small tail buffer for fence detection.
-			// This replaces the old 8-rune threshold with a 3-rune buffer (enough to detect "```").
-			if runeCount := utf8.RuneCountInString(v); runeCount > 3 {
-				cut := 0
-				seen := 0
-				for i := range v {
-					if seen == runeCount-3 {
-						cut = i
-						break
-					}
-					seen++
-				}
-				if err := emitText(v[:cut]); err != nil {
-					return err
-				}
-				pending.Reset()
-				pending.WriteString(v[cut:])
-			}
+			pending.Reset()
+			pending.WriteString(held)
 			return nil
 		})
 		if err != nil && text.Len() == 0 && len(streamedTools) == 0 && !convReused && body.AccountID == "" && (body.ConversationID == "" || body.ConversationID == resolvedConversationID) && isThrottledForFailover(err) {

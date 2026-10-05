@@ -2542,9 +2542,12 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				pending.WriteString(ev.Text)
 				return nil
 			}
-			// Hold back only an in-flight fence; everything else, including the
-			// text that follows a closed fence, is released in order.
-			emitted, held := fenceStream(pending.String(), ev.Text, 3)
+			// Hold back only a fence that is a real tool call; an ordinary code
+			// block is released in place so reply order is preserved.
+			hold := func(fence string) bool {
+				return len(fencedToolCalls(fence, toolMaps, body.ToolChoice)) > 0
+			}
+			emitted, held := fenceStream(pending.String(), ev.Text, 3, hold)
 			if err := emitText(emitted); err != nil {
 				return err
 			}

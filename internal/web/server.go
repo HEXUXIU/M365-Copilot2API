@@ -1492,6 +1492,12 @@ func isThrottledForFailover(err error) bool {
 	if IsRateLimited(err) {
 		return true
 	}
+	// A slow first token is an account-level stall, not a client error: trying
+	// another account is far better for latency than failing after the full
+	// first-token timeout and making the caller start over.
+	if errors.Is(err, chathub.ErrFirstTokenTimeout) {
+		return true
+	}
 	// HAR 报告 06/07：WS_READ_TIMEOUT 是账号级读超时，应触发跨账号转移；
 	// 报告 07 实证上游 422 属可重试成员。共享层传输故障（DNS/TCP/TLS/SOCKS5）
 	// 与 503 不在此列，交给全局熔断快速失败，避免逐账号轮转造成集体冷却。

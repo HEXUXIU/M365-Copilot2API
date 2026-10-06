@@ -61,6 +61,7 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		o.Reasoning = r.Reasoning
 		o.ReasoningEffort = r.Reasoning.Effort
 	}
+	extraTools := make([]map[string]any, 0, len(r.Tools))
 	switch v := r.Input.(type) {
 	case string:
 		if v == "" {
@@ -75,6 +76,13 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			}
 			typ, _ := m["type"].(string)
 			switch typ {
+			case "additional_tools":
+				// Codex declares its tools inside the input array as
+				// {"type":"additional_tools","role":"developer","tools":[...]}
+				// rather than in the top-level tools field. Without this the
+				// model is never told what it can call.
+				extraTools = append(extraTools, flattenAdditionalTools(m["tools"])...)
+				continue
 			case "function_call_progress":
 				// Progress is deliberately not converted into an assistant/tool
 				// message. It is transport metadata from a long-running client-side
@@ -129,6 +137,9 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 	default:
 		return o, fmt.Errorf("input must be string or array")
 	}
+	if len(extraTools) > 0 {
+		r.Tools = append(extraTools, r.Tools...)
+	}
 	hasCustomExec := false
 	for _, t := range r.Tools {
 		typ, _ := t["type"].(string)
@@ -161,6 +172,30 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 		o.Messages = append([]oaiMsg{{Role: "system", Content: customExecWorkspaceInstruction}}, o.Messages...)
 	}
 	return o, nil
+}
+
+// flattenAdditionalTools normalises the tool list Codex sends inside an
+// additional_tools item. Codex groups its tools under a namespace entry such as
+// {"type":"namespace","name":"functions","tools":[...]}, so the leaf tools have
+// to be lifted out before the gateway can declare them upstream.
+func flattenAdditionalTools(list any) []map[string]any {
+	items, ok := list.([]any)
+	if !ok {
+		return nil
+	}
+	var out []map[string]any
+	for _, item := range items {
+		t, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if typ, _ := t["type"].(string); typ == "namespace" {
+			out = append(out, flattenAdditionalTools(t["tools"])...)
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 type anthropicMessage struct {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1261,8 +1262,12 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 // resolveWaitWindow bounds how long account selection will wait for a cooling
 // account to recover before giving up and reporting the failure.
 const (
-	resolveWaitWindow = 8 * time.Second
+	resolveWaitWindow = 12 * time.Second
 	resolveMaxWait    = 5 * time.Second
+	// Several jittered attempts, not one: under burst load every account can be
+	// cooling simultaneously, and a single fixed wait just makes all queued
+	// requests retry together and collide again.
+	resolveWaitAttempts = 3
 )
 
 func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
@@ -1273,6 +1278,68 @@ func (s *Server) resolveAccount(accountID string) (auth.AccountToken, error) {
 // wait for imminent recovery.
 func (s *Server) resolveAccountCtx(ctx context.Context, accountID string) (auth.AccountToken, error) {
 	return s.resolveAccountUntil(ctx, accountID, time.Now().Add(resolveWaitWindow))
+}
+
+// jitterDuration returns a random duration in [0, max). It uses crypto/rand
+// because the caller is spreading out many concurrent retries and a
+// predictable backoff would defeat that.
+func jitterDuration(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return max / 2
+	}
+	n := binary.BigEndian.Uint64(b[:])
+	return time.Duration(n % uint64(max))
+}
+
+// tryResolve makes one pass over the enabled accounts in failover order and
+// returns the first one that validates. It is a single pass on purpose: the
+// caller decides whether to wait and try again.
+func (s *Server) tryResolve(ctx context.Context) (auth.AccountToken, bool) {
+	accounts := s.tokens.List()
+	if len(accounts) == 0 {
+		return auth.AccountToken{}, false
+	}
+	s.mu.Lock()
+	preferred := s.lastHealthyAccount
+	s.mu.Unlock()
+	// Visit each account at most once. Without this the round-robin would
+	// re-probe the same unvalidatable account up to maxAccountProbe times,
+	// firing a burst of token refreshes at it.
+	tried := make(map[string]bool, len(accounts))
+	// Next() rotates, so len(accounts) iterations visit every account; the
+	// doubled bound is only a safety net against a stuck cursor.
+	for i := 0; len(tried) < len(accounts) && i < len(accounts)*2+1; i++ {
+		candidate := ""
+		if i == 0 && preferred != "" && s.accountAvailable(preferred) {
+			candidate = preferred
+		} else {
+			acc, ok := s.tokens.Next()
+			if !ok {
+				break
+			}
+			candidate = acc.ID
+		}
+		if candidate == "" || tried[candidate] {
+			continue
+		}
+		tried[candidate] = true
+		if !s.tokens.ScheduleEnabled(candidate) || !s.accountAvailable(candidate) {
+			continue
+		}
+		tok, err := s.tokens.EnsureValid(candidate)
+		if err == nil {
+			s.mu.Lock()
+			s.lastHealthyAccount = candidate
+			s.mu.Unlock()
+			return tok, true
+		}
+		s.markResolveFailure(candidate, err)
+	}
+	return auth.AccountToken{}, false
 }
 
 // resolveAccountUntil selects a usable account. When every candidate is
@@ -1298,58 +1365,43 @@ func (s *Server) resolveAccountUntil(ctx context.Context, accountID string, dead
 		if enabled == 0 {
 			return auth.AccountToken{}, fmt.Errorf("no accounts enabled for scheduling")
 		}
-		s.mu.Lock()
-		preferred := s.lastHealthyAccount
-		s.mu.Unlock()
-		// Visit each account at most once. Without this the round-robin would
-		// re-probe the same unvalidatable account up to maxAccountProbe times,
-		// firing a burst of token refreshes at it.
-		tried := make(map[string]bool, len(accounts))
-		// Next() rotates, so len(accounts) iterations visit every account; the
-		// doubled bound is only a safety net against a stuck cursor.
-		for i := 0; len(tried) < len(accounts) && i < len(accounts)*2+1; i++ {
-			candidate := ""
-			if i == 0 && preferred != "" && s.accountAvailable(preferred) {
-				candidate = preferred
-			} else {
-				acc, ok := s.tokens.Next()
-				if !ok {
-					break
-				}
-				candidate = acc.ID
-			}
-			if candidate == "" || tried[candidate] {
-				continue
-			}
-			tried[candidate] = true
-			if !s.tokens.ScheduleEnabled(candidate) || !s.accountAvailable(candidate) {
-				continue
-			}
-			tok, err := s.tokens.EnsureValid(candidate)
-			if err == nil {
-				s.mu.Lock()
-				s.lastHealthyAccount = candidate
-				s.mu.Unlock()
-				return tok, nil
-			}
-			s.markResolveFailure(candidate, err)
+		if tok, ok := s.tryResolve(ctx); ok {
+			return tok, nil
 		}
-		// No account could be validated. If a cooldown is about to expire,
-		// wait it out and retry rather than failing the request outright.
+		// No account could be validated. Under burst load every account can be
+		// cooling at the same instant, so a single fixed wait makes all the
+		// queued requests retry in lockstep and collide again. Back off with
+		// jitter across several short attempts instead, so the retries spread
+		// out and the accounts can drain.
 		until := s.accountPool.EarliestRecovery()
 		if !until.IsZero() {
-			wait := time.Until(until)
-			if wait <= resolveMaxWait && time.Now().Add(wait).Before(deadline) {
+			for attempt := 0; attempt < resolveWaitAttempts; attempt++ {
+				wait := time.Until(until)
+				if wait > resolveMaxWait || time.Now().Add(wait).After(deadline) {
+					break
+				}
 				if wait < 0 {
 					wait = 0
 				}
-				timer := time.NewTimer(wait + 50*time.Millisecond)
+				// Jitter on the order of the wait itself keeps concurrent callers
+				// from waking together.
+				wait += jitterDuration(resolveMaxWait / 4)
+				if time.Now().Add(wait).After(deadline) {
+					wait = time.Until(deadline)
+				}
+				timer := time.NewTimer(wait)
 				select {
 				case <-ctx.Done():
 					timer.Stop()
 					return auth.AccountToken{}, ctx.Err()
 				case <-timer.C:
-					return s.resolveAccountUntil(ctx, "", deadline)
+					if tok, ok := s.tryResolve(ctx); ok {
+						return tok, nil
+					}
+					until = s.accountPool.EarliestRecovery()
+					if until.IsZero() {
+						break
+					}
 				}
 			}
 		}

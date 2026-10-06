@@ -55,7 +55,7 @@ M365 Copilot2API 是一个用 Go 编写的自托管网关，把微软 365 Copilo
 | OpenAI Responses `/v1/responses` | 兼容 Responses 协议（Codex 等客户端） |
 | Anthropic 兼容 `/v1/messages` | Claude Code / Cursor 直连 |
 | SSE 流式输出 | 逐字实时返回，`stream: true` |
-| 工具调用转换 | OpenAI function calling ⇄ M365 工具协议，`router` / `native` 两种规划模式 |
+| 工具调用转换 | OpenAI function calling ⇄ M365 工具协议（`router` 规划模式，实测可用；详见 [09 号报告](docs/har-mining/09-tool-planning-modes.md)） |
 | 内容键会话复用 | 以对话上下文为键复用云端对话，命中时只发送增量消息（类似 DeepSeek 上下文缓存） |
 | 会话显式绑定 | `X-M365-Session-Id` 请求头精确指定要继续的会话 |
 | 自动清理 | 按闲置时间（默认 2h）或保留数量回收云端对话 |

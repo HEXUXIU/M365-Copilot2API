@@ -1502,7 +1502,7 @@ func isThrottledForFailover(err error) bool {
 	// 报告 07 实证上游 422 属可重试成员。共享层传输故障（DNS/TCP/TLS/SOCKS5）
 	// 与 503 不在此列，交给全局熔断快速失败，避免逐账号轮转造成集体冷却。
 	switch ClassifyError(err) {
-	case CategoryWSReadTimeout, CategoryRetryable422:
+	case CategoryWSReadTimeout, CategoryWSWriteTimeout, CategoryRetryable422:
 		return true
 	}
 	return false
@@ -2737,7 +2737,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				msg = "M365 content policy flagged this request as offensive"
 			}
 			msg = sanitizePublicInternalText(msg)
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
+			// Nothing has been written yet, so the failure can still be reported
+			// with a real HTTP status. Returning 200 with an empty body here
+			// makes clients treat a failed turn as a successful empty answer.
+			if !sw.isCommitted() {
+				writeOpenAIError(w, upstreamStatus(err), streamErrorCode(err), msg)
+				return
+			}
+			_ = sseRaw(r.Context(), w, flusher, sseUpstreamError(r, flusher, err))
 			_ = sseRaw(r.Context(), w, flusher, "data: [DONE]\n\n")
 			return
 		}
@@ -3113,10 +3120,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 			}
 			msg = sanitizePublicInternalText(msg)
 			if !sw2.isCommitted() {
-				writeOpenAIError(w, http.StatusBadGateway, "upstream_error", msg)
+				writeOpenAIError(w, upstreamStatus(err), streamErrorCode(err), msg)
 				return
 			}
-			_ = sseRaw(r.Context(), w, flusher, "data: "+mustJSON(map[string]any{"error": map[string]any{"message": msg, "code": "rate_limit"}})+"\n\n")
+			_ = sseRaw(r.Context(), w, flusher, sseUpstreamError(r, flusher, err))
 		}
 		pt := EstimateTokens(prompt)
 		ct := EstimateTokens(res.Text)

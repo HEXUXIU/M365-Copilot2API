@@ -32,6 +32,7 @@ const (
 	CategoryTLS                ErrorCategory = "TLS"
 	CategoryWSHandshake        ErrorCategory = "WS_HANDSHAKE"
 	CategoryWSReadTimeout      ErrorCategory = "WS_READ_TIMEOUT"
+	CategoryWSWriteTimeout     ErrorCategory = "WS_WRITE_TIMEOUT"
 	CategoryUpstreamStructured ErrorCategory = "UPSTREAM_STRUCTURED"
 	CategoryClientCanceled     ErrorCategory = "CLIENT_CANCELED"
 	CategoryGlobalUnavailable  ErrorCategory = "GLOBAL_UNAVAILABLE"
@@ -119,7 +120,7 @@ func ClassifyError(err error) ErrorCategory {
 			case "WS_WRITE_TIMEOUT":
 				// Same transport class and failover behaviour as a read timeout,
 				// but kept as its own kind so the reported reason is accurate.
-				return CategoryWSReadTimeout
+				return CategoryWSWriteTimeout
 			case "CLIENT_CANCELED":
 				return CategoryClientCanceled
 			}
@@ -241,7 +242,7 @@ func IsTransientTransport(err error) bool {
 		return false
 	}
 	switch ClassifyError(err) {
-	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout, CategoryOverload503:
+	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout, CategoryWSWriteTimeout, CategoryOverload503:
 		return true
 	}
 	return false
@@ -358,7 +359,7 @@ func CooldownForCategory(cat ErrorCategory, retryAfter int, attempt int) time.Du
 		return 30 * time.Second
 	case CategoryWSHandshake:
 		return 15 * time.Second
-	case CategoryWSReadTimeout:
+	case CategoryWSReadTimeout, CategoryWSWriteTimeout:
 		return 30 * time.Second
 	case CategoryUpstreamStructured:
 		return 10 * time.Second
@@ -430,7 +431,7 @@ func (g *globalCircuitState) Record(err error) {
 	}
 	cat := ClassifyError(err)
 	switch cat {
-	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout:
+	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout, CategoryWSWriteTimeout:
 	default:
 		if cat == CategoryClientCanceled || cat == CategoryGlobalUnavailable {
 			return
@@ -524,7 +525,7 @@ func (h *accountHealth) LastCategory() (ErrorCategory, time.Time) {
 // local connectivity fault, so it must not be reported as network_error.
 func IsTransportCategory(cat ErrorCategory) bool {
 	switch cat {
-	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout:
+	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout, CategoryWSWriteTimeout:
 		return true
 	}
 	return false
@@ -768,7 +769,7 @@ func (h *accountHealth) MarkFailure(accountID string, err error, window time.Dur
 		delete(h.limited, accountID)
 		h.cooldown[accountID] = time.Now().Add(CooldownForCategory(cat, RetryAfterSeconds(err), 1))
 		return
-	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout:
+	case CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS, CategoryWSHandshake, CategoryWSReadTimeout, CategoryWSWriteTimeout:
 		delete(h.authFail, accountID)
 		delete(h.authFailReason, accountID)
 		delete(h.limited, accountID)

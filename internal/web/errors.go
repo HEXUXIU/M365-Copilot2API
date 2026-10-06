@@ -67,6 +67,8 @@ func upstreamError(err error) string {
 		return "outbound proxy (SOCKS5) connection failed"
 	case CategoryWSReadTimeout:
 		return "upstream timed out waiting for the response stream (WS_READ_TIMEOUT)"
+	case CategoryWSWriteTimeout:
+		return "upstream timed out while sending the request (WS_WRITE_TIMEOUT)"
 	case CategoryWSHandshake:
 		return "upstream websocket handshake failed (WS_HANDSHAKE)"
 	case CategoryQuota429:
@@ -220,7 +222,7 @@ func IsRetryable(err error) bool {
 	switch cat {
 	case CategoryQuota429, CategoryOverload503, CategoryRetryable422,
 		CategorySOCKS5, CategoryDNS, CategoryTCP, CategoryTLS,
-		CategoryWSHandshake, CategoryWSReadTimeout, CategoryUpstreamStructured,
+		CategoryWSHandshake, CategoryWSReadTimeout, CategoryWSWriteTimeout, CategoryUpstreamStructured,
 		CategoryGlobalUnavailable:
 		return true
 	case CategoryForbidden403, CategoryAuthExpired401,

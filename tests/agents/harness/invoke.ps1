@@ -19,8 +19,12 @@ param(
     # How many copies of each agent to start.
     [int]$Concurrency = 1,
     [string]$Gateway = 'http://127.0.0.1:4141',
-    [string]$Model = 'gpt-5.6-sol',
-    [string]$Prompt = 'Reply with exactly: OK',
+[string]$Model = 'gpt-5.6-sol',
+    # Path to a file holding the prompt. The prompt must be passed this way and
+    # never as a -Prompt argument: powershell.exe -File splits a multi-line
+    # argument into separate tokens, which corrupts every parameter after it and
+    # ends up written into the agent's generated config.
+    [string]$PromptFile,
     [int]$TimeoutSeconds = 300,
     [string]$ApiKey = $env:M365_API_KEY,
     # Optional directory copied into each session's working directory before the
@@ -31,6 +35,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($RunRoot)) { $RunRoot = Join-Path $PSScriptRoot 'runs' }
+if ([string]::IsNullOrWhiteSpace($PromptFile) -or -not (Test-Path -LiteralPath $PromptFile)) {
+    throw 'Pass -PromptFile pointing at a file that contains the prompt text.'
+}
+$Prompt = [System.IO.File]::ReadAllText($PromptFile)
 # `powershell -File ... -Agent a,b` passes one string; normalize to an array.
 $agents = @($Agent | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 if ($Concurrency -gt 1 -and $agents.Count -gt 1) {
@@ -73,6 +81,7 @@ $ErrorActionPreference = 'Stop'
 $harness = $env:OC_HARNESS
 $agent = $env:OC_AGENT
 $work = $env:OC_WORKDIR
+$project = $env:OC_PROJECT
 $model = $env:OC_MODEL
 $key = $env:OC_API_KEY
 $base = $env:OC_GATEWAY
@@ -119,7 +128,7 @@ try {
         Push-Location $env:OC_OPENCODE_ROOT
         try {
             & bun run packages/opencode/src/index.ts `
-                run --model "m365/$model" --dir $work --auto --log $trace $prompt |
+                run --model "m365/$model" --dir $project --auto --log $trace $prompt |
                 ForEach-Object { Write-Output $_ }
             $exit = $LASTEXITCODE
         } finally { Pop-Location }
@@ -127,9 +136,11 @@ try {
     elseif ($agent -eq 'codex') {
         $codexHome = Join-Path $work 'codex-home'
         New-Item -ItemType Directory -Force -Path $codexHome | Out-Null
-        $toml = @"
+$toml = @"
 model = "$model"
 model_provider = "m365"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
 
 [model_providers.m365]
 name = "$model via M365 Gateway"
@@ -150,7 +161,7 @@ $env:CODEX_HOME = $codexHome
         # be empty: Start-Process gives it NUL, and codex reads it to EOF.
         # codex appends anything already on stdin to the prompt. The runner process is
         # started with stdin redirected to an empty file so it sees EOF at once.
-        & codex exec --json --skip-git-repo-check -m $model $prompt |
+        & codex exec --json --skip-git-repo-check --cd $project -m $model $prompt |
             ForEach-Object {
                 Write-Output $_
                 try {
@@ -168,7 +179,7 @@ $env:CODEX_HOME = $codexHome
         $env:ANTHROPIC_MODEL = $model
         $env:CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1'
 
-        & node $env:OC_CLAUDE_CLI -p $prompt --output-format stream-json --verbose |
+        & node $env:OC_CLAUDE_CLI -p $prompt --output-format stream-json --verbose --add-dir $project |
             ForEach-Object {
                 Write-Output $_
                 try {
@@ -216,14 +227,20 @@ foreach ($n in $nodes) {
     $slug = ($n -replace '[^a-zA-Z0-9]', '-')
     $i = 0
     while (Test-Path (Join-Path $runDir "$slug-$i")) { $i++ }
-    $work = Join-Path $runDir "$slug-$i"
+$work = Join-Path $runDir "$slug-$i"
     New-Item -ItemType Directory -Force -Path $work | Out-Null
 
+    # The audited project lives in its own subdirectory so an agent that
+    # wanders upward still cannot touch the real repository: everything above
+    # $work is harness output. Each session gets its own copy, so concurrent
+    # sessions never share files.
+    $project = Join-Path $work 'project'
+    New-Item -ItemType Directory -Force -Path $project | Out-Null
     if ($Seed -and (Test-Path -LiteralPath $Seed)) {
-        robocopy $Seed $work /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
+        robocopy $Seed $project /E /NFL /NDL /NJH /NJS /R:1 /W:1 | Out-Null
     }
 
-$stdout = Join-Path $work 'stdout.log'
+    $stdout = Join-Path $work 'stdout.log'
     $stderr = Join-Path $work 'stderr.log'
     # An empty stdin file, because codex reads stdin and appends it to the prompt.
     $stdin = Join-Path $work 'stdin.txt'
@@ -231,8 +248,9 @@ $stdout = Join-Path $work 'stdout.log'
     # The prompt travels as a file so multi-line prompts survive intact.
     [System.IO.File]::WriteAllText((Join-Path $work 'prompt.txt'), $Prompt)
 
-    $env:OC_AGENT = $n
+$env:OC_AGENT = $n
     $env:OC_WORKDIR = $work
+    $env:OC_PROJECT = $project
 
     $procs += [pscustomobject]@{
         Agent = $n

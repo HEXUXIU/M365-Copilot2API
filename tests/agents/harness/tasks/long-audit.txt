@@ -1,0 +1,40 @@
+You are doing a long, uninterrupted refactoring job on this repository. Use your tools continuously and do not stop until every step below is done.
+
+Work through these phases in order, using one tool call per action (read a file, list a directory, run a command, write a file, edit a file):
+
+Phase 1 - Survey:
+1. List the files in the current directory.
+2. List the files in each top-level subdirectory you find.
+3. Read the README or main documentation file if one exists.
+
+Phase 2 - Per-file audit. For EVERY source file you find (there should be many; handle at least 30 files):
+4. Read the file.
+5. Run a command that shows its size or line count.
+6. Write your findings about that file into audit/NNN-<name>.md (NNN is a zero-padded counter starting at 001).
+7. Read back the file you just wrote to confirm it saved.
+
+Phase 3 - Build an index:
+8. Read each audit file you wrote.
+9. Write INDEX.md listing every file you audited with a one-line summary.
+10. Read INDEX.md back to confirm.
+
+Phase 4 - Metrics:
+11. Run a command that counts total lines across the repository.
+12. Write the result into METRICS.md.
+13. Read METRICS.md back.
+
+Phase 5 - Tests:
+14. Look for existing test files or a test configuration.
+15. If tests exist, run them and capture the output into test-output.txt.
+16. Read test-output.txt back.
+
+Phase 6 - Report:
+17. Write a final SUMMARY.md describing what you found: file count, total lines, any obvious problems, and what you would fix first.
+
+Rules:
+- Perform at least 100 individual tool calls before you finish.
+- If a tool call fails, note it in SUMMARY.md and continue.
+- Do not summarise early. Keep calling tools until phase 7 is done.
+- Only after SUMMARY.md is written and read back, reply with a short final message.
+
+Phase 7 - Done.

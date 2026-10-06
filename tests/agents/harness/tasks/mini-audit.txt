@@ -1,0 +1,7 @@
+Create a project directory with a couple of small source files, then:
+1. List the files.
+2. Read each file.
+3. Write a findings.md in that same directory summarising what each file does.
+4. Read findings.md back.
+
+Use one tool call per action and report each step as you go.

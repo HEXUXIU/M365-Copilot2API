@@ -1,0 +1,15 @@
+You are auditing the project in your current directory. Use your tools continuously and do not stop early.
+
+Do all of this, one tool call at a time:
+1. List every file in the project.
+2. Read every source file you find.
+3. For each file, write security-<name>.md next to it describing any injection, path traversal, unsafe deserialization, credential handling, TOCTOU, or missing input validation risk you find. If a file has no risk, say so.
+4. For each file, write perf-<name>.md noting hot paths, unnecessary allocations, blocking I/O, lock contention, or unbounded growth.
+5. Write FINDINGS.md collecting the most serious issues across all files, ranked by severity, each with a concrete fix.
+6. Read FINDINGS.md back to confirm it saved.
+
+Rules:
+- Perform at least 100 individual tool calls before you stop.
+- Only report on the project in your current directory. Never read or write outside it.
+- If a tool call fails, note it in FINDINGS.md and continue.
+- After FINDINGS.md is written and verified, reply with a brief summary.

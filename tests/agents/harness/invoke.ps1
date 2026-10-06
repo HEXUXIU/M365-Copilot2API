@@ -74,10 +74,13 @@ $harness = $env:OC_HARNESS
 $agent = $env:OC_AGENT
 $work = $env:OC_WORKDIR
 $model = $env:OC_MODEL
-$prompt = $env:OC_PROMPT
 $key = $env:OC_API_KEY
 $base = $env:OC_GATEWAY
 $trace = Join-Path $work 'trace.jsonl'
+# The prompt is read from a file, not an env var: a multi-line prompt carried in
+# an environment variable is not reliably preserved across Start-Process and it
+# corrupts any generated config that interpolates it.
+$prompt = [System.IO.File]::ReadAllText((Join-Path $work 'prompt.txt'))
 
 function Write-Trace($data) {
     # ConvertTo-Json rather than System.Text.Json: Windows PowerShell 5.1 has
@@ -205,7 +208,6 @@ $env:OC_OPENCODE_ROOT = (Resolve-Path -LiteralPath $opencodeRoot).Path
 $env:OC_CLAUDE_CLI = $claudePkg
 $env:OC_GATEWAY = $base
 $env:OC_MODEL = $Model
-$env:OC_PROMPT = $Prompt
 $env:OC_API_KEY = $ApiKey
 
 $procs = @()
@@ -226,6 +228,8 @@ $stdout = Join-Path $work 'stdout.log'
     # An empty stdin file, because codex reads stdin and appends it to the prompt.
     $stdin = Join-Path $work 'stdin.txt'
     [System.IO.File]::WriteAllText($stdin, '')
+    # The prompt travels as a file so multi-line prompts survive intact.
+    [System.IO.File]::WriteAllText((Join-Path $work 'prompt.txt'), $Prompt)
 
     $env:OC_AGENT = $n
     $env:OC_WORKDIR = $work

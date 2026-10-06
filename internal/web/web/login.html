@@ -1,4 +1,4 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>M365 Copilot2API</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet"><script src="https://unpkg.com/lucide@latest"></script><style>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>M365 Copilot2API</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet"><script src="https://unpkg.com/lucide@latest"></script><style>
 :root{color-scheme:light dark;--bg:#f5f5f7;--surface:rgba(255,255,255,0.72);--surface-solid:#fff;--surface-border:rgba(255,255,255,0.5);--line:rgba(0,0,0,0.08);--text:#1d1d1f;--muted:#86868b;--primary:#1d1d1f;--primary-hover:#000;--accent:#0071e3;--red:#ff3b30;--green:#34c759;--shadow:0 8px 40px rgba(0,0,0,0.08);--shadow-lg:0 24px 60px rgba(0,0,0,0.12);--radius:14px;--radius-sm:8px;--ease-out:cubic-bezier(0.23,1,0.32,1);--ease-in-out:cubic-bezier(0.77,0,0.175,1)}
 @media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--surface:rgba(44,44,46,0.8);--surface-solid:#2c2c2e;--surface-border:rgba(255,255,255,0.08);--line:rgba(255,255,255,0.1);--text:#f5f5f7;--muted:#98989d;--primary:#f5f5f7;--primary-hover:#fff;--accent:#0a84ff;--shadow:0 8px 40px rgba(0,0,0,0.3);--shadow-lg:0 24px 60px rgba(0,0,0,0.4)}}
 *{box-sizing:border-box;margin:0}
@@ -7,6 +7,9 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--
 @keyframes slideUp{from{opacity:0;transform:translateY(12px)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 .card{width:min(400px,calc(100vw - 32px));background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);padding:40px;box-shadow:var(--shadow-lg);animation:slideUp .6s var(--ease-out) .1s both}
+.lang-row{display:flex;justify-content:flex-end;width:min(400px,calc(100vw - 32px));margin-bottom:10px}
+.lang-row select{width:auto;padding:6px 26px 6px 10px;font-size:12px;border:1.5px solid var(--line);border-radius:var(--radius-sm);background:rgba(255,255,255,0.5);color:var(--text);font:inherit}
+@media(prefers-color-scheme:dark){.lang-row select{background:rgba(0,0,0,0.2)}}
 .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:600;letter-spacing:-0.01em;padding-bottom:20px;border-bottom:1px solid var(--line);margin-bottom:28px;color:var(--text)}
 .brand .logo-mark{width:22px;height:22px;display:grid;grid-template-columns:repeat(2,1fr);gap:2px;padding:2px;flex-shrink:0;border-radius:5px;overflow:hidden}
 .brand .logo-mark span{display:block;border-radius:1.5px}
@@ -39,50 +42,53 @@ button.loading::after{content:"";position:absolute;inset:0;margin:auto;width:20p
 @media(max-width:480px){.card{padding:26px 20px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}
 </style></head>
 <body>
+<div class="lang-row">
+  <select id="langSelect"><option value="en">English</option><option value="zh-CN">简体中文</option></select>
+</div>
 <main class="card">
   <div class="brand"><span class="logo-mark"><span></span><span></span><span></span><span></span></span>M365 Copilot2API</div>
   <section id="login">
-    <h1>管理员登录</h1>
-    <p>请输入管理员密码以访问仪表盘</p>
-    <div class="warning">默认密码：<code>admin123</code><br>首次登录后请立即修改管理员密码</div>
+    <h1 id="loginTitle">Administrator Login</h1>
+    <p id="loginSubtitle">Enter the administrator password to access the dashboard</p>
+    <div class="warning" id="loginWarning"></div>
     <form id="loginForm">
       <div class="field">
-        <label for="password">管理员密码</label>
+        <label for="password" id="passwordLabel">Administrator password</label>
         <div class="password-wrap">
           <input id="password" type="password" autocomplete="current-password" required autofocus>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见性"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" id="toggleBtn1"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
-      <button id="loginBtn">登录</button>
+      <button id="loginBtn">Log in</button>
     </form>
     <div class="error" id="loginError"></div>
   </section>
   <section id="change" hidden>
-    <h1>请立即修改默认密码</h1>
-    <div class="warning">您仍在使用初始密码。为保护账号池、OAuth 凭据和 API 密钥，在设置新密码前管理功能不可用。</div>
+    <h1 id="changeTitle">Change your default password now</h1>
+    <div class="warning" id="changeWarning">You are still using the initial password. To protect the account pool, OAuth credentials, and API keys, admin features are unavailable until you set a new password.</div>
     <form id="changeForm">
       <div class="field">
-        <label for="current">当前密码</label>
+        <label for="current" id="currentLabel">Current password</label>
         <div class="password-wrap">
           <input id="current" type="password" autocomplete="current-password" required>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见性"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" id="toggleBtn2"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
       <div class="field">
-        <label for="next">新密码（至少 6 个字符）</label>
+        <label for="next" id="nextLabel">New password (at least 6 characters)</label>
         <div class="password-wrap">
           <input id="next" type="password" autocomplete="new-password" minlength="6" required>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见性"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" id="toggleBtn3"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
       <div class="field">
-        <label for="confirm">确认新密码</label>
+        <label for="confirm" id="confirmLabel">Confirm new password</label>
         <div class="password-wrap">
           <input id="confirm" type="password" autocomplete="new-password" minlength="6" required>
-          <button type="button" class="password-toggle" onclick="togglePassword(this)" aria-label="切换密码可见性"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
+          <button type="button" class="password-toggle" onclick="togglePassword(this)" id="toggleBtn4"><i data-lucide="eye" style="width:18px;height:18px;display:flex"></i></button>
         </div>
       </div>
-      <button id="changeBtn">修改密码并重新登录</button>
+      <button id="changeBtn">Change password and log in again</button>
     </form>
     <div class="error" id="changeError"></div>
   </section>
@@ -90,12 +96,61 @@ button.loading::after{content:"";position:absolute;inset:0;margin:auto;width:20p
 <script>
 try{lucide.createIcons();}catch(e){}
 const $=id=>document.getElementById(id);
+
+// i18n: shares the same `m365_locale` setting as the main console (Settings > Language),
+// so a language chosen here or there carries over.
+const L={
+  toggleVisibility:{en:'Toggle password visibility',zhCN:'切换密码可见性'},
+  loginTitle:{en:'Administrator Login',zhCN:'管理员登录'},
+  loginSubtitle:{en:'Enter the administrator password to access the dashboard',zhCN:'请输入管理员密码以访问仪表盘'},
+  loginWarning:{en:'Default password: <code>admin123</code><br>Change the administrator password immediately after your first login',zhCN:'默认密码：<code>admin123</code><br>首次登录后请立即修改管理员密码'},
+  passwordLabel:{en:'Administrator password',zhCN:'管理员密码'},
+  loginBtn:{en:'Log in',zhCN:'登录'},
+  changeTitle:{en:'Change your default password now',zhCN:'请立即修改默认密码'},
+  changeWarning:{en:'You are still using the initial password. To protect the account pool, OAuth credentials, and API keys, admin features are unavailable until you set a new password.',zhCN:'您仍在使用初始密码。为保护账号池、OAuth 凭据和 API 密钥，在设置新密码前管理功能不可用。'},
+  currentLabel:{en:'Current password',zhCN:'当前密码'},
+  nextLabel:{en:'New password (at least 6 characters)',zhCN:'新密码（至少 6 个字符）'},
+  confirmLabel:{en:'Confirm new password',zhCN:'确认新密码'},
+  changeBtn:{en:'Change password and log in again',zhCN:'修改密码并重新登录'},
+  tooManyAttempts:{en:'Too many failed login attempts. Please try again later.',zhCN:'登录失败次数过多，请稍后重试。'},
+  passwordsDontMatch:{en:'The two new passwords do not match',zhCN:'两次输入的新密码不一致'},
+  passwordTooShort:{en:'The new password must be at least 6 characters',zhCN:'新密码长度至少为 6 个字符'},
+  passwordChangedSuccess:{en:'Password changed successfully. All previous sessions have been invalidated — please log in again with the new password.',zhCN:'密码修改成功，所有之前的会话已失效，请用新密码重新登录。'}
+};
+let locale=localStorage.getItem('m365_locale')==='en'?'en':'zh-CN';
+function T(k){const e=L[k];return e?(locale==='en'?e.en:e.zhCN):k;}
+function applyI18n(){
+  document.documentElement.lang=locale==='en'?'en':'zh-CN';
+  $('toggleBtn1').setAttribute('aria-label',T('toggleVisibility'));
+  $('toggleBtn2').setAttribute('aria-label',T('toggleVisibility'));
+  $('toggleBtn3').setAttribute('aria-label',T('toggleVisibility'));
+  $('toggleBtn4').setAttribute('aria-label',T('toggleVisibility'));
+  $('loginTitle').textContent=T('loginTitle');
+  $('loginSubtitle').textContent=T('loginSubtitle');
+  $('loginWarning').innerHTML=T('loginWarning');
+  $('passwordLabel').textContent=T('passwordLabel');
+  $('loginBtn').textContent=T('loginBtn');
+  $('changeTitle').textContent=T('changeTitle');
+  $('changeWarning').textContent=T('changeWarning');
+  $('currentLabel').textContent=T('currentLabel');
+  $('nextLabel').textContent=T('nextLabel');
+  $('confirmLabel').textContent=T('confirmLabel');
+  $('changeBtn').textContent=T('changeBtn');
+  $('langSelect').value=locale;
+}
+$('langSelect').addEventListener('change',e=>{
+  locale=e.target.value==='en'?'en':'zh-CN';
+  try{localStorage.setItem('m365_locale',locale);localStorage.setItem('m365_locale_selected','1');}catch(err){}
+  applyI18n();
+});
+applyI18n();
+
 function togglePassword(btn){const ico=btn.querySelector('[data-lucide]');const inp=btn.previousElementSibling;const isPassword=inp.type==='password';inp.type=isPassword?'text':'password';if(ico){try{ico.setAttribute('data-lucide',isPassword?'eye-off':'eye');lucide.createIcons()}catch(e){}}}
 function setLoading(btn,loading){if(loading){btn.disabled=true;btn.classList.add('loading')}else{btn.disabled=false;btn.classList.remove('loading')}}
 async function request(url,body){const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const raw=await r.text();let d={};try{d=JSON.parse(raw)}catch{}if(!r.ok){const e=new Error(d?.error?.message||raw||'Request failed');e.status=r.status;throw e}return d}
 function requireChange(current=''){$('login').hidden=true;$('change').hidden=false;if(current){$('current').value=current;}$('next').focus()}
-$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';const password=$('password').value;if(!password)return;setLoading($('loginBtn'),true);try{const d=await request('/api/admin/login',{password});if(d.must_change_password)requireChange(password);else location.replace('/')}catch(x){$('loginError').textContent=x.status===429?'登录失败次数过多，请稍后重试。':x.message}finally{setLoading($('loginBtn'),false)}});
-$('changeForm').addEventListener('submit',async e=>{e.preventDefault();$('changeError').textContent='';if($('next').value!==$('confirm').value){$('changeError').textContent='两次输入的新密码不一致';return}if($('next').value.length<6){$('changeError').textContent='新密码长度至少为 6 个字符';return}setLoading($('changeBtn'),true);try{await request('/api/admin/change-password',{current_password:$('current').value,new_password:$('next').value});alert('密码修改成功，所有之前的会话已失效，请用新密码重新登录。');location.replace('/')}catch(x){$('changeError').textContent=x.message}finally{setLoading($('changeBtn'),false)}});
+$('loginForm').addEventListener('submit',async e=>{e.preventDefault();$('loginError').textContent='';const password=$('password').value;if(!password)return;setLoading($('loginBtn'),true);try{const d=await request('/api/admin/login',{password});if(d.must_change_password)requireChange(password);else location.replace('/')}catch(x){$('loginError').textContent=x.status===429?T('tooManyAttempts'):x.message}finally{setLoading($('loginBtn'),false)}});
+$('changeForm').addEventListener('submit',async e=>{e.preventDefault();$('changeError').textContent='';if($('next').value!==$('confirm').value){$('changeError').textContent=T('passwordsDontMatch');return}if($('next').value.length<6){$('changeError').textContent=T('passwordTooShort');return}setLoading($('changeBtn'),true);try{await request('/api/admin/change-password',{current_password:$('current').value,new_password:$('next').value});alert(T('passwordChangedSuccess'));location.replace('/')}catch(x){$('changeError').textContent=x.message}finally{setLoading($('changeBtn'),false)}});
 fetch('/api/admin/session',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{if(d.authenticated&&d.must_change_password){$('login').hidden=true;$('change').hidden=false;$('next').focus()}else if(d.authenticated)location.replace('/')}).catch(()=>{});
 </script>
 </body>

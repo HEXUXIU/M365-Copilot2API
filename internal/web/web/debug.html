@@ -1,1 +1,101 @@
-<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>M365 Copilot2API · 调试日志</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><script src="https://unpkg.com/lucide@latest"></script><style>:root{color-scheme:light dark;--bg:#f5f5f7;--surface:rgba(255,255,255,0.72);--surface-border:rgba(255,255,255,0.5);--line:rgba(0,0,0,0.06);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;--green:#34c759;--orange:#ff9f0a;--radius:12px;--radius-sm:8px;--shadow:0 8px 32px rgba(0,0,0,0.06);--ease-out:cubic-bezier(0.23,1,0.32,1)}@media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--surface:rgba(44,44,46,0.75);--surface-border:rgba(255,255,255,0.06);--line:rgba(255,255,255,0.06);--text:#f5f5f7;--muted:#98989d;--accent:#0a84ff;--shadow:0 8px 32px rgba(0,0,0,0.25)}}body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;font-size:14px;margin:0;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;transition:background .3s ease,color .3s ease}main{max-width:1200px;margin:30px auto;padding:0 20px;animation:fadeIn .4s var(--ease-out)}@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}}h1{font-size:24px;font-weight:700;letter-spacing:-0.02em}.stats{display:flex;gap:12px;flex-wrap:wrap}.card{background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);padding:16px;min-width:130px;flex:1;box-shadow:var(--shadow);transition:transform .2s var(--ease-out),box-shadow .2s ease}.card:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(0,0,0,0.08)}@media(prefers-color-scheme:dark){.card:hover{box-shadow:0 12px 40px rgba(0,0,0,0.3)}}.value{font-size:24px;font-weight:700;letter-spacing:-0.02em;display:block;margin-top:4px}table{width:100%;border-collapse:collapse;margin-top:20px;background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}tr:hover td{background:rgba(0,113,227,0.03)}@media(prefers-color-scheme:dark){tr:hover td{background:rgba(10,132,255,0.04)}}tr:last-child td{border-bottom:0}.ok{color:var(--green)}.hit{color:var(--orange)}.muted{color:var(--muted)}pre{padding:16px;background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius-sm);white-space:pre-wrap;overflow:auto;max-height:520px;font-size:13px;line-height:1.5;font-family:SF Mono,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:var(--shadow)}.hidden{display:none}.back{margin:15px 0;border:1px solid var(--line);background:var(--surface);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:var(--text);border-radius:var(--radius-sm);padding:6px 14px;cursor:pointer;font:inherit;font-size:13px;font-weight:600;font-family:inherit;transition:background .15s ease,border-color .15s ease,transform .15s var(--ease-out);min-height:32px}.back:hover{background:var(--bg)}.back:active{transform:scale(0.97)}@media(max-width:600px){.stats{flex-direction:column}main{margin:15px auto;padding:0 12px}th,td{padding:8px 10px;font-size:12px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}</style><main><h1>调试日志</h1><p class="muted">记录客户端请求、上游摘要与网关最终响应。token 为估算值。</p><section class="stats"><div class="card">请求数<span id="n" class="value">—</span></div><div class="card">输入 token<span id="in" class="value">—</span></div><div class="card">输出 token<span id="out" class="value">—</span></div><div class="card">缓存命中<span id="hit" class="value">—</span></div></section><section id="list"><table><thead><tr><th>时间</th><th>路径</th><th>状态</th><th>耗时</th><th>输入</th><th>输出</th><th>缓存</th><th>ID</th></tr></thead><tbody id="rows"></tbody></table></section><section id="detail" class="hidden"><button class="back" onclick="showList()"><i data-lucide="arrow-left" style="width:14px;height:14px"></i> 返回列表</button><h2 id="title"></h2><h3 style="font-size:13px;font-weight:600;margin:16px 0 8px">客户端发送的信息</h3><pre id="client"></pre><h3 style="font-size:13px;font-weight:600;margin:16px 0 8px">上游返回的信息</h3><pre id="upstream"></pre><h3 style="font-size:13px;font-weight:600;margin:16px 0 8px">网关处理后的信息</h3><pre id="gateway"></pre></section></main><script>try{lucide.createIcons()}catch(e){};const $=x=>document.getElementById(x);let data=[];function esc(x){return String(x??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}async function load(){let r=await fetch('/api/admin/debug/logs'),d=await r.json();data=d.records||[];$('n').textContent=data.length;$('in').textContent=data.reduce((a,x)=>a+x.inputTokens,0);$('out').textContent=data.reduce((a,x)=>a+x.outputTokens,0);$('hit').textContent=data.filter(x=>x.cacheHit).length;let t=$('rows');t.innerHTML=data.map(x=>'<tr onclick="showDetail('+data.indexOf(x)+')"><td class="muted">'+esc(x.at)+'</td><td><code>'+esc(x.method)+' '+esc(x.path)+'</code></td><td>'+esc(x.status)+'</td><td>'+esc(x.durationMs)+'ms</td><td>'+esc(x.inputTokens)+'</td><td>'+esc(x.outputTokens)+'</td><td class="'+(x.cacheHit?'hit':'muted')+'">'+(x.cacheHit?'命中':'—')+'</td><td class="muted"><code>'+esc(x.id)+'</code></td></tr>').join('')||'<tr><td colspan="8" class="muted" style="text-align:center;padding:40px">暂无记录</td></tr>'}function showDetail(i){let x=data[i];$('list').classList.add('hidden');$('detail').classList.remove('hidden');$('title').textContent=x.method+' '+x.path;$('client').textContent=x.clientPayload||'(无)';$('upstream').textContent=x.upstreamPayload||'(无)';$('gateway').textContent=x.gatewayPayload||'(无)'}function showList(){$('detail').classList.add('hidden');$('list').classList.remove('hidden')}load();</script></body></html>
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>M365 Copilot2API · Debug log</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><script src="https://unpkg.com/lucide@latest"></script><style>:root{color-scheme:light dark;--bg:#f5f5f7;--surface:rgba(255,255,255,0.72);--surface-border:rgba(255,255,255,0.5);--line:rgba(0,0,0,0.06);--text:#1d1d1f;--muted:#86868b;--accent:#0071e3;--green:#34c759;--orange:#ff9f0a;--radius:12px;--radius-sm:8px;--shadow:0 8px 32px rgba(0,0,0,0.06);--ease-out:cubic-bezier(0.23,1,0.32,1)}@media(prefers-color-scheme:dark){:root{--bg:#1c1c1e;--surface:rgba(44,44,46,0.75);--surface-border:rgba(255,255,255,0.06);--line:rgba(255,255,255,0.06);--text:#f5f5f7;--muted:#98989d;--accent:#0a84ff;--shadow:0 8px 32px rgba(0,0,0,0.25)}}body{font-family:"Inter",-apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;font-size:14px;margin:0;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;transition:background .3s ease,color .3s ease}main{max-width:1200px;margin:30px auto;padding:0 20px;animation:fadeIn .4s var(--ease-out)}@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}}h1{font-size:24px;font-weight:700;letter-spacing:-0.02em}.stats{display:flex;gap:12px;flex-wrap:wrap}.card{background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);padding:16px;min-width:130px;flex:1;box-shadow:var(--shadow);transition:transform .2s var(--ease-out),box-shadow .2s ease}.card:hover{transform:translateY(-2px);box-shadow:0 12px 40px rgba(0,0,0,0.08)}@media(prefers-color-scheme:dark){.card:hover{box-shadow:0 12px 40px rgba(0,0,0,0.3)}}.value{font-size:24px;font-weight:700;letter-spacing:-0.02em;display:block;margin-top:4px}table{width:100%;border-collapse:collapse;margin-top:20px;background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}th,td{padding:10px 14px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}tr:hover td{background:rgba(0,113,227,0.03)}@media(prefers-color-scheme:dark){tr:hover td{background:rgba(10,132,255,0.04)}}tr:last-child td{border-bottom:0}.ok{color:var(--green)}.hit{color:var(--orange)}.muted{color:var(--muted)}pre{padding:16px;background:var(--surface);-webkit-backdrop-filter:blur(40px) saturate(180%);backdrop-filter:blur(40px) saturate(180%);border:1px solid var(--surface-border);border-radius:var(--radius-sm);white-space:pre-wrap;overflow:auto;max-height:520px;font-size:13px;line-height:1.5;font-family:SF Mono,SFMono-Regular,Menlo,Consolas,monospace;box-shadow:var(--shadow)}.hidden{display:none}.back{margin:15px 0;border:1px solid var(--line);background:var(--surface);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);color:var(--text);border-radius:var(--radius-sm);padding:6px 14px;cursor:pointer;font:inherit;font-size:13px;font-weight:600;font-family:inherit;transition:background .15s ease,border-color .15s ease,transform .15s var(--ease-out);min-height:32px}.back:hover{background:var(--bg)}.back:active{transform:scale(0.97)}@media(max-width:600px){.stats{flex-direction:column}main{margin:15px auto;padding:0 12px}th,td{padding:8px 10px;font-size:12px}}@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}}</style>
+<main>
+<h1 id="h1">Debug log</h1>
+<p class="muted" id="intro">Logs client requests, upstream summaries, and the gateway's final response. Token counts are estimates.</p>
+<section class="stats">
+  <div class="card" id="statRequests">Requests<span id="n" class="value">—</span></div>
+  <div class="card" id="statIn">Input tokens<span id="in" class="value">—</span></div>
+  <div class="card" id="statOut">Output tokens<span id="out" class="value">—</span></div>
+  <div class="card" id="statHit">Cache hits<span id="hit" class="value">—</span></div>
+</section>
+<section id="list"><table><thead><tr>
+  <th id="thTime">Time</th><th id="thPath">Path</th><th id="thStatus">Status</th><th id="thDuration">Duration</th><th id="thIn">Input</th><th id="thOut">Output</th><th id="thCache">Cache</th><th>ID</th>
+</tr></thead><tbody id="rows"></tbody></table></section>
+<section id="detail" class="hidden">
+  <button class="back" onclick="showList()"><i data-lucide="arrow-left" style="width:14px;height:14px"></i> <span id="backLabel">Back to list</span></button>
+  <h2 id="title"></h2>
+  <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px" id="hClient">What the client sent</h3><pre id="client"></pre>
+  <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px" id="hUpstream">What upstream returned</h3><pre id="upstream"></pre>
+  <h3 style="font-size:13px;font-weight:600;margin:16px 0 8px" id="hGateway">What the gateway processed</h3><pre id="gateway"></pre>
+</section>
+</main>
+<script>
+try{lucide.createIcons()}catch(e){};
+const $=x=>document.getElementById(x);
+let data=[];
+function esc(x){return String(x??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+
+// Lightweight i18n: follows the same `m365_locale` choice made in the main console
+// (Settings > Language / the login-screen language switcher). Defaults to zh-CN.
+const locale=localStorage.getItem('m365_locale')==='en'?'en':'zh-CN';
+const L={
+  title:{en:'M365 Copilot2API · Debug log',zhCN:'M365 Copilot2API · 调试日志'},
+  h1:{en:'Debug log',zhCN:'调试日志'},
+  intro:{en:"Logs client requests, upstream summaries, and the gateway's final response. Token counts are estimates.",zhCN:'记录客户端请求、上游摘要与网关最终响应。token 为估算值。'},
+  requests:{en:'Requests',zhCN:'请求数'},
+  inputTokens:{en:'Input tokens',zhCN:'输入 token'},
+  outputTokens:{en:'Output tokens',zhCN:'输出 token'},
+  cacheHits:{en:'Cache hits',zhCN:'缓存命中'},
+  time:{en:'Time',zhCN:'时间'},
+  path:{en:'Path',zhCN:'路径'},
+  status:{en:'Status',zhCN:'状态'},
+  duration:{en:'Duration',zhCN:'耗时'},
+  input:{en:'Input',zhCN:'输入'},
+  output:{en:'Output',zhCN:'输出'},
+  cache:{en:'Cache',zhCN:'缓存'},
+  backToList:{en:'Back to list',zhCN:'返回列表'},
+  whatClientSent:{en:'What the client sent',zhCN:'客户端发送的信息'},
+  whatUpstreamReturned:{en:'What upstream returned',zhCN:'上游返回的信息'},
+  whatGatewayProcessed:{en:'What the gateway processed',zhCN:'网关处理后的信息'},
+  hit:{en:'Hit',zhCN:'命中'},
+  noRecords:{en:'No records yet',zhCN:'暂无记录'},
+  none:{en:'(none)',zhCN:'(无)'}
+};
+function T(k){const e=L[k];return e?(locale==='en'?e.en:e.zhCN):k;}
+function applyI18n(){
+  document.title=T('title');
+  $('h1').textContent=T('h1');
+  $('intro').textContent=T('intro');
+  $('statRequests').firstChild.textContent=T('requests');
+  $('statIn').firstChild.textContent=T('inputTokens');
+  $('statOut').firstChild.textContent=T('outputTokens');
+  $('statHit').firstChild.textContent=T('cacheHits');
+  $('thTime').textContent=T('time');
+  $('thPath').textContent=T('path');
+  $('thStatus').textContent=T('status');
+  $('thDuration').textContent=T('duration');
+  $('thIn').textContent=T('input');
+  $('thOut').textContent=T('output');
+  $('thCache').textContent=T('cache');
+  $('backLabel').textContent=T('backToList');
+  $('hClient').textContent=T('whatClientSent');
+  $('hUpstream').textContent=T('whatUpstreamReturned');
+  $('hGateway').textContent=T('whatGatewayProcessed');
+}
+applyI18n();
+
+async function load(){
+  let r=await fetch('/api/admin/debug/logs'),d=await r.json();
+  data=d.records||[];
+  $('n').textContent=data.length;
+  $('in').textContent=data.reduce((a,x)=>a+x.inputTokens,0);
+  $('out').textContent=data.reduce((a,x)=>a+x.outputTokens,0);
+  $('hit').textContent=data.filter(x=>x.cacheHit).length;
+  let t=$('rows');
+  t.innerHTML=data.map(x=>'<tr onclick="showDetail('+data.indexOf(x)+')"><td class="muted">'+esc(x.at)+'</td><td><code>'+esc(x.method)+' '+esc(x.path)+'</code></td><td>'+esc(x.status)+'</td><td>'+esc(x.durationMs)+'ms</td><td>'+esc(x.inputTokens)+'</td><td>'+esc(x.outputTokens)+'</td><td class="'+(x.cacheHit?'hit':'muted')+'">'+(x.cacheHit?T('hit'):'—')+'</td><td class="muted"><code>'+esc(x.id)+'</code></td></tr>').join('')||'<tr><td colspan="8" class="muted" style="text-align:center;padding:40px">'+T('noRecords')+'</td></tr>';
+}
+function showDetail(i){
+  let x=data[i];
+  $('list').classList.add('hidden');$('detail').classList.remove('hidden');
+  $('title').textContent=x.method+' '+x.path;
+  $('client').textContent=x.clientPayload||T('none');
+  $('upstream').textContent=x.upstreamPayload||T('none');
+  $('gateway').textContent=x.gatewayPayload||T('none');
+}
+function showList(){$('detail').classList.add('hidden');$('list').classList.remove('hidden')}
+load();
+</script>

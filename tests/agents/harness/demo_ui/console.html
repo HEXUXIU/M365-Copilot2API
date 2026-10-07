@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>M365 Copilot2API 控制台（演示）</title>
+    <!-- Design tokens copied verbatim from webapp/src/tokens.css so the capture
+         matches the shipped console. No network requests, no backend. -->
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f5f7;
+        --surface: rgba(255, 255, 255, 0.72);
+        --surface-solid: #fff;
+        --surface-border: rgba(255, 255, 255, 0.5);
+        --line: rgba(0, 0, 0, 0.06);
+        --line-strong: rgba(0, 0, 0, 0.1);
+        --text: #1d1d1f;
+        --muted: #86868b;
+        --accent: #0071e3;
+        --green: #34c759;
+        --red: #ff3b30;
+        --orange: #ff9f0a;
+        --purple: #bf5af2;
+        --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.04);
+        --shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+        --radius: 14px;
+        --radius-sm: 10px;
+        --sidebar-w: 240px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      .shell { display: flex; min-height: 100vh; }
+      .side {
+        width: var(--sidebar-w);
+        flex: 0 0 var(--sidebar-w);
+        padding: 22px 16px;
+        border-right: 1px solid var(--line);
+        background: var(--surface);
+        backdrop-filter: blur(20px);
+      }
+      .brand { display: flex; align-items: center; gap: 10px; padding: 0 8px 22px; }
+      .mark {
+        width: 30px; height: 30px; border-radius: 8px;
+        background: linear-gradient(135deg, var(--accent), var(--purple));
+      }
+      .brand b { font-size: 15px; letter-spacing: -0.01em; }
+      .brand span { display: block; font-size: 11px; color: var(--muted); }
+      .nav { display: flex; flex-direction: column; gap: 2px; }
+      .nav a {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 10px; border-radius: 9px;
+        color: var(--text); text-decoration: none; font-size: 13.5px;
+      }
+      .nav a.on { background: rgba(0, 113, 227, 0.1); color: var(--accent); font-weight: 600; }
+      .nav .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .55; }
+      .main { flex: 1; padding: 26px 30px 40px; min-width: 0; }
+      .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+      h1 { font-size: 22px; margin: 0; letter-spacing: -0.02em; }
+      .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+      .pill {
+        font-size: 11.5px; padding: 4px 10px; border-radius: 999px;
+        border: 1px solid var(--surface-border); background: var(--surface-solid);
+        color: var(--muted);
+      }
+      .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 20px; }
+      .card, .panel {
+        background: var(--surface); border: 1px solid var(--surface-border);
+        border-radius: var(--radius); box-shadow: var(--shadow-sm);
+        backdrop-filter: blur(20px);
+      }
+      .card { padding: 15px 17px; }
+      .card .k { font-size: 12px; color: var(--muted); }
+      .card .v { font-size: 25px; font-weight: 650; margin-top: 5px; letter-spacing: -0.02em; }
+      .card .d { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+      .panel { padding: 4px 0; overflow: hidden; }
+      .panel h2 {
+        font-size: 14px; margin: 0; padding: 14px 18px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 11px 18px; border-bottom: 1px solid var(--line); }
+      th { font-size: 11.5px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+      tr:last-child td { border-bottom: 0; }
+      .tag { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; font-weight: 600; }
+      .tag.ok { background: rgba(52, 199, 89, .15); color: #248a3d; }
+      .tag.warn { background: rgba(255, 159, 10, .16); color: #a76a00; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--muted); }
+      .spark { display: flex; align-items: flex-end; gap: 3px; height: 46px; padding: 0 18px 16px; }
+      .spark i { flex: 1; background: var(--accent); opacity: .22; border-radius: 2px 2px 0 0; display: block; }
+      .login {
+        min-height: 100vh; display: grid; place-items: center;
+        background: radial-gradient(1200px 600px at 50% -10%, rgba(0, 113, 227, .12), transparent), var(--bg);
+      }
+      .login .box {
+        width: 372px; padding: 30px; text-align: center;
+        background: var(--surface); border: 1px solid var(--surface-border);
+        border-radius: 20px; box-shadow: var(--shadow); backdrop-filter: blur(24px);
+      }
+      .login h1 { font-size: 20px; margin-bottom: 6px; }
+      .login p { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+      .login input {
+        width: 100%; padding: 11px 13px; font: inherit;
+        border: 1px solid var(--line-strong); border-radius: 10px;
+        background: var(--surface-solid); color: var(--text);
+      }
+      .login button {
+        width: 100%; margin-top: 11px; padding: 11px; font: inherit; font-weight: 600;
+        color: #fff; background: var(--accent); border: 0; border-radius: 10px; cursor: pointer;
+      }
+      .note { color: var(--muted); font-size: 12px; margin-top: 15px; }
+    </style>
+  </head>
+  <body>
+    <!--
+      Static demo only. Every value below is fabricated; there is no backend and
+      no network call. Screenshots are captured from these files.
+    -->
+    <div id="root"></div>
+    <script>
+      const NAV = ['仪表盘', '用量统计', '账号管理', 'API 密钥', '对话管理', '代理池', '设置'];
+
+      const VIEWS = {
+        dashboard: `
+          <div class="top"><div><h1>仪表盘</h1><div class="sub">运行概览 · 最近 24 小时</div></div><span class="pill">网关在线</span></div>
+          <div class="cards">
+            <div class="card"><div class="k">请求总数</div><div class="v">12,480</div><div class="d">较昨日 +8.2%</div></div>
+            <div class="card"><div class="k">成功率</div><div class="v">99.4%</div><div class="d">错误 72 次</div></div>
+            <div class="card"><div class="k">平均首字节</div><div class="v">1.9s</div><div class="d">p95 6.4s</div></div>
+            <div class="card"><div class="k">可用账号</div><div class="v">6 / 7</div><div class="d">1 个冷却中</div></div>
+          </div>
+          <div class="panel"><h2>近 24 小时请求量</h2>
+            <div class="spark">${[38, 52, 47, 61, 44, 72, 66, 81, 58, 74, 69, 88].map((h) => `<i style="height:${h}%"></i>`).join('')}</div>
+          </div>`,
+        usage: `
+          <div class="top"><div><h1>用量统计</h1><div class="sub">按端点与模型拆分</div></div><span class="pill">近 7 天</span></div>
+          <div class="cards">
+            <div class="card"><div class="k">输入 tokens</div><div class="v">8.4M</div><div class="d">估算值</div></div>
+            <div class="card"><div class="k">输出 tokens</div><div class="v">612K</div><div class="d">估算值</div></div>
+            <div class="card"><div class="k">图像生成</div><div class="v">34</div><div class="d">本月剩余 466</div></div>
+            <div class="card"><div class="k">最常用模型</div><div class="v" style="font-size:16px">gpt-5.6-sol</div><div class="d">占比 61%</div></div>
+          </div>
+          <div class="panel"><h2>按端点</h2>
+            <table><thead><tr><th>端点</th><th>请求</th><th>成功率</th><th>p95 延迟</th></tr></thead><tbody>
+              <tr><td>/v1/chat/completions</td><td>9,214</td><td><span class="tag ok">99.6%</span></td><td>6.8s</td></tr>
+              <tr><td>/v1/messages</td><td>2,306</td><td><span class="tag ok">99.1%</span></td><td>4.1s</td></tr>
+              <tr><td>/v1/responses</td><td>812</td><td><span class="tag ok">98.8%</span></td><td>3.6s</td></tr>
+              <tr><td>/v1/images/generations</td><td>148</td><td><span class="tag warn">97.3%</span></td><td>42.5s</td></tr>
+            </tbody></table>
+          </div>`,
+        accounts: `
+          <div class="top"><div><h1>账号管理</h1><div class="sub">账号池与调度状态</div></div><span class="pill">7 个账号</span></div>
+          <div class="panel"><table><thead><tr><th>账号</th><th>状态</th><th>绑定代理</th><th>最近调用</th></tr></thead><tbody>
+            <tr><td>demo.user@example.com</td><td><span class="tag ok">在线</span></td><td class="mono">—</td><td>12 秒前</td></tr>
+            <tr><td>second.demo@example.com</td><td><span class="tag ok">在线</span></td><td class="mono">http://127.0.0.1:1080</td><td>34 秒前</td></tr>
+            <tr><td>third.demo@example.com</td><td><span class="tag warn">冷却 42s</span></td><td class="mono">—</td><td>2 分钟前</td></tr>
+            <tr><td>pool-a@example.com</td><td><span class="tag ok">在线</span></td><td class="mono">socks5://127.0.0.1:1081</td><td>1 分钟前</td></tr>
+            <tr><td>pool-b@example.com</td><td><span class="tag ok">在线</span></td><td class="mono">http://127.0.0.1:1082</td><td>3 分钟前</td></tr>
+          </tbody></table></div>`,
+        keys: `
+          <div class="top"><div><h1>API 密钥</h1><div class="sub">用于 OpenAI / Anthropic 兼容端点</div></div><span class="pill">3 个密钥</span></div>
+          <div class="panel"><table><thead><tr><th>名称</th><th>前缀</th><th>最近使用</th><th>状态</th></tr></thead><tbody>
+            <tr><td>default</td><td class="mono">m365_a1b2c3d4</td><td>刚刚</td><td><span class="tag ok">启用</span></td></tr>
+            <tr><td>codex-client</td><td class="mono">m365_e5f6a7b8</td><td>6 分钟前</td><td><span class="tag ok">启用</span></td></tr>
+            <tr><td>claude-code-client</td><td class="mono">m365_9c0d1e2f</td><td>1 小时前</td><td><span class="tag warn">已停用</span></td></tr>
+          </tbody></table></div>`,
+        conversations: `
+          <div class="top"><div><h1>对话管理</h1><div class="sub">云端会话缓存与回收</div></div><span class="pill">保留 5 条</span></div>
+          <div class="panel"><table><thead><tr><th>标题</th><th>消息数</th><th>账号</th><th>更新</th></tr></thead><tbody>
+            <tr><td>重构 streaming 适配层</td><td>28</td><td class="mono">demo.user@…</td><td>4 分钟前</td></tr>
+            <tr><td>排查连接池复用问题</td><td>16</td><td class="mono">second.demo@…</td><td>22 分钟前</td></tr>
+            <tr><td>工具调用超时分析</td><td>41</td><td class="mono">pool-a@…</td><td>1 小时前</td></tr>
+            <tr><td>用量统计口径对齐</td><td>12</td><td class="mono">third.demo@…</td><td>3 小时前</td></tr>
+          </tbody></table></div>`,
+        proxies: `
+          <div class="top"><div><h1>代理池</h1><div class="sub">出站代理与账号绑定</div></div><span class="pill">3 个出口</span></div>
+          <div class="panel"><table><thead><tr><th>代理地址</th><th>协议</th><th>绑定账号</th><th>状态</th></tr></thead><tbody>
+            <tr><td class="mono">http://127.0.0.1:1080</td><td>HTTP</td><td>1</td><td><span class="tag ok">可用</span></td></tr>
+            <tr><td class="mono">socks5://127.0.0.1:1081</td><td>SOCKS5</td><td>1</td><td><span class="tag ok">可用</span></td></tr>
+            <tr><td class="mono">http://127.0.0.1:1082</td><td>HTTP</td><td>1</td><td><span class="tag warn">超时</span></td></tr>
+          </tbody></table></div>`,
+        settings: `
+          <div class="top"><div><h1>设置</h1><div class="sub">运行参数与工具规划</div></div><span class="pill">已保存</span></div>
+          <div class="cards">
+            <div class="card"><div class="k">工具规划模式</div><div class="v" style="font-size:17px">router</div><div class="d">native 在本部署不可用</div></div>
+            <div class="card"><div class="k">聊天超时</div><div class="v">120s</div><div class="d">首字节超时 40s</div></div>
+            <div class="card"><div class="k">上下文窗口</div><div class="v">128K</div><div class="d">超限精确拒绝</div></div>
+            <div class="card"><div class="k">日志级别</div><div class="v" style="font-size:17px">info</div><div class="d">silent / debug</div></div>
+          </div>
+          <div class="panel"><h2>模型映射</h2>
+            <table><thead><tr><th>对外模型</th><th>上游 tone</th><th>默认推理档</th></tr></thead><tbody>
+              <tr><td>gpt-5.6-sol</td><td class="mono">Gpt_5_6_Reasoning</td><td>xhigh</td></tr>
+              <tr><td>gpt-5.6-terra</td><td class="mono">Gpt_5_6_Reasoning</td><td>medium</td></tr>
+              <tr><td>gpt-5.6-luna</td><td class="mono">Gpt_5_6_Reasoning</td><td>minimal</td></tr>
+            </tbody></table></div>`,
+      };
+
+      const KEYS = Object.keys(VIEWS);
+
+      function shell(active) {
+        return `<div class="shell">
+          <aside class="side">
+            <div class="brand"><div class="mark"></div><div><b>M365 Copilot2API</b><span>控制台演示</span></div></div>
+            <nav class="nav">${NAV.map((n, i) => `<a class="${i === active ? 'on' : ''}"><span class="dot"></span>${n}</a>`).join('')}</nav>
+          </aside>
+          <main class="main">${VIEWS[KEYS[active]]}</main>
+        </div>`;
+      }
+
+      // The page is opened over file://, where a query string is not reliable,
+      // so the target view travels in the hash: console.html#settings.
+      const view = (location.hash || '').replace(/^#/, '') || 'dashboard';
+      document.getElementById('root').innerHTML =
+        view === 'login'
+          ? `<div class="login"><div class="box">
+               <h1>M365 Copilot2API</h1>
+               <p>输入管理员密码以继续</p>
+               <input type="password" placeholder="Password" />
+               <button>登录</button>
+               <div class="note">本页面为静态演示，不连接任何后端。</div>
+             </div></div>`
+          : shell(Math.max(0, KEYS.indexOf(view)));
+    </script>
+  </body>
+</html>

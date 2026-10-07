@@ -11,6 +11,12 @@
   <strong>Microsoft 365 Copilot → OpenAI / Anthropic 兼容 API 网关</strong>
 </p>
 
+<p align="center">
+  <a href="README.md"><b>简体中文</b></a>
+  ·
+  <a href="README.en.md"><b>English</b></a>
+</p>
+
 M365 Copilot2API 是一个用 Go 编写的自托管网关，把微软 365 Copilot 商业订阅背后的 **ChatHub 私有协议**（WebSocket）翻译成标准的 **OpenAI / Anthropic 兼容 API**。Claude Code、OpenCode、Cursor 以及任何 OpenAI 客户端都可以直接用熟悉的格式调用 M365 Copilot。
 
 工作原理概括：**ChatHub 私有协议 ⇄ OpenAI / Anthropic 兼容 API**。连接握手、心跳保活、事件流解析、工具调用转换全部封装在 `internal/chathub` 层，对外只暴露 `/v1/chat/completions`、`/v1/messages` 等标准端点。
@@ -41,9 +47,8 @@ M365 Copilot2API 是一个用 Go 编写的自托管网关，把微软 365 Copilo
     <td align="center" width="33%"><img src="docs/screenshots/07-proxies.png" alt="代理池" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>代理池</b></sub></td>
   </tr>
   <tr>
-    <td align="center" width="33%"><img src="docs/screenshots/08-modeltest.png" alt="模型测试" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>模型测试</b></sub></td>
-    <td align="center" width="33%"><img src="docs/screenshots/09-settings.png" alt="设置" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>设置</b></sub></td>
-    <td align="center" width="33%"><sub><i>更多功能，等你发现</i></sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/08-settings.png" alt="设置" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>设置</b></sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/02-dashboard.png" alt="仪表盘" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>仪表盘</b></sub></td>
   </tr>
 </table>
 

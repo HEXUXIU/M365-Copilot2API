@@ -45,8 +45,7 @@ The project ships with a complete web admin console covering account authorizati
     <td align="center" width="33%"><img src="docs/screenshots/07-proxies.png" alt="Proxy pool" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>Proxy pool</b></sub></td>
   </tr>
   <tr>
-    <td align="center" width="33%"><img src="docs/screenshots/08-modeltest.png" alt="Model testing" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>Model testing</b></sub></td>
-    <td align="center" width="33%"><img src="docs/screenshots/09-settings.png" alt="Settings" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>Settings</b></sub></td>
+    <td align="center" width="33%"><img src="docs/screenshots/08-settings.png" alt="Settings" style="border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.12)"><br><sub><b>Settings</b></sub></td>
     <td align="center" width="33%"><sub><i>More features waiting to be discovered</i></sub></td>
   </tr>
 </table>

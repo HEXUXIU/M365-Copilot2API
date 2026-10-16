@@ -282,15 +282,17 @@ func utf8SafeCut(s string) int {
 
 var (
 	citationOpen  = string(rune(0xE200)) + "cite" + string(rune(0xE202))
+	citationEmpty = string(rune(0xE200)) + "cite" + string(rune(0xE201))
 	citationClose = string(rune(0xE201))
 )
 
 // stripCitationMarkersStream removes upstream citation markers
-// (\uE200cite\uE202<id>\uE201) from a text fragment and returns the cleaned
+// (\uE200cite\uE202<id>\uE201 and empty \uE200cite\uE201) from a text fragment and returns the cleaned
 // prefix plus the unconsumed remainder, which is an incomplete marker to carry
 // over to the next fragment. It keeps public API responses free of the private
 // upstream citation control markup (issue #79).
 func stripCitationMarkersStream(pending string) (string, string) {
+	pending = strings.ReplaceAll(pending, citationEmpty, "")
 	var b strings.Builder
 	for {
 		i := strings.Index(pending, citationOpen)

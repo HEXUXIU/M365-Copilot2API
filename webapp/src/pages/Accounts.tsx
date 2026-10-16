@@ -107,8 +107,13 @@ export function AccountsPage({ push }: { push: Push }) {
     }
     setAuthBusy(true);
     try {
-      const url = raw.startsWith("http")
-        ? `/api/auth/callback?url=${encodeURIComponent(raw)}`
+      const normalized = /^https?:\/\//i.test(raw)
+        ? raw
+        : raw.includes("nativeclient") || raw.includes("microsoftonline.com")
+          ? `https://${raw}`
+          : "";
+      const url = normalized
+        ? `/api/auth/callback?url=${encodeURIComponent(normalized)}`
         : `/api/auth/callback?${raw.replace(/^\?/, "")}`;
       await api(url);
       setAuthMsg({ kind: "success", text: t("Authorization succeeded") });

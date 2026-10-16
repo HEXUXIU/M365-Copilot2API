@@ -68,11 +68,21 @@ var gatewayModels = []modelSpec{
 	{ID: "gpt-5.4-reasoning", Owner: "microsoft-365", Tools: true},
 	{ID: "gpt-5.5", Owner: "microsoft-365", Tools: true},
 	{ID: "gpt-5.5-reasoning", Owner: "microsoft-365", Tools: true},
+	{ID: "gpt-5.6", Owner: "microsoft-365", Tools: true},
 	{ID: "gpt-5.6-reasoning", Owner: "microsoft-365", Tools: true},
+	{ID: "gpt-6-sol", Owner: "microsoft-365", DisplayName: "GPT-6 Sol", Tools: true},
+	{ID: "gpt-6.1-sol", Owner: "microsoft-365", DisplayName: "GPT-6.1 Sol", Tools: true},
+	{ID: "gpt-6-reasoning", Owner: "microsoft-365", DisplayName: "GPT-6 Reasoning", Tools: true},
+	{ID: "gpt-6-astra", Owner: "microsoft-365", DisplayName: "GPT-6 Astra", Tools: true},
 	{ID: "flux-3", Owner: "microsoft-365", DisplayName: "Flux 3", Image: true},
 	{ID: "flux-4", Owner: "microsoft-365", DisplayName: "Flux 4", Image: true},
 	{ID: "claude-sonnet", Owner: "anthropic-via-microsoft-365", Tools: true},
 	{ID: "claude-sonnet-reasoning", Owner: "anthropic-via-microsoft-365", Tools: true},
+	{ID: "claude-sonnet-5", Owner: "anthropic-via-microsoft-365", DisplayName: "Claude Sonnet 5", Tools: true},
+	{ID: "claude-opus", Owner: "anthropic-via-microsoft-365", DisplayName: "Claude Opus", Tools: true},
+	{ID: "claude-fable", Owner: "anthropic-via-microsoft-365", DisplayName: "Claude Fable", Tools: true},
+	{ID: "grok-4.5", Owner: "microsoft-365", DisplayName: "Grok 4.5", Tools: true},
+	{ID: "grok-reasoning", Owner: "microsoft-365", DisplayName: "Grok Reasoning", Tools: true},
 }
 
 // isImageModel reports whether a public model id routes to the image
@@ -101,7 +111,14 @@ func isKnownPublicModel(model string) bool {
 		}
 	}
 	switch id {
-	case "claude", "gpt-5.4-quick", "gpt-5.3-think-deeper":
+	case "claude", "gpt-5.4-quick", "gpt-5.3-think-deeper",
+		"gpt-5.5-quick", "gpt-5.5-think-deeper",
+		"gpt-5.6-quick", "gpt-5.6-think-deeper",
+		"gpt-6-think-deeper", "gpt-6.0-sol", "gpt6sol", "gpt-6-sol-reasoning", "gpt-6.1-sol-reasoning",
+		"grok-auto", "muse-spark", "critique", "claude-fable":
+		return true
+	}
+	if _, ok := dynamicToneForModel(id); ok {
 		return true
 	}
 	return false
@@ -121,17 +138,28 @@ func validUpstreamTone(tone string) bool {
 			return true
 		}
 	}
+	for _, known := range knownUpstreamTones() {
+		if tone == known {
+			return true
+		}
+	}
 	return false
 }
 
 func knownUpstreamTones() []string {
 	return []string{
-		"Magic", "Gpt_5_2_Auto", "Gpt_5_2_Chat", "Gpt_5_2_Reasoning",
+		"Magic", "Chat", "Reasoning",
+		"Gpt_5_2_Auto", "Gpt_5_2_Chat", "Gpt_5_2_Reasoning",
 		"Gpt_5_3_Chat", "Gpt_5_3_Reasoning",
 		"Gpt_5_4_Chat", "Gpt_5_4_Reasoning",
 		"Gpt_5_5_Chat", "Gpt_5_5_Reasoning",
-		"Gpt_5_6_Reasoning",
-		"Claude_Sonnet", "Claude_Sonnet_Reasoning",
+		"Gpt_5_6_Chat", "Gpt_5_6_Reasoning", "GPT_5_6_Chat", "GPT_5_6_Reasoning",
+		"Gpt_6_Reasoning", "Gpt_6_Astra", "GPT_6_Astra",
+		"Gpt_6_Sol_Chat", "Gpt_6_Sol_Reasoning", "GPT_6_Sol_Chat", "GPT_6_Sol_Reasoning",
+		"Gpt_61_Sol_Reasoning",
+		"Claude_Sonnet", "Claude_Sonnet_Reasoning", "Claude_Sonnet_5", "Claude_Opus", "Claude_Fable",
+		"Grok_4_5", "Grok_Auto", "Grok_Reasoning",
+		"Muse_Spark", "Critique",
 	}
 }
 
@@ -139,7 +167,34 @@ var (
 	dynamicTones []string
 	dynamicMu    sync.RWMutex
 	dynamicAt    time.Time
+
+	upstreamTonePattern = regexp.MustCompile(`\b(?:(?:Gpt|GPT)_[0-9]+(?:_[0-9]+)?_[A-Za-z0-9_]+|Claude_[A-Za-z0-9_]+|Grok_[A-Za-z0-9_]+|Muse_Spark|Critique|Magic)\b`)
+	cdnBundleURLPattern = regexp.MustCompile(`https://res\.public\.onecdn\.static\.microsoft/midgard/versionless-v2/[A-Za-z0-9._-]+\.js`)
+	mainBundlePattern   = regexp.MustCompile(`main\.[a-f0-9]{8}\.js`)
+	digitsOnlyPattern   = regexp.MustCompile(`^[0-9]+$`)
 )
+
+func extractBundleURLs(html string) []string {
+	seen := map[string]bool{}
+	var urls []string
+	for _, u := range cdnBundleURLPattern.FindAllString(html, -1) {
+		if !seen[u] {
+			seen[u] = true
+			urls = append(urls, u)
+		}
+	}
+	if m := mainBundlePattern.FindString(html); m != "" {
+		u := "https://res.public.onecdn.static.microsoft/midgard/versionless-v2/" + m
+		if !seen[u] {
+			seen[u] = true
+			urls = append(urls, u)
+		}
+	}
+	if len(urls) > 5 {
+		urls = urls[:5]
+	}
+	return urls
+}
 
 func liveUpstreamTones() []string {
 	dynamicMu.RLock()
@@ -165,35 +220,43 @@ func syncUpstreamTones() {
 	dynamicTones = tones
 	dynamicAt = time.Now()
 	dynamicMu.Unlock()
-	log.Printf("synced %d upstream tones from CDN bundle", len(tones))
+	log.Printf("synced %d upstream tones", len(tones))
 }
 
 func fetchUpstreamTones() []string {
+	seen := map[string]bool{}
+	for _, t := range knownUpstreamTones() {
+		seen[t] = true
+	}
+	discovered := false
+	if cloud := GetM365CloudClient(); cloud != nil {
+		for _, t := range cloud.DiscoverTones() {
+			if !seen[t] {
+				discovered = true
+			}
+			seen[t] = true
+		}
+	}
 	client := &http.Client{Timeout: 30 * time.Second}
 	pageURL := "https://m365.cloud.microsoft/"
-	resp, err := client.Get(pageURL)
-	if err != nil {
-		return nil
+	if resp, err := client.Get(pageURL); err == nil {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		resp.Body.Close()
+		for _, bundleURL := range extractBundleURLs(string(body)) {
+			if resp2, err := client.Get(bundleURL); err == nil {
+				bundle, _ := io.ReadAll(io.LimitReader(resp2.Body, 4<<20))
+				resp2.Body.Close()
+				for _, t := range upstreamTonePattern.FindAllString(string(bundle), -1) {
+					if !seen[t] {
+						discovered = true
+					}
+					seen[t] = true
+				}
+			}
+		}
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	resp.Body.Close()
-	re := regexp.MustCompile(`main\.[a-f0-9]{8}\.js`)
-	m := re.FindString(string(body))
-	if m == "" {
+	if !discovered && len(seen) == len(knownUpstreamTones()) {
 		return nil
-	}
-	bundleURL := "https://res.public.onecdn.static.microsoft/midgard/versionless-v2/" + m
-	resp2, err := client.Get(bundleURL)
-	if err != nil {
-		return nil
-	}
-	bundle, _ := io.ReadAll(io.LimitReader(resp2.Body, 4<<20))
-	resp2.Body.Close()
-	toneRe := regexp.MustCompile(`(?:Gpt_[0-9]_[0-9]_[A-Za-z_]+|Claude_[A-Za-z0-9_]+|Magic)`)
-	matches := toneRe.FindAllString(string(bundle), -1)
-	seen := map[string]bool{}
-	for _, t := range matches {
-		seen[t] = true
 	}
 	result := make([]string, 0, len(seen))
 	for t := range seen {
@@ -201,6 +264,146 @@ func fetchUpstreamTones() []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// toneToPublicModelSpec converts an upstream M365 tone name (for example a
+// newly discovered "Gpt_62_Sol_Reasoning", "Gpt_7_Chat", or "Claude_Sonnet_6")
+// into a normalized public OpenAI-compatible modelSpec.
+func toneToPublicModelSpec(tone string) (modelSpec, bool) {
+	tone = strings.TrimSpace(tone)
+	if tone == "" {
+		return modelSpec{}, false
+	}
+	switch strings.ToLower(tone) {
+	case "magic", "chat", "reasoning":
+		return modelSpec{}, false
+	}
+	parts := strings.Split(tone, "_")
+	if len(parts) < 2 {
+		return modelSpec{}, false
+	}
+	// Skip *_Auto internal routing selectors and uppercase duplicate aliases
+	// (e.g. GPT_6_Sol_Reasoning when Gpt_6_Sol_Reasoning is canonical).
+	if strings.EqualFold(parts[len(parts)-1], "auto") || parts[0] == "GPT" {
+		return modelSpec{}, false
+	}
+	head := strings.ToLower(parts[0])
+	switch head {
+	case "gpt":
+		ver := ""
+		restIdx := 1
+		if len(parts) >= 3 && len(parts[1]) == 1 && digitsOnlyPattern.MatchString(parts[1]) && len(parts[2]) == 1 && digitsOnlyPattern.MatchString(parts[2]) {
+			ver = parts[1] + "." + parts[2]
+			restIdx = 3
+		} else if len(parts[1]) == 2 && digitsOnlyPattern.MatchString(parts[1]) {
+			ver = parts[1][:1] + "." + parts[1][1:]
+			restIdx = 2
+		} else if digitsOnlyPattern.MatchString(parts[1]) {
+			ver = parts[1]
+			restIdx = 2
+		} else {
+			return modelSpec{}, false
+		}
+		rest := parts[restIdx:]
+		if len(rest) == 0 {
+			return modelSpec{ID: "gpt-" + ver, Owner: "microsoft-365", DisplayName: "GPT-" + ver, Tools: true}, true
+		}
+		if len(rest) == 1 && strings.EqualFold(rest[0], "chat") {
+			return modelSpec{ID: "gpt-" + ver, Owner: "microsoft-365", DisplayName: "GPT-" + ver, Tools: true}, true
+		}
+		if len(rest) == 1 && strings.EqualFold(rest[0], "reasoning") {
+			return modelSpec{ID: "gpt-" + ver + "-reasoning", Owner: "microsoft-365", DisplayName: "GPT-" + ver + " Reasoning", Tools: true}, true
+		}
+		if len(rest) == 2 && strings.EqualFold(rest[1], "reasoning") {
+			sub := strings.ToLower(rest[0])
+			return modelSpec{ID: "gpt-" + ver + "-" + sub, Owner: "microsoft-365", DisplayName: "GPT-" + ver + " " + rest[0], Tools: true}, true
+		}
+		lowerRest := make([]string, len(rest))
+		for i, p := range rest {
+			lowerRest[i] = strings.ToLower(p)
+		}
+		return modelSpec{
+			ID:          "gpt-" + ver + "-" + strings.Join(lowerRest, "-"),
+			Owner:       "microsoft-365",
+			DisplayName: "GPT-" + ver + " " + strings.Join(rest, " "),
+			Tools:       true,
+		}, true
+
+	case "claude":
+		var idParts, nameParts []string
+		for i := 1; i < len(parts); i++ {
+			if digitsOnlyPattern.MatchString(parts[i]) && i+1 < len(parts) && digitsOnlyPattern.MatchString(parts[i+1]) {
+				ver := parts[i] + "." + parts[i+1]
+				idParts = append(idParts, ver)
+				nameParts = append(nameParts, ver)
+				i++
+				continue
+			}
+			idParts = append(idParts, strings.ToLower(parts[i]))
+			nameParts = append(nameParts, parts[i])
+		}
+		if len(idParts) == 0 {
+			return modelSpec{}, false
+		}
+		return modelSpec{
+			ID:          "claude-" + strings.Join(idParts, "-"),
+			Owner:       "anthropic-via-microsoft-365",
+			DisplayName: "Claude " + strings.Join(nameParts, " "),
+			Tools:       true,
+		}, true
+
+	default:
+		var idParts, nameParts []string
+		for i := 0; i < len(parts); i++ {
+			if i > 0 && digitsOnlyPattern.MatchString(parts[i]) && i+1 < len(parts) && digitsOnlyPattern.MatchString(parts[i+1]) {
+				ver := parts[i] + "." + parts[i+1]
+				idParts = append(idParts, ver)
+				nameParts = append(nameParts, ver)
+				i++
+				continue
+			}
+			idParts = append(idParts, strings.ToLower(parts[i]))
+			nameParts = append(nameParts, parts[i])
+		}
+		return modelSpec{
+			ID:          strings.Join(idParts, "-"),
+			Owner:       "microsoft-365",
+			DisplayName: strings.Join(nameParts, " "),
+			Tools:       true,
+		}, true
+	}
+}
+
+// dynamicToneForModel resolves either a raw upstream tone name (or "tone:..."
+// prefix) or an auto-generated public model ID back to its upstream tone.
+func dynamicToneForModel(model string) (string, bool) {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" {
+		return "", false
+	}
+	if strings.HasPrefix(strings.ToLower(trimmed), "tone:") {
+		raw := strings.TrimSpace(trimmed[5:])
+		if raw != "" {
+			return raw, true
+		}
+	}
+	low := strings.ToLower(trimmed)
+	for _, tone := range liveUpstreamTones() {
+		if strings.EqualFold(tone, trimmed) {
+			return tone, true
+		}
+	}
+	for _, tone := range liveUpstreamTones() {
+		spec, ok := toneToPublicModelSpec(tone)
+		if !ok {
+			continue
+		}
+		specID := strings.ToLower(spec.ID)
+		if specID == low || specID+"-reasoning" == low {
+			return tone, true
+		}
+	}
+	return "", false
 }
 
 func configuredModelMapping(model string, mappings []modelMapping) (modelMapping, bool) {
@@ -223,6 +426,29 @@ func configuredModelTone(model string, mappings []modelMapping) (string, bool) {
 
 func configuredModelSpecs(mappings []modelMapping) []modelSpec {
 	models := append([]modelSpec(nil), gatewayModels...)
+	baseline := map[string]bool{}
+	for _, t := range knownUpstreamTones() {
+		baseline[strings.ToLower(t)] = true
+	}
+	for _, tone := range liveUpstreamTones() {
+		if baseline[strings.ToLower(tone)] {
+			continue
+		}
+		spec, ok := toneToPublicModelSpec(tone)
+		if !ok {
+			continue
+		}
+		exists := false
+		for i := range models {
+			if strings.EqualFold(models[i].ID, spec.ID) {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			models = append(models, spec)
+		}
+	}
 	for _, mapping := range mappings {
 		spec := modelSpec{
 			ID: strings.TrimSpace(mapping.PublicModel), Owner: "microsoft-365", Tools: true,
@@ -282,29 +508,71 @@ func reasoningTone(model, effort string) (string, error) {
 		return tone, nil
 	}
 	base := modelTone(model)
-	// Explicit reasoning aliases are never silently downgraded by a generic client default.
-	if strings.Contains(strings.ToLower(model), "reasoning") {
+	id := strings.ToLower(strings.TrimSpace(model))
+	// Explicit reasoning or pinned selector aliases are never silently downgraded
+	// or cross-routed by a generic client default reasoning_effort.
+	if strings.Contains(id, "reasoning") || strings.Contains(id, "think-deeper") ||
+		strings.Contains(id, "sol") || strings.Contains(id, "astra") ||
+		strings.Contains(id, "opus") || strings.HasPrefix(id, "claude-sonnet-5") ||
+		strings.HasPrefix(id, "grok") || id == "muse-spark" || id == "critique" || id == "claude-fable" {
 		return base, nil
 	}
 	if e == "" || e == "none" || e == "minimal" || e == "low" {
 		return base, nil
 	}
-	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "claude", "claude-sonnet":
+	switch id {
+	case "claude", "claude-sonnet", "claude-sonnet-4.6":
 		return "Claude_Sonnet_Reasoning", nil
-	case "gpt-5.2":
+	case "gpt-5.2", "gpt-5.2-quick":
 		return "Gpt_5_2_Reasoning", nil
-	case "gpt-5.3":
+	case "gpt-5.3", "gpt-5.3-quick":
 		return "Gpt_5_3_Reasoning", nil
-	case "gpt-5.4":
+	case "gpt-5.4", "gpt-5.4-quick":
 		return "Gpt_5_4_Reasoning", nil
-	case "gpt-5.5":
+	case "gpt-5.5", "gpt-5.5-quick":
 		return "Gpt_5_5_Reasoning", nil
-	case "gpt-5.6":
+	case "gpt-5.6", "gpt-5.6-quick":
 		return "Gpt_5_6_Reasoning", nil
+	case "gpt-6":
+		return "Gpt_6_Reasoning", nil
 	default:
+		if base != "magic" {
+			if strings.HasSuffix(base, "_Chat") {
+				candidate := strings.TrimSuffix(base, "_Chat") + "_Reasoning"
+				if validUpstreamTone(candidate) {
+					return candidate, nil
+				}
+			}
+			return base, nil
+		}
 		return "Gpt_5_5_Reasoning", nil
 	}
+}
+
+// effectiveScenarioAndLicense upgrades the WS scenario/licenseType to
+// OfficeWebPaidCopilot + Premium when the requested model or tone is gated on
+// the paid scenario (e.g. Gpt_6_Reasoning, Claude_Sonnet_5) and the runtime
+// setting is still at the default included scenario. Ungated models
+// (gpt-6-sol, gpt-6.1-sol, claude-opus, etc.) keep the configured scenario so
+// they work on non-premium accounts and avoid spending priority-access quotas
+// unnecessarily.
+func effectiveScenarioAndLicense(model, tone, cfgScenario, cfgLicense string) (string, string) {
+	if cfgScenario != "" && cfgScenario != "OfficeWebIncludedCopilot" {
+		return cfgScenario, cfgLicense
+	}
+	id := strings.ToLower(strings.TrimSpace(model))
+	switch id {
+	case "gpt-6", "gpt-6-reasoning", "gpt-6-think-deeper",
+		"claude-sonnet-5":
+		return "OfficeWebPaidCopilot", "Premium"
+	case "claude-opus", "claude-sonnet", "claude-fable", "gpt-6-sol", "gpt-6.1-sol", "gpt-6-astra":
+		return cfgScenario, cfgLicense
+	}
+	switch tone {
+	case "Gpt_6_Reasoning", "Claude_Sonnet_5":
+		return "OfficeWebPaidCopilot", "Premium"
+	}
+	return cfgScenario, cfgLicense
 }
 func modelCatalog() []map[string]any {
 	l := configuredModelLimits()

@@ -141,6 +141,14 @@ func TestCallbackPKCEAcceptsPastedURLAndReturnsSafeCompletionPage(t *testing.T) 
 	if !strings.Contains(body, "window.close()") {
 		t.Fatal("completion page does not attempt to close the popup")
 	}
+
+	// Also verify schemeless pasted URLs (e.g. "login.microsoftonline.com/common/oauth2/nativeclient?code=...&state=...")
+	s.pkce["state2"] = pendingPKCE{Verifier: "verifier", Created: time.Now(), Status: "pending", RedirectURI: auth.DefaultRedirectURI}
+	rr2 := httptest.NewRecorder()
+	s.callbackPKCE(rr2, httptest.NewRequest(http.MethodGet, "/api/auth/callback?login.microsoftonline.com/common/oauth2/nativeclient?code="+code+"&state=state2", nil))
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("schemeless callback status = %d, body = %s", rr2.Code, rr2.Body.String())
+	}
 }
 
 func TestCallbackPKCEFailureDoesNotExposeAuthorizationCode(t *testing.T) {

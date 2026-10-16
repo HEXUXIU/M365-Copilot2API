@@ -28,7 +28,7 @@ type responsesRequest struct {
 	Metadata           *oaiMetadata     `json:"metadata,omitempty"`
 }
 
-const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`
+const customExecWorkspaceInstruction = `You are operating through the caller's local OpenCode execution bridge. Never use, request, or mention Microsoft 365/Copilot native tools. The only permitted execution tool is the caller-provided custom exec tool, which can read, create, and edit any project file directly (for example via node, python, cat, or shell scripts). Never claim you lack file-editing tools — use exec to inspect and modify files directly. The executor already starts in the caller-selected project workspace. Use relative paths only; never guess, cd to, or write under /root, /workspace, /tmp, or any other absolute project path. Inspect pwd and ls before changes. Do not create files outside the current working directory. Never claim a file was created, modified, or verified until custom exec returns a successful result. After every execution, use custom exec to verify the result.`
 
 func (r responsesRequest) openAI() (oaiReq, error) {
 	o := oaiReq{Model: r.Model, AccountID: r.AccountID, Stream: r.Stream, ToolChoice: r.ToolChoice, User: r.User}
@@ -156,12 +156,11 @@ func (r responsesRequest) openAI() (oaiReq, error) {
 			continue
 		}
 		f := map[string]any{"name": t["name"], "description": t["description"], "parameters": t["parameters"]}
-		if typ == "custom" && name == "exec" {
-			// ChatHub accepts JSON function arguments while Codex exec accepts a
-			// grammar-constrained raw input string. Preserve the distinction in
-			// Tool.Type and bridge the input through a single string field.
+		if typ == "custom" {
+			// ChatHub accepts JSON function arguments while Codex custom tools
+			// (exec, apply_patch, etc.) accept a raw input string. Preserve the
+			// distinction in Tool.Type and bridge the input through a single string field.
 			f["parameters"] = map[string]any{"type": "object", "properties": map[string]any{"input": map[string]any{"type": "string"}}, "required": []string{"input"}, "additionalProperties": false}
-			hasCustomExec = true
 		} else if typ != "function" {
 			continue
 		}

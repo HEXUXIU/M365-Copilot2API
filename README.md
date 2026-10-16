@@ -343,11 +343,17 @@ curl http://127.0.0.1:4141/v1/messages \
 
 | 模型 | 默认推理级别 | 说明 |
 |------|-------------|------|
-| `gpt-5.6-reasoning` | `medium` | 推理模型 |
-| `gpt-5.5` / `gpt-5.4` / `gpt-5.3` / `gpt-5.2` | `medium` | 快速模型（`reasoning_effort` 可切档） |
+| `gpt-6.1-sol` / `gpt-6-sol` | `medium` | GPT-6.1 Sol / GPT-6.0 Sol 推理模型（上游对应 `Gpt_61_Sol_Reasoning` / `Gpt_6_Sol_Reasoning`） |
+| `gpt-6-reasoning` / `gpt-6-astra` | `medium` | GPT-6 推理（上游对应 `Gpt_6_Reasoning`，需 Paid 场景席位）/ GPT-6 Astra |
+| `gpt-5.6-reasoning` / `gpt-5.6` | `medium` | GPT-5.6 推理与快速模型（上游对应 `Gpt_5_6_Reasoning` / `Gpt_5_6_Chat`） |
+| `gpt-5.5` / `gpt-5.4` / `gpt-5.3` / `gpt-5.2` | `medium` | 快速模型（上游对应 `Gpt_5_x_Chat`，`reasoning_effort` 可切 `_Reasoning`） |
+| `claude-sonnet` / `claude-sonnet-5` | `medium` | Claude Sonnet 模型（上游对应 `Claude_Sonnet` / `Claude_Sonnet_5`） |
+| `claude-opus` / `claude-fable` | `medium` | Claude Opus 与 Fable 模型（上游对应 `Claude_Opus` / `Claude_Fable`） |
+| `grok-4.5` / `grok-reasoning` | `medium` | Grok 系列模型（上游对应 `Grok_4_5` / `Grok_Reasoning`） |
 | `flux-3` / `flux-4` | - | 生图模型（走 `/v1/images` 真实图像管线） |
 
-- 模型映射把公开模型名翻译成上游 tone；控制台可增删映射、调整默认推理级别。
+- 模型映射把公开模型名翻译成发往 M365 上游的 `tone` 请求参数；控制台可增删映射、调整默认推理级别。
+- 注意：各模型的可用性取决于账号所属租户的订阅席位及管理员策略，部分受限模型（如 Claude_Sonnet_5、Gpt_6_Reasoning）在未配置付费席位的账号上会收到上游授权拦截。
 - 推理强度通过 OpenAI 兼容的 `reasoning_effort` 参数调整（`none/minimal/low/medium/high/xhigh`），不再用虚假模型名区分档位。
 - M365 订阅会上线的新模型名（如 `gpt-5.2`、`gpt-5.4`、`codex` 系）以实际目录为准，可在控制台配置导入。
 

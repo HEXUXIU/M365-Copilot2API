@@ -1,27 +1,71 @@
 package chathub
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
-// snapshotReconciler consumes ChatHub's cumulative DeepLeo text snapshots.
-// The snapshot stream is authoritative; writeAtCursor is a redundant channel
-// for the same text and must never be concatenated with these values.
-// Ported from community PR #86 (commit 7ddf077) by 2164312714-svg.
+// snapshotReconciler reconciles ChatHub's writeAtCursor deltas and cumulative
+// DeepLeo text snapshots without duplicating text or dropping multi-message
+// segments.
 type snapshotReconciler struct {
-	// last mirrors the most recent accepted snapshot. Each frame the upstream
-	// resends the full accumulated text, so storing every frame as a distinct
-	// string retains O(n^2) bytes across a long answer; the slice below keeps
-	// only the two most recent frames (previous + current) for comparison.
 	last    string
 	prev    string
 	prevLen int
 	seen    bool
+	msgID   string
+}
+
+// ApplyDelta consumes a writeAtCursor delta for the active bot message and
+// advances `last` so subsequent cumulative snapshots for the same message only
+// emit any unseen tail beyond what writeAtCursor already delivered.
+func (r *snapshotReconciler) ApplyDelta(delta string) (string, bool) {
+	if delta == "" {
+		return "", false
+	}
+	if !r.seen {
+		r.seen = true
+		r.last = delta
+		return delta, true
+	}
+	r.prev = r.last
+	r.prevLen = len(r.last)
+	r.last += delta
+	return delta, true
+}
+
+// ApplyForMessage switches segment tracking when ChatHub starts a new bot
+// message ID within the same turn (for example, a one-line intro message
+// followed by a separate code-block message).
+func (r *snapshotReconciler) ApplyForMessage(msgID, snapshot string) (string, bool) {
+	if msgID != "" && r.msgID != "" && msgID != r.msgID {
+		r.msgID = msgID
+		r.prev = r.last
+		r.prevLen = len(r.last)
+		r.last = snapshot
+		if snapshot == "" {
+			return "", false
+		}
+		if r.prev != "" && !strings.HasSuffix(r.prev, "\n") && !strings.HasPrefix(snapshot, "\n") {
+			return "\n" + snapshot, true
+		}
+		return snapshot, true
+	}
+	if msgID != "" && r.msgID == "" {
+		r.msgID = msgID
+	}
+	return r.Apply(snapshot)
 }
 
 // Apply returns only text not already emitted from the accepted snapshot
 // sequence. A shorter or non-prefix snapshot is an out-of-order/rewrite frame
-// and is ignored until a later authoritative snapshot or final result arrives.
+// and is ignored unless it clearly starts a new fenced block segment.
 func (r *snapshotReconciler) Apply(snapshot string) (string, bool) {
 	if snapshot == "" {
+		return "", false
+	}
+	// Reject a snapshot whose trailing bytes split a multi-byte UTF-8 rune.
+	if !utf8.ValidString(snapshot) {
 		return "", false
 	}
 	if !r.seen {
@@ -31,16 +75,23 @@ func (r *snapshotReconciler) Apply(snapshot string) (string, bool) {
 	}
 	if strings.HasPrefix(snapshot, r.last) {
 		suffix := snapshot[len(r.last):]
-		// Release the previous frame so only the last two snapshots are
-		// retained; upstream resends the full text every frame and a long
-		// answer would otherwise accumulate O(n^2) bytes.
 		r.prev = r.last
 		r.prevLen = len(r.last)
 		r.last = snapshot
 		return suffix, suffix != ""
 	}
-	// ChatHub snapshots are monotonic in the verified protocol captures. Do
-	// not attempt byte-level overlap matching: it can split UTF-8 and, more
-	// importantly, can turn a rewrite into duplicated public text.
+	// When ChatHub starts a new fenced block segment after an intro sentence
+	// without changing messageId (snapshot resets to "```..."), reset segment
+	// tracking so the new block streams instead of being skipped.
+	if strings.HasPrefix(strings.TrimSpace(snapshot), "```") && !strings.HasPrefix(strings.TrimSpace(r.last), "```") {
+		sep := ""
+		if r.last != "" && !strings.HasSuffix(r.last, "\n") {
+			sep = "\n"
+		}
+		r.prev = r.last
+		r.prevLen = len(r.last)
+		r.last = snapshot
+		return sep + snapshot, true
+	}
 	return "", false
 }

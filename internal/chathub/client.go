@@ -197,29 +197,30 @@ type Account struct {
 }
 
 type Request struct {
-	Text                  string
-	Tone                  string
-	ConversationID        string
-	SessionID             string
-	Attachments           []Attachment
-	Tools                 []Tool
-	ToolChoice            any
-	MCPServerURL          string
-	DisableWebSearch      bool
-	Started               bool
-	ConversationSignature string
-	PreviousMessages      []ContextMessage
-	LicenseType           string
-	Scenario              string
-	ConnectedFederatedIDs []string
-	FeatureFlags          FeatureFlags
-	DisableMemory         bool
-	Locale                string
-	Market                string
-	TimeZone              string
-	TimeZoneOffset        int
-	DeviceOS              string
-	FirstTokenTimeout     time.Duration
+	Text                   string
+	Tone                   string
+	ConversationID         string
+	SessionID              string
+	Attachments            []Attachment
+	Tools                  []Tool
+	ToolChoice             any
+	MCPServerURL           string
+	DisableWebSearch       bool
+	DisableCodeInterpreter bool
+	Started                bool
+	ConversationSignature  string
+	PreviousMessages       []ContextMessage
+	LicenseType            string
+	Scenario               string
+	ConnectedFederatedIDs  []string
+	FeatureFlags           FeatureFlags
+	DisableMemory          bool
+	Locale                 string
+	Market                 string
+	TimeZone               string
+	TimeZoneOffset         int
+	DeviceOS               string
+	FirstTokenTimeout      time.Duration
 }
 
 type FeatureFlags struct {
@@ -655,7 +656,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 	// outside tracing (ported from community PR #86, commit 7ddf077).
 	skippedSnapshots := 0
 	var snapshots snapshotReconciler
-	emitSnapshot := func(snapshot string) error {
+	emitSnapshotForMsg := func(msgID, snapshot string) error {
 		if snapshot == "" {
 			return nil
 		}
@@ -671,7 +672,7 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 		if contentPolicyDetected(snapshot) {
 			return ErrOffensiveContent
 		}
-		suffix, ok := snapshots.Apply(snapshot)
+		suffix, ok := snapshots.ApplyForMessage(msgID, snapshot)
 		if !ok {
 			if snapshots.seen {
 				skippedSnapshots++
@@ -857,8 +858,13 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 							suggestions = append(suggestions, parseSuggestedResponse(sr))
 						}
 					}
-					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame && chTrace {
-						log.Printf("[trace:writeAtCursor] ignored redundant delta len=%d snapshot_seen=%t", len(w), snapshots.seen)
+					if w, ok := arg["writeAtCursor"].(string); ok && w != "" && !toolFrame && len(msgs) == 0 {
+						if delta, ok := snapshots.ApplyDelta(w); ok {
+							if err := emitDelta(delta); err != nil {
+								returnConn = false
+								return Result{}, err
+							}
+						}
 					}
 					if patches, ok := arg["patches"].([]any); ok {
 						for _, praw := range patches {
@@ -945,9 +951,10 @@ func (c *Client) chatWithHandlers(ctx context.Context, acc Account, req Request,
 								}
 							}
 							if author == "bot" && mt == "" && text != "" {
+								msgID, _ := m["messageId"].(string)
 								// ChatHub often sends the first visible text as a full snapshot,
 								// followed by cursor deltas. Emit only the unseen suffix.
-								if err := emitSnapshot(text); err != nil {
+								if err := emitSnapshotForMsg(msgID, text); err != nil {
 									returnConn = false
 									return Result{}, err
 								}
@@ -1435,22 +1442,33 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 		}
 		break
 	}
+	disableCI := req.DisableCodeInterpreter || len(req.Tools) > 0 || strings.Contains(req.Text, "You are a tool selection assistant.")
 	optionsSets := []any{
 		"search_result_progress_messages_with_search_queries",
 		"update_textdoc_response_after_streaming",
 		"deepleo_networking_timeout_10minutes_canmore",
 		"cwc_flux_image",
-		"cwc_code_interpreter",
-		"cwc_code_interpreter_amsfix",
+	}
+	if !disableCI {
+		optionsSets = append(optionsSets,
+			"cwc_code_interpreter",
+			"cwc_code_interpreter_amsfix",
+		)
+	}
+	optionsSets = append(optionsSets,
 		"cwcfluxgptv",
 		"flux_v3_gptv_enable_upload_multi_image_in_turn_wo_ch",
 		"gptvnorm2048",
-		"cwc_code_interpreter_citation_fix",
-		"code_interpreter_interactive_charts",
-		"cwc_code_interpreter_interactive_charts_inline_image",
-		"code_interpreter_matplotlib_patching",
-		"cwc_fileupload_odb",
+	)
+	if !disableCI {
+		optionsSets = append(optionsSets,
+			"cwc_code_interpreter_citation_fix",
+			"code_interpreter_interactive_charts",
+			"cwc_code_interpreter_interactive_charts_inline_image",
+			"code_interpreter_matplotlib_patching",
+		)
 	}
+	optionsSets = append(optionsSets, "cwc_fileupload_odb")
 	if req.FeatureFlags.MemoryV2 {
 		optionsSets = append(optionsSets, "update_memory_plugin", "add_custom_instructions")
 	}
@@ -1463,8 +1481,14 @@ func chatPayload(req Request, requestID string, firstTurn bool) string {
 		"flux_v3_references_entities",
 		"flux_v3_references_ci",
 		"add_filestore_filetype",
-		"cwc_code_interpreter_citation_sourceannotations",
-		"cdxcwc_code_interpreter_hallucinated_url_filter",
+	)
+	if !disableCI {
+		optionsSets = append(optionsSets,
+			"cwc_code_interpreter_citation_sourceannotations",
+			"cdxcwc_code_interpreter_hallucinated_url_filter",
+		)
+	}
+	optionsSets = append(optionsSets,
 		"flux_v3_image_gen_enable_dimensions",
 		"flux_v3_image_gen_enable_non_watermarked_storage",
 		"flux_v3_image_gen_enable_icon_dimensions",
@@ -1635,10 +1659,12 @@ func parseSuggestedResponse(m map[string]any) SuggestedResponse {
 
 var (
 	citeOpen  = string([]rune{0xE200}) + "cite" + string([]rune{0xE202})
+	citeEmpty = string([]rune{0xE200}) + "cite" + string([]rune{0xE201})
 	citeClose = string([]rune{0xE201})
 )
 
 func StripCitationMarkers(text string, refs map[string]Reference) (string, []string) {
+	text = strings.ReplaceAll(text, citeEmpty, "")
 	if !strings.Contains(text, citeOpen) {
 		return text, nil
 	}

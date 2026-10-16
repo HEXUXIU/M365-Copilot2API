@@ -31,7 +31,18 @@ var configurableCodexModels = []string{
 	"gpt-5.4",
 	"gpt-5.4-mini",
 	"gpt-5.5",
+	"gpt-5.6",
 	"gpt-5.6-reasoning",
+	"gpt-6-sol",
+	"gpt-6.1-sol",
+	"gpt-6-reasoning",
+	"gpt-6-astra",
+	"claude-sonnet",
+	"claude-sonnet-5",
+	"claude-sonnet-5.5",
+	"claude-opus",
+	"claude-opus-4.8",
+	"claude-opus-5.5",
 	"flux-3",
 	"flux-4",
 	"codex-auto-review",
@@ -93,7 +104,7 @@ func defaultRuntimeSettings() runtimeSettings {
 	return runtimeSettings{
 		MaxToolCallsPerTurn: envInt("M365_MAX_TOOL_CALLS_PER_TURN", 32), MaxToolRounds: envInt("M365_MAX_TOOL_ROUNDS", 512),
 		ContextWindow: envInt("M365_CONTEXT_WINDOW", 128000), MaxOutputTokens: envInt("M365_MAX_OUTPUT_TOKENS", 16384),
-		ChatTimeoutSeconds: envInt("M365_CHAT_TIMEOUT_SECONDS", 120), FirstTokenTimeoutSeconds: envInt("M365_FIRST_TOKEN_TIMEOUT_SECONDS", 40), ImageTimeoutSeconds: envInt("M365_IMAGE_TIMEOUT_SECONDS", 150), LogLevel: firstNonEmptySetting(os.Getenv("M365_LOG_LEVEL"), "info"),
+		ChatTimeoutSeconds: envInt("M365_CHAT_TIMEOUT_SECONDS", 300), FirstTokenTimeoutSeconds: envInt("M365_FIRST_TOKEN_TIMEOUT_SECONDS", 40), ImageTimeoutSeconds: envInt("M365_IMAGE_TIMEOUT_SECONDS", 150), LogLevel: firstNonEmptySetting(os.Getenv("M365_LOG_LEVEL"), "info"),
 		DebugLogPath: os.Getenv("M365_DEBUG_LOG"), ListenAddress: os.Getenv("M365_LISTEN"), ConfigPath: os.Getenv("M365_CONFIG"),
 		TokenCachePath: os.Getenv("M365_TOKEN_CACHE"), SessionCachePath: os.Getenv("M365_SESSION_CACHE"), OutboundProxy: os.Getenv(outbound.EnvProxy), ClientID: os.Getenv("M365_CLIENT_ID"),
 		Authority: os.Getenv("M365_AUTHORITY"), RedirectURI: os.Getenv("M365_REDIRECT_URI"), Scope: os.Getenv("M365_SCOPE"),
@@ -130,6 +141,11 @@ var openSettingsStore = sync.OnceValue(func() *settingsStore {
 	s := &settingsStore{path: settingsPath(), v: defaultRuntimeSettings()}
 	if b, e := os.ReadFile(s.path); e == nil {
 		_ = json.Unmarshal(b, &s.v)
+	}
+	// Migrate persisted settings that inherited the broken "native" default from
+	// v0.7.1–v0.7.3 unless M365_TOOL_PLANNING_MODE=native was explicitly set.
+	if s.v.ToolPlanningMode == "" || (s.v.ToolPlanningMode == "native" && !strings.EqualFold(strings.TrimSpace(os.Getenv("M365_TOOL_PLANNING_MODE")), "native")) {
+		s.v.ToolPlanningMode = "router"
 	}
 	if e := validateSettings(s.v); e != nil {
 		log.Printf("[settings] invalid persisted settings: %v", e)
@@ -213,9 +229,9 @@ func validateSettings(v runtimeSettings) error {
 	if !validLicenses[v.LicenseType] {
 		return fmt.Errorf("licenseType 必须为 Starter、Premium、Free、BCAIS、BCSWW、BCWAF 或 BCWBF")
 	}
-	validScenarios := map[string]bool{"OfficeWebIncludedCopilot": true, "Bizchat": true, "CopilotConsumer": true, "Chathub": true}
+	validScenarios := map[string]bool{"OfficeWebIncludedCopilot": true, "OfficeWebPaidCopilot": true, "Bizchat": true, "CopilotConsumer": true, "Chathub": true}
 	if !validScenarios[v.Scenario] {
-		return fmt.Errorf("scenario 必须为 OfficeWebIncludedCopilot、Bizchat、CopilotConsumer 或 Chathub")
+		return fmt.Errorf("scenario 必须为 OfficeWebIncludedCopilot、OfficeWebPaidCopilot、Bizchat、CopilotConsumer 或 Chathub")
 	}
 	if v.AccountConcurrencyLimit < 1 || v.AccountConcurrencyLimit > 64 {
 		return fmt.Errorf("账号并发上限必须为 1-64")
@@ -245,7 +261,7 @@ func (s *settingsStore) save(v runtimeSettings) error {
 func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		jsonOut(w, map[string]any{"settings": s.settings.get(), "codexModels": configurableCodexModels, "upstreamTones": knownUpstreamTones(), "autoStartSupported": autoStartSupported(), "autoStart": autoStartEnabled(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "outboundProxy", "proxyPool", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
+		jsonOut(w, map[string]any{"settings": s.settings.get(), "codexModels": configurableCodexModels, "upstreamTones": liveUpstreamTones(), "autoStartSupported": autoStartSupported(), "autoStart": autoStartEnabled(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "outboundProxy", "proxyPool", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
 	case http.MethodPut:
 		// 前端可能只修改一个字段（如监听地址），其余字段以零值提交。
 		// 逐字段合并到当前设置再校验，避免"改一个字段弄丢其他配置"。

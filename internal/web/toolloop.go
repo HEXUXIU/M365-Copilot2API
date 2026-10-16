@@ -45,6 +45,84 @@ type rejectedToolCall struct {
 	Reason string
 }
 
+// normalizeToolArgsForSchema maps common synonymous command/patch argument keys
+// (e.g. "command"/"cmd"/"patch" -> "input") when a tool's schema requires one
+// specific key, and strips undeclared nil/extra keys when additionalProperties
+// is false so valid tool calls are not discarded over minor key-name mismatches.
+func normalizeToolArgsForSchema(args map[string]any, fn map[string]any) bool {
+	if args == nil || fn == nil {
+		return false
+	}
+	params, ok := fn["parameters"].(map[string]any)
+	if !ok || params == nil {
+		return false
+	}
+	props, _ := params["properties"].(map[string]any)
+	if props == nil {
+		return false
+	}
+	changed := false
+	aliasGroups := [][]string{
+		{"input", "command", "cmd", "code", "script", "patch", "patchText"},
+		{"file_path", "path", "filePath", "filepath", "filename", "file", "target_file"},
+		{"content", "contents", "text", "body", "data"},
+		{"old_string", "old_str", "old", "search", "target"},
+		{"new_string", "new_str", "new", "replace", "replacement"},
+		{"skill", "skill_name", "name"},
+	}
+	for _, group := range aliasGroups {
+		var targetKey string
+		for _, k := range group {
+			if _, declared := props[k]; declared {
+				targetKey = k
+				break
+			}
+		}
+		if targetKey == "" {
+			continue
+		}
+		if _, alreadySet := args[targetKey]; alreadySet {
+			continue
+		}
+		for _, k := range group {
+			if k == targetKey {
+				continue
+			}
+			if val, exists := args[k]; exists && val != nil {
+				if _, isDeclared := props[k]; !isDeclared {
+					args[targetKey] = val
+					delete(args, k)
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	// Fill non-semantic required metadata fields (such as "description" on
+	// Bash/shell tools) when the primary action argument is present, so a valid
+	// command call is not discarded over an omitted description.
+	if reqList, ok := params["required"].([]any); ok {
+		for _, rawReq := range reqList {
+			reqKey, _ := rawReq.(string)
+			if strings.EqualFold(reqKey, "description") {
+				if _, exists := args[reqKey]; !exists && len(args) > 0 {
+					args[reqKey] = "Execute tool action"
+					changed = true
+				}
+			}
+		}
+	}
+	if ap, ok := params["additionalProperties"].(bool); ok && !ap {
+		for k := range args {
+			if _, declared := props[k]; !declared {
+				delete(args, k)
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
 // validateDetectedToolCalls is the final trust boundary before a model-selected
 // call is serialized to the client. ChatHub/native events and model-generated
 // routing text are both untrusted: an undeclared name such as "unknown_tool"
@@ -68,6 +146,11 @@ func validateDetectedToolCalls(calls []detectedToolCall, tools []map[string]any,
 		} else if err := json.Unmarshal(call.Arguments, &args); err != nil {
 			rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: "arguments are not a JSON object"})
 			continue
+		}
+		if normalizeToolArgsForSchema(args, fn) {
+			if b, err := json.Marshal(args); err == nil {
+				call.Arguments = b
+			}
 		}
 		if err := schemaValid(args, fn); err != nil {
 			rejected = append(rejected, rejectedToolCall{Name: call.Name, Reason: err.Error()})

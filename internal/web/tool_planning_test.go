@@ -2,16 +2,16 @@ package web
 
 import "testing"
 
-func TestToolPlanningModeDefaultsToNative(t *testing.T) {
-	for _, raw := range []string{"", "native", "NATIVE", "unexpected"} {
-		if got := toolPlanningMode(raw); got != "native" {
-			t.Fatalf("toolPlanningMode(%q)=%q, want native", raw, got)
+func TestToolPlanningModeDefaultsToRouter(t *testing.T) {
+	for _, raw := range []string{"", "router", "ROUTER", "unexpected"} {
+		if got := toolPlanningMode(raw); got != "router" {
+			t.Fatalf("toolPlanningMode(%q)=%q, want router", raw, got)
 		}
 	}
 }
 
-func TestToolPlanningModeAcceptsRouterOptIn(t *testing.T) {
-	if got := toolPlanningMode(" router "); got != "router" {
-		t.Fatalf("toolPlanningMode(router)=%q, want router", got)
+func TestToolPlanningModeAcceptsNativeOptIn(t *testing.T) {
+	if got := toolPlanningMode(" native "); got != "native" {
+		t.Fatalf("toolPlanningMode(native)=%q, want native", got)
 	}
 }

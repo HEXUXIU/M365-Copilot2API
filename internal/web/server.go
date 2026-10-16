@@ -23,7 +23,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -203,6 +202,7 @@ type ToolCallRecord struct {
 type RespNode struct {
 	At        time.Time                  `json:"at"`
 	Messages  []oaiMsg                   `json:"messages"`
+	Tools     []chathub.Tool             `json:"tools,omitempty"`
 	ToolCalls map[string]*ToolCallRecord `json:"tool_calls,omitempty"`
 	Version   int64                      `json:"version"`
 	Consumed  bool                       `json:"consumed"`
@@ -325,6 +325,7 @@ func (s *Server) InitM365CloudClient() {
 	}
 	InitM365CloudClient(clientID, acc.TID, acc.RefreshToken)
 	log.Printf("[m365-cloud] client initialized for account %s", acc.Email)
+	go syncUpstreamTones()
 }
 
 // keepPoolWarm re-warms the accounts most likely to serve the next requests,
@@ -1168,10 +1169,19 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
 	oauthError := r.URL.Query().Get("error")
-	// also accept pasted full callback URL
+	// also accept pasted full callback URL (with or without https:// scheme)
 	if code == "" && oauthError == "" {
-		if u := r.URL.Query().Get("url"); u != "" {
-			if parsed, err := http.NewRequest(http.MethodGet, u, nil); err == nil {
+		rawURL := r.URL.Query().Get("url")
+		if rawURL == "" && strings.Contains(r.URL.RawQuery, "code=") {
+			if idx := strings.Index(r.URL.RawQuery, "code="); idx >= 0 {
+				rawURL = "https://login.microsoftonline.com/common/oauth2/nativeclient?" + r.URL.RawQuery[idx:]
+			}
+		}
+		if rawURL != "" {
+			if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+				rawURL = "https://" + rawURL
+			}
+			if parsed, err := http.NewRequest(http.MethodGet, rawURL, nil); err == nil {
 				code = parsed.URL.Query().Get("code")
 				oauthError = parsed.URL.Query().Get("error")
 				if state == "" {
@@ -1589,31 +1599,60 @@ type responseFormat struct {
 
 func modelTone(model string) string {
 	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "gpt-5.2":
+	case "gpt-5.2", "gpt-5.2-quick":
 		return "Gpt_5_2_Chat"
-	case "gpt-5.2-reasoning":
+	case "gpt-5.2-reasoning", "gpt-5.2-think-deeper":
 		return "Gpt_5_2_Reasoning"
-	case "gpt-5.3":
+	case "gpt-5.3", "gpt-5.3-quick":
 		return "Gpt_5_3_Chat"
-	case "gpt-5.4":
+	case "gpt-5.3-reasoning", "gpt-5.3-think-deeper":
+		return "Gpt_5_3_Reasoning"
+	case "gpt-5.4", "gpt-5.4-quick":
 		return "Gpt_5_4_Chat"
-	case "gpt-5.4-reasoning":
+	case "gpt-5.4-reasoning", "gpt-5.4-think-deeper":
 		return "Gpt_5_4_Reasoning"
-	case "gpt-5.5":
+	case "gpt-5.5", "gpt-5.5-quick":
 		return "Gpt_5_5_Chat"
-	case "gpt-5.5-reasoning":
+	case "gpt-5.5-reasoning", "gpt-5.5-think-deeper":
 		return "Gpt_5_5_Reasoning"
-	case "gpt-5.6-reasoning":
+	case "gpt-5.6", "gpt-5.6-quick":
+		return "Gpt_5_6_Chat"
+	case "gpt-5.6-reasoning", "gpt-5.6-think-deeper":
 		return "Gpt_5_6_Reasoning"
+	case "gpt-6", "gpt-6-reasoning", "gpt-6-think-deeper":
+		return "Gpt_6_Reasoning"
+	case "gpt-6-astra", "gpt6-astra":
+		return "Gpt_6_Astra"
+	case "gpt-6-sol", "gpt-6.0-sol", "gpt6sol", "gpt-6-sol-reasoning":
+		return "Gpt_6_Sol_Reasoning"
+	case "gpt-6-sol-chat":
+		return "Gpt_6_Sol_Chat"
+	case "gpt-6.1-sol", "gpt-6.1-sol-reasoning":
+		return "Gpt_61_Sol_Reasoning"
 	case "claude", "claude-sonnet":
 		return "Claude_Sonnet"
-	case "claude-sonnet-reasoning":
+	case "claude-sonnet-5":
+		return "Claude_Sonnet_5"
+	case "claude-sonnet-reasoning", "claude-sonnet-think-deeper":
 		return "Claude_Sonnet_Reasoning"
-	case "gpt-5.4-quick":
-		return "Gpt_5_4_Chat"
-	case "gpt-5.3-think-deeper":
-		return "Gpt_5_3_Chat"
+	case "claude-opus":
+		return "Claude_Opus"
+	case "claude-fable":
+		return "Claude_Fable"
+	case "grok-4.5":
+		return "Grok_4_5"
+	case "grok-auto":
+		return "Grok_Auto"
+	case "grok-reasoning":
+		return "Grok_Reasoning"
+	case "muse-spark":
+		return "Muse_Spark"
+	case "critique":
+		return "Critique"
 	default:
+		if tone, ok := dynamicToneForModel(model); ok {
+			return tone
+		}
 		return "magic"
 	}
 }
@@ -1944,11 +1983,12 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 	defer cancel()
 	testCfg := s.settings.get()
+	testScenario, testLicense := effectiveScenarioAndLicense(b.Model, tone, testCfg.Scenario, testCfg.LicenseType)
 	res, err := s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, chathub.Request{
 		Text:         prompt,
 		Tone:         tone,
-		LicenseType:  testCfg.LicenseType,
-		Scenario:     testCfg.Scenario,
+		LicenseType:  testLicense,
+		Scenario:     testScenario,
 		FeatureFlags: s.featureFlags(),
 	})
 	ms := time.Since(start).Milliseconds()
@@ -2115,13 +2155,14 @@ func normalizeLegacyTools(body *oaiReq) {
 }
 
 func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedger, planningMode string, mcpServerURL string, cfg runtimeSettings, flags chathub.FeatureFlags, locale chathubLocale, disableMemory bool) chathub.Request {
-	if len(ledger.Completed) > 0 || len(ledger.Pending) > 0 {
+	if (len(ledger.Completed) > 0 || len(ledger.Pending) > 0) && !strings.Contains(answerPrompt, "[tool result id=") {
 		answerPrompt += "\n" + ledger.RouterContext()
+		if len(ledger.Completed) > 0 {
+			answerPrompt += "\nFINAL ANSWER RULE: Report only actions supported by completed tool results. If the goal is not fully verified, state exactly what remains unconfirmed."
+		}
 	}
-	if len(ledger.Completed) > 0 {
-		answerPrompt += "\nFINAL ANSWER RULE: Report only actions supported by completed tool results. If the goal is not fully verified, state exactly what remains unconfirmed."
-	}
-	req := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, LicenseType: cfg.LicenseType, Scenario: cfg.Scenario, FeatureFlags: flags, Locale: locale.Locale, Market: locale.Market, TimeZone: locale.TimeZone, TimeZoneOffset: locale.TimeZoneOffset, DeviceOS: locale.DeviceOS, DisableMemory: disableMemory}
+	reqScenario, reqLicense := effectiveScenarioAndLicense(body.Model, tone, cfg.Scenario, cfg.LicenseType)
+	req := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, LicenseType: reqLicense, Scenario: reqScenario, FeatureFlags: flags, Locale: locale.Locale, Market: locale.Market, TimeZone: locale.TimeZone, TimeZoneOffset: locale.TimeZoneOffset, DeviceOS: locale.DeviceOS, DisableMemory: disableMemory, DisableCodeInterpreter: len(body.Tools) > 0}
 	if planningMode == "native" {
 		req.Tools = body.Tools
 		req.ToolChoice = body.ToolChoice
@@ -2311,9 +2352,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			body.AccountID = firstNonEmpty(body.AccountID, resolved.AccountID)
 			log.Printf("[session-resolver] matched=%s conversation=%s history=%d total=%d", resolved.MatchedBy, resolved.ConversationID, resolved.HistoryLen, len(body.Messages))
 			if resolved.HistoryLen > 0 && resolved.HistoryLen < len(body.Messages) {
-				incPrompt, incAtt := flattenPromptMessages(body.Messages[resolved.HistoryLen:], nil)
+				sliceStart := incrementalSliceStart(body.Messages, resolved.HistoryLen)
+				incPrompt, incAtt := flattenPromptMessages(body.Messages[sliceStart:], nil)
 				incPrompt = strings.TrimSpace(incPrompt)
-				if incPrompt != "" {
+				if incPrompt != "" && hasActionableTurn(incPrompt) {
 					answerPrompt = incPrompt
 					body.Attachments = incAtt
 				}
@@ -2388,9 +2430,10 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		sysHash := systemPromptHash(body.Messages)
 		if cached := s.convCache.Lookup(acc.ID, convCacheModel); cached != nil && cached.SystemPrompt == sysHash {
 			if len(body.Messages) > cached.MessageCount {
-				incPrompt, incAtt := flattenPromptMessages(body.Messages[cached.MessageCount:], nil)
+				sliceStart := incrementalSliceStart(body.Messages, cached.MessageCount)
+				incPrompt, incAtt := flattenPromptMessages(body.Messages[sliceStart:], nil)
 				incPrompt = strings.TrimSpace(incPrompt)
-				if incPrompt != "" {
+				if incPrompt != "" && hasActionableTurn(incPrompt) {
 					body.ConversationID = cached.ConversationID
 					body.SessionID = cached.SessionID
 					answerPrompt = incPrompt
@@ -2422,8 +2465,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	if body.ToolChoice == nil && len(toolMaps) > 0 {
 		body.ToolChoice = "auto"
 	}
+	planningMode := s.settings.get().ToolPlanningMode
 	var mcpServerURL string
-	if len(toolMaps) > 0 {
+	if planningMode == "native" && len(toolMaps) > 0 {
 		scheme := "http"
 		if r.TLS != nil {
 			scheme = "https"
@@ -2438,8 +2482,8 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		}
 		return valid, len(rejected)
 	}
-	planningMode := s.settings.get().ToolPlanningMode
 	toolCfg := s.settings.get()
+	toolCfg.Scenario, toolCfg.LicenseType = effectiveScenarioAndLicense(body.Model, tone, toolCfg.Scenario, toolCfg.LicenseType)
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 	defer cancel()
@@ -2449,58 +2493,16 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	// tool preamble here: a request may contain tools in its schema while still
 	// being an ordinary text question.
 	// Streaming requests must not wait for the synchronous tool router. This
-	// path forwards ordinary upstream text deltas immediately; tool routing for
-	// non-streaming requests remains below until the event-level tool protocol
-	// is available end-to-end.
-	if planningMode == "router" && body.Stream && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
-		// Preserve the existing validated tool router for streaming tool turns.
-		// Only fall through to text streaming when the router explicitly selects
-		// no tool; this prevents a natural-language preamble from becoming a
-		// completed assistant turn with the actual call lost.
-		routePrompt := modelToolRouterPrompt(answerPrompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		log.Printf("[req-trace] id=%s stage=router_start prompt_len=%d", requestID, len(routePrompt))
-		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
-		log.Printf("[req-trace] id=%s stage=router_return elapsed_ms=%d err=%t", requestID, time.Since(startedAt).Milliseconds(), routeErr != nil)
-		// Router turns run in a throwaway cloud conversation that is never
-		// reused by the answer turn; delete it so the conversation list does
-		// not accumulate one entry per routed request.
-		if routeErr == nil && routeRes.ConversationID != "" {
-			s.dropTransientConversation(routeRes.ConversationID)
-		}
-		if routeErr != nil {
-			log.Printf("[tool-router] failed account=%s err=%v", acc.ID, routeErr)
-			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "tool router: "+routeErr.Error())
-			return
-		}
-		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
-		calls = filterCompletedCalls(calls, ledger)
-		calls, _ = validateCalls("router", calls)
-		if !parsed {
-			repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed. OUTPUT:\n` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
-			if repairErr == nil && repairRes.ConversationID != "" {
-				s.dropTransientConversation(repairRes.ConversationID)
-			}
-			if repairErr == nil {
-				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
-				calls = filterCompletedCalls(calls, ledger)
-				calls, _ = validateCalls("router", calls)
-			}
-		}
-		if parsed && len(calls) > 0 {
-			scope := fmt.Sprintf("%d:%v:stream", len(body.Messages), completedCallIDs(ledger))
-			for i := range calls {
-				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
-			}
-			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-				calls = calls[:1]
-			}
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), true, body.shouldSendStreamUsage(), calls, routeRes)
-			return
-		}
-	}
+	// path forwards ordinary upstream text deltas immediately while injecting
+	// the <tools> fenced protocol into answerReq so tool calls are emitted
+	// inline and captured by fenceStream + fencedToolCalls without a 1–2 minute
+	// blocking pre-flight turn.
 	if body.Stream {
-		answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
+		answerReq := buildAnswerRequest(answerPrompt, tone, body, activeLedger, planningMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
+		if len(body.Tools) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
+			answerReq.Tools = body.Tools
+			answerReq.ToolChoice = body.ToolChoice
+		}
 		answerReq.DisableWebSearch = disableWebSearch
 		answerReq.FirstTokenTimeout = time.Duration(s.settings.get().FirstTokenTimeoutSeconds) * time.Second
 		answerPrompt = answerReq.Text
@@ -2588,14 +2590,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			text.WriteString(ev.Text)
-			// Detect fenced code blocks (tool calls) that must not be emitted as text.
-			// They will be caught by fencedToolCalls after the stream completes.
-			if strings.Contains(pending.String()+ev.Text, "```bash") || strings.Contains(pending.String()+ev.Text, "\"command\"") {
-				pending.WriteString(ev.Text)
-				return nil
-			}
 			// Hold back only a fence that is a real tool call; an ordinary code
-			// block is released in place so reply order is preserved.
+			// block or prose is released immediately and in order so the user
+			// sees step-by-step streaming output.
 			hold := func(fence string) bool {
 				return len(fencedToolCalls(fence, toolMaps, body.ToolChoice)) > 0
 			}
@@ -2637,35 +2634,15 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 						return nil
 					}
 					text.WriteString(ev.Text)
-					pending.WriteString(ev.Text)
-					v := pending.String()
-					if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
-						return nil
+					hold := func(fence string) bool {
+						return len(fencedToolCalls(fence, toolMaps, body.ToolChoice)) > 0
 					}
-					if i := strings.Index(v, "```"); i >= 0 {
-						if err := emitText(v[:i]); err != nil {
-							return err
-						}
-						pending.Reset()
-						pending.WriteString(v[i:])
-						return nil
+					emitted, held := fenceStream(pending.String(), ev.Text, 3, hold)
+					if err := emitText(emitted); err != nil {
+						return err
 					}
-					if runeCount := utf8.RuneCountInString(v); runeCount > 8 {
-						cut := 0
-						seen := 0
-						for i := range v {
-							if seen == runeCount-8 {
-								cut = i
-								break
-							}
-							seen++
-						}
-						if err := emitText(v[:cut]); err != nil {
-							return err
-						}
-						pending.Reset()
-						pending.WriteString(v[cut:])
-					}
+					pending.Reset()
+					pending.WriteString(held)
 					return nil
 				})
 				cancel2()
@@ -2719,35 +2696,15 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 						return nil
 					}
 					text.WriteString(ev.Text)
-					pending.WriteString(ev.Text)
-					v := pending.String()
-					if strings.Contains(v, "```bash") || strings.Contains(v, "\"command\"") {
-						return nil
+					hold := func(fence string) bool {
+						return len(fencedToolCalls(fence, toolMaps, body.ToolChoice)) > 0
 					}
-					if i := strings.Index(v, "```"); i >= 0 {
-						if err := emitText(v[:i]); err != nil {
-							return err
-						}
-						pending.Reset()
-						pending.WriteString(v[i:])
-						return nil
+					emitted, held := fenceStream(pending.String(), ev.Text, 3, hold)
+					if err := emitText(emitted); err != nil {
+						return err
 					}
-					if runeCount := utf8.RuneCountInString(v); runeCount > 8 {
-						cut := 0
-						seen := 0
-						for i := range v {
-							if seen == runeCount-8 {
-								cut = i
-								break
-							}
-							seen++
-						}
-						if err := emitText(v[:cut]); err != nil {
-							return err
-						}
-						pending.Reset()
-						pending.WriteString(v[cut:])
-					}
+					pending.Reset()
+					pending.WriteString(held)
 					return nil
 				})
 				if err2 == nil {
@@ -2818,12 +2775,21 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			text.WriteString(res.Text)
 			pending.WriteString(res.Text)
 		}
+		fullCandidateText := text.String()
+		if len(res.Text) > len(fullCandidateText) {
+			fullCandidateText = res.Text
+		}
 		rawCalls := streamedTools
 		if len(rawCalls) == 0 {
-			rawCalls = fencedToolCalls(text.String(), toolMaps, body.ToolChoice)
+			rawCalls = fencedToolCalls(fullCandidateText, toolMaps, body.ToolChoice)
+		}
+		if len(rawCalls) == 0 {
+			if parsedCalls, ok := parseModelToolDecision(fullCandidateText, toolMaps, body.ToolChoice); ok && len(parsedCalls) > 0 {
+				rawCalls = parsedCalls
+			}
 		}
 		calls, rejected := validateCalls("stream", rawCalls)
-		toolResult := chathub.Result{Text: text.String()}
+		toolResult := chathub.Result{Text: fullCandidateText}
 		if len(calls) == 0 && rejected > 0 {
 			// A native ChatHub event can contain a fabricated or empty tool name.
 			// Do not leak it to the local runner: ask the model to remap the intent
@@ -2848,6 +2814,9 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if len(calls) > 0 {
+			if flushedReasoning := reasoningFilter.Flush(); flushedReasoning != "" {
+				_ = emitReasoning(flushedReasoning)
+			}
 			log.Printf("[req-trace] id=%s stage=tool_calls_detected count=%d names=%v", requestID, len(calls), func() []string {
 				var n []string
 				for _, c := range calls {
@@ -2873,6 +2842,14 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		if err := emitText(pending.String()); err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_write err=%v", requestID, err)
 			return
+		}
+		if flushed := identityFilter.Flush(); flushed != "" {
+			delta := map[string]any{"content": flushed}
+			if first {
+				delta["role"] = "assistant"
+				first = false
+			}
+			_ = sw.data(mustJSON(map[string]any{"id": id, "object": "chat.completion.chunk", "created": time.Now().Unix(), "model": model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": nil}}}))
 		}
 		if err := emitReasoning(reasoningFilter.Flush()); err != nil {
 			log.Printf("[req-trace] id=%s stage=stream_write_reasoning err=%v", requestID, err)
@@ -2900,91 +2877,11 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 		s.storeConvCache(acc.ID, convCacheModel, res, tone, body.Messages, convReused)
 		return
 	}
-	// Ask the upstream model to select and validate the next tool. The gateway
-	// remains tool-agnostic; it only validates and serializes the decision.
-	if planningMode == "router" && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
-		routePrompt := modelToolRouterPrompt(answerPrompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
-		if routeErr != nil {
-			s.accountPool.MarkFailure(acc.ID, routeErr, s.getRateLimitCooldown())
-			if IsFailoverRetriable(routeErr) {
-				next, nerr := s.nextHealthyAccount(acc.ID)
-				if nerr == nil {
-					ctx2, cancel2 := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
-					defer cancel2()
-					if res2, err2 := s.chatWithAccount(ctx2, next.ID, chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario}); err2 == nil {
-						routeRes, routeErr = res2, nil
-						acc = next
-						account = chathub.Account{AccessToken: next.AccessToken, OID: next.OID, TID: next.TID}
-					} else {
-						s.accountPool.MarkFailure(next.ID, err2, s.getRateLimitCooldown())
-					}
-				}
-			}
-			if routeErr != nil {
-				msg := upstreamError(routeErr)
-				if IsRateLimited(routeErr) {
-					msg = "upstream is rate limiting; try again shortly"
-				}
-				writeOpenAIError(w, http.StatusBadGateway, "tool_router_error", msg)
-				return
-			}
-			s.accountPool.MarkSuccess(acc.ID)
-		}
-		calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
-		if !parsed {
-			repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Do not invent calls; use {"calls":[]} if unrecoverable. OUTPUT:
-` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
-			if repairErr == nil {
-				calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
-			}
-			if !parsed {
-				writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "model returned an invalid tool routing decision")
-				return
-			}
-		}
-		calls = filterCompletedCalls(calls, ledger)
-		calls, _ = validateCalls("router", calls)
-		if len(calls) > 0 {
-			scope := fmt.Sprintf("%d:%v", len(body.Messages), completedCallIDs(ledger))
-			for i := range calls {
-				calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
-			}
-			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-			if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-				calls = calls[:1]
-			}
-			_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
-			return
-		}
-		if fmt.Sprint(body.ToolChoice) == "required" {
-			defs, _ := json.Marshal(toolMaps)
-			retryText := `Select at least one required next tool call from FUNCTION_DEFINITIONS. Validate every argument against its schema. Return JSON only as {"calls":[{"name":"function_name","arguments":{}}]}.
-APPLICATION_REQUEST_AND_EVIDENCE:
-` + prompt + "\n" + ledger.RouterContext() + "\nFUNCTION_DEFINITIONS:\n" + string(defs)
-			retryRes, retryErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: retryText, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
-			if retryErr == nil {
-				calls, parsed = parseModelToolDecision(retryRes.Text, toolMaps, body.ToolChoice)
-				calls = filterCompletedCalls(calls, ledger)
-				calls, _ = validateCalls("router", calls)
-				if parsed && len(calls) > 0 {
-					scope := fmt.Sprintf("%d:%v:required-retry", len(body.Messages), completedCallIDs(ledger))
-					for i := range calls {
-						calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
-					}
-					calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
-					if body.ParallelToolCalls != nil && !*body.ParallelToolCalls && len(calls) > 1 {
-						calls = calls[:1]
-					}
-					_ = writeToolResponse(w, "chatcmpl-"+uuid.NewString(), firstNonEmpty(body.Model, "m365-copilot"), body.Stream, body.shouldSendStreamUsage(), calls, retryRes)
-					return
-				}
-			}
-			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "model did not select a required tool after constrained retry")
-			return
-		}
+	answerReq := buildAnswerRequest(answerPrompt, tone, body, activeLedger, planningMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
+	if len(body.Tools) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
+		answerReq.Tools = body.Tools
+		answerReq.ToolChoice = body.ToolChoice
 	}
-	answerReq := buildAnswerRequest(answerPrompt, tone, body, ledger, planningMode, mcpServerURL, s.settings.get(), s.featureFlags(), localeInfo, body.Metadata != nil && body.Metadata.CopilotTempSession)
 	answerReq.DisableWebSearch = disableWebSearch
 	answerReq.FirstTokenTimeout = time.Duration(s.settings.get().FirstTokenTimeoutSeconds) * time.Second
 	answerPrompt = answerReq.Text
@@ -3362,8 +3259,14 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 		}
 	}
 	invalidDetectedTool := false
-	if rawCalls := fencedToolCalls(res.Text, toolMaps, body.ToolChoice); len(rawCalls) > 0 {
-		calls, rejected := validateCalls("fenced", rawCalls)
+	rawNonStreamCalls := fencedToolCalls(res.Text, toolMaps, body.ToolChoice)
+	if len(rawNonStreamCalls) == 0 {
+		if parsedCalls, ok := parseModelToolDecision(res.Text, toolMaps, body.ToolChoice); ok && len(parsedCalls) > 0 {
+			rawNonStreamCalls = parsedCalls
+		}
+	}
+	if len(rawNonStreamCalls) > 0 {
+		calls, rejected := validateCalls("fenced", rawNonStreamCalls)
 		invalidDetectedTool = rejected > 0
 		if len(calls) > 0 {
 			calls = limitToolCalls(calls, adaptiveToolCallLimit(calls, configuredToolCallLimit(s.settings)))
@@ -3390,20 +3293,20 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 	// and honor an explicit tool_choice=required that the model answered with
 	// prose instead of a call. A plain text answer with tool_choice=auto is a
 	// legitimate "no tool" decision and never triggers a second model call.
-	if (invalidDetectedTool || (planningMode == "native" && fmt.Sprint(body.ToolChoice) == "required")) && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
-		routePrompt := modelToolRouterPrompt(prompt+"\n"+ledger.RouterContext(), toolMaps, body.ToolChoice)
-		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+	if (invalidDetectedTool || fmt.Sprint(body.ToolChoice) == "required") && len(toolMaps) > 0 && fmt.Sprint(body.ToolChoice) != "none" {
+		routePrompt := modelToolRouterPrompt(prompt+"\n"+activeLedger.RouterContext(), toolMaps, body.ToolChoice)
+		routeRes, routeErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: routePrompt, Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisableCodeInterpreter: true})
 		if routeErr == nil {
 			calls, parsed := parseModelToolDecision(routeRes.Text, toolMaps, body.ToolChoice)
 			if !parsed {
-				repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed. OUTPUT:\n` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario})
+				repairRes, repairErr := s.chatWithAccount(ctx, acc.ID, account, chathub.Request{Text: `Repair this tool routing output into JSON only with shape {"calls":[{"name":"function_name","arguments":{}}]}. Use {"calls":[]} if no tool is needed. OUTPUT:\n` + compactToolResult(routeRes.Text, 6000), Tone: tone, Attachments: body.Attachments, LicenseType: toolCfg.LicenseType, Scenario: toolCfg.Scenario, DisableCodeInterpreter: true})
 				if repairErr == nil {
 					calls, parsed = parseModelToolDecision(repairRes.Text, toolMaps, body.ToolChoice)
 				}
 			}
 			calls, _ = validateCalls("native-recovery", calls)
 			if parsed && len(calls) > 0 {
-				scope := fmt.Sprintf("%d:%v:native-recovery", len(body.Messages), completedCallIDs(ledger))
+				scope := fmt.Sprintf("%d:%v:native-recovery", len(body.Messages), completedCallIDs(activeLedger))
 				for i := range calls {
 					calls[i].ID = scopedCallID(calls[i].Name, string(calls[i].Arguments), i, scope)
 				}
@@ -3411,6 +3314,10 @@ APPLICATION_REQUEST_AND_EVIDENCE:
 				_ = writeToolResponse(w, id, model, body.Stream, body.shouldSendStreamUsage(), calls, routeRes)
 				return
 			}
+		}
+		if fmt.Sprint(body.ToolChoice) == "required" {
+			writeOpenAIError(w, http.StatusBadGateway, "upstream_error", "model did not select a required tool after constrained retry")
+			return
 		}
 	}
 	if isContentPolicyBlock(res.Text) {

@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"m365-copilot2api/internal/chathub"
+
 	"github.com/google/uuid"
 )
 
@@ -300,6 +302,56 @@ func (s *Server) streamResponsesAdapter(w http.ResponseWriter, r *http.Request, 
 		usageOutput += call.Name + call.Args
 	}
 	estimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, usageOutput)
+	// Persist the streamed response node so a follow-up request carrying
+	// previous_response_id can resolve its parent history and pending tool calls.
+	tenant := tenantFromRequest(r)
+	if tenant == "" {
+		if prefix := extractAPIKey(r); prefix != "" {
+			h := sha256.Sum256([]byte(prefix))
+			tenant = hex.EncodeToString(h[:])
+		} else {
+			tenant = "anonymous"
+		}
+	}
+	sessionID := responseSessionID(r)
+	nsKey := responseNamespace(tenant, sessionID)
+	stored := append([]oaiMsg(nil), o.Messages...)
+	storedTools := append([]chathub.Tool(nil), o.Tools...)
+	var storedToolCalls []map[string]any
+	if len(calls) > 0 {
+		keys := make([]int, 0, len(calls))
+		for k := range calls {
+			keys = append(keys, k)
+		}
+		sort.Ints(keys)
+		for _, k := range keys {
+			st := calls[k]
+			if st == nil {
+				continue
+			}
+			storedToolCalls = append(storedToolCalls, map[string]any{
+				"id":   st.ID,
+				"type": st.Type,
+				"function": map[string]any{
+					"name":      st.Name,
+					"arguments": st.Args,
+				},
+			})
+		}
+		stored = append(stored, oaiMsg{Role: "assistant", ToolCalls: storedToolCalls})
+	} else if text.Len() > 0 {
+		stored = append(stored, oaiMsg{Role: "assistant", Content: text.String()})
+	}
+	toolCallsMap := buildRespToolCallsMap(storedToolCalls)
+	s.responseMu.Lock()
+	bucket := s.responseMessages[nsKey]
+	if bucket == nil {
+		bucket = map[string]*RespNode{}
+		s.responseMessages[nsKey] = bucket
+	}
+	bucket[id] = &RespNode{At: time.Now(), Messages: stored, Tools: storedTools, ToolCalls: toolCallsMap, Version: 1, Consumed: false, Tenant: tenant, SessionID: sessionID}
+	s.responseMu.Unlock()
+
 	resp := map[string]any{"id": id, "object": "response", "created_at": created, "status": "completed", "model": model, "output": output, "usage": estimate.Values, "m365": localUsageMetadata(estimate.Source)}
 	emit("response.completed", map[string]any{"type": "response.completed", "response": resp})
 }
@@ -408,6 +460,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 		prior.Version++
 		prior.Consumed = true
 		messages := append([]oaiMsg(nil), prior.Messages...)
+		priorTools := append([]chathub.Tool(nil), prior.Tools...)
 		newVersion := prior.Version
 		parentToolCount := len(prior.ToolCalls)
 		s.responseMu.Unlock()
@@ -416,6 +469,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			s.debug.add(debugRecord{ID: "resp_" + uuid.NewString(), At: time.Now(), Path: "/v1/responses", Method: "POST", Status: 200, Level: "info", Gateway: map[string]any{"previous_response_id": body.PreviousResponseID, "tenantHash": tenantHashPrefix(tenant), "session": sessionHashPrefix(sessionID), "tool_ids": toolIDs, "version": newVersion, "parentToolCalls": parentToolCount, "action": "consumed"}})
 		}
 		o.Messages = append(messages, o.Messages...)
+		if len(o.Tools) == 0 && len(priorTools) > 0 {
+			o.Tools = priorTools
+		}
 	}
 	if body.Stream {
 		s.streamResponsesAdapter(w, r, o, firstNonEmpty(body.Model, "m365-copilot"))
@@ -500,7 +556,7 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 			}
 			delete(bucket, oldestKey)
 		}
-		bucket[publicID] = &RespNode{At: time.Now(), Messages: stored, ToolCalls: toolCallsMap, Version: 1, Consumed: false, ParentID: body.PreviousResponseID, Tenant: tenant, SessionID: sessionID}
+		bucket[publicID] = &RespNode{At: time.Now(), Messages: stored, Tools: append([]chathub.Tool(nil), o.Tools...), ToolCalls: toolCallsMap, Version: 1, Consumed: false, ParentID: body.PreviousResponseID, Tenant: tenant, SessionID: sessionID}
 		s.responseMu.Unlock()
 		log.Printf("[responses-audit] tenantHash=%s session=%s new=%s parent=%s toolCalls=%d version=1", tenantHashPrefix(tenant), sessionHashPrefix(sessionID), publicID, body.PreviousResponseID, len(toolCallsMap))
 	}
@@ -519,6 +575,238 @@ func responsesOutputHasContent(src map[string]any) bool {
 	return strings.TrimSpace(text) != ""
 }
 
+// streamAnthropicAdapter converts the internal OpenAI SSE incrementally into
+// Anthropic Messages SSE events (message_start -> content_block_start/delta/stop
+// -> message_delta -> message_stop) so /v1/messages clients stream token-by-token
+// instead of buffering the entire turn in httptest.ResponseRecorder.
+func (s *Server) streamAnthropicAdapter(w http.ResponseWriter, r *http.Request, o oaiReq, model string, startedAt time.Time) {
+	o.Stream = true
+	b, _ := json.Marshal(o)
+	r2 := r.Clone(r.Context())
+	r2.Method = http.MethodPost
+	r2.Body = io.NopCloser(bytes.NewReader(b))
+	r2.ContentLength = int64(len(b))
+	pr, pw := io.Pipe()
+	irw := &pipeResponseWriter{h: make(http.Header), w: pw}
+	innerDone := make(chan struct{})
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[anthropic-stream] inner goroutine panic: %v", rec)
+			}
+			_ = pw.Close()
+			close(innerDone)
+		}()
+		s.openaiChat(irw, r2)
+	}()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	flusher, _ := w.(http.Flusher)
+	aborted := false
+	emit := func(name string, v any) {
+		if aborted {
+			return
+		}
+		if err := sseWriteFrame(w, flusher, name, v); err != nil {
+			aborted = true
+		}
+	}
+
+	id := "msg_" + uuid.NewString()
+	inputEstimate := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, "")
+	inputTokens := int64(inputEstimate.Values["input_tokens"].(int))
+
+	started := false
+	ensureStarted := func() {
+		if !started {
+			started = true
+			emit("message_start", map[string]any{
+				"type": "message_start",
+				"message": map[string]any{
+					"id": id, "type": "message", "role": "assistant", "model": model,
+					"content": []any{}, "stop_reason": nil, "stop_sequence": nil,
+					"usage": map[string]any{"input_tokens": inputTokens, "output_tokens": 0},
+				},
+			})
+		}
+	}
+
+	nextBlockIdx := 0
+	openBlockType := "" // "thinking" | "text"
+	openBlockIdx := -1
+	closeOpenBlock := func() {
+		if openBlockType != "" && openBlockIdx >= 0 {
+			emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": openBlockIdx})
+			openBlockType = ""
+			openBlockIdx = -1
+		}
+	}
+
+	type anthTC struct {
+		ID, Name, Args string
+	}
+	calls := map[int]*anthTC{}
+	var outText strings.Builder
+
+	scanner := bufio.NewScanner(pr)
+	scanner.Buffer(make([]byte, 4096), 2<<20)
+	for scanner.Scan() {
+		if r.Context().Err() != nil {
+			return
+		}
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+			continue
+		}
+		var chunk map[string]any
+		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &chunk) != nil {
+			continue
+		}
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			continue
+		}
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if reasoning, ok := delta["reasoning_content"].(string); ok && reasoning != "" {
+			ensureStarted()
+			if openBlockType != "thinking" {
+				closeOpenBlock()
+				openBlockIdx = nextBlockIdx
+				nextBlockIdx++
+				openBlockType = "thinking"
+				emit("content_block_start", map[string]any{
+					"type": "content_block_start", "index": openBlockIdx,
+					"content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""},
+				})
+			}
+			emit("content_block_delta", map[string]any{
+				"type": "content_block_delta", "index": openBlockIdx,
+				"delta": map[string]any{"type": "thinking_delta", "thinking": reasoning},
+			})
+		}
+		if content, ok := delta["content"].(string); ok && content != "" {
+			outText.WriteString(content)
+			ensureStarted()
+			if openBlockType != "text" {
+				closeOpenBlock()
+				openBlockIdx = nextBlockIdx
+				nextBlockIdx++
+				openBlockType = "text"
+				emit("content_block_start", map[string]any{
+					"type": "content_block_start", "index": openBlockIdx,
+					"content_block": map[string]any{"type": "text", "text": ""},
+				})
+			}
+			emit("content_block_delta", map[string]any{
+				"type": "content_block_delta", "index": openBlockIdx,
+				"delta": map[string]any{"type": "text_delta", "text": content},
+			})
+		}
+		if rawCalls, ok := delta["tool_calls"].([]any); ok {
+			for _, raw := range rawCalls {
+				tc, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				idxFloat, _ := tc["index"].(float64)
+				idx := int(idxFloat)
+				st := calls[idx]
+				if st == nil {
+					st = &anthTC{}
+					calls[idx] = st
+				}
+				if cid, _ := tc["id"].(string); cid != "" {
+					st.ID = cid
+				}
+				if fn, ok := tc["function"].(map[string]any); ok {
+					if n, _ := fn["name"].(string); n != "" {
+						st.Name += n
+					}
+					if a, _ := fn["arguments"].(string); a != "" {
+						st.Args += a
+					}
+				}
+			}
+		}
+	}
+	<-innerDone
+	if !started && irw.status >= http.StatusBadRequest {
+		status := irw.status
+		if status == 0 {
+			status = http.StatusBadGateway
+		}
+		writeAnthropicError(w, status, "api_error", "upstream protocol error")
+		return
+	}
+	ensureStarted()
+	closeOpenBlock()
+
+	stopReason := "end_turn"
+	if len(calls) > 0 {
+		stopReason = "tool_use"
+		keys := make([]int, 0, len(calls))
+		for k := range calls {
+			keys = append(keys, k)
+		}
+		sort.Ints(keys)
+		for _, k := range keys {
+			st := calls[k]
+			if st == nil {
+				continue
+			}
+			outText.WriteString(st.Name + st.Args)
+			bIdx := nextBlockIdx
+			nextBlockIdx++
+			callID := st.ID
+			if callID == "" {
+				callID = "toolu_" + uuid.NewString()
+			}
+			emit("content_block_start", map[string]any{
+				"type": "content_block_start", "index": bIdx,
+				"content_block": map[string]any{"type": "tool_use", "id": callID, "name": st.Name, "input": map[string]any{}},
+			})
+			argsJSON := st.Args
+			if strings.TrimSpace(argsJSON) == "" {
+				argsJSON = "{}"
+			}
+			emit("content_block_delta", map[string]any{
+				"type": "content_block_delta", "index": bIdx,
+				"delta": map[string]any{"type": "input_json_delta", "partial_json": argsJSON},
+			})
+			emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": bIdx})
+		}
+	} else if nextBlockIdx == 0 {
+		emit("content_block_start", map[string]any{
+			"type": "content_block_start", "index": 0,
+			"content_block": map[string]any{"type": "text", "text": ""},
+		})
+		emit("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0})
+	}
+
+	finalEst := estimateResponsesUsage(model, o.Messages, o.Tools, o.ToolChoice, outText.String())
+	outputTokens := int64(finalEst.Values["output_tokens"].(int))
+	emit("message_delta", map[string]any{
+		"type":  "message_delta",
+		"delta": map[string]any{"stop_reason": stopReason, "stop_sequence": nil},
+		"usage": map[string]any{"output_tokens": outputTokens},
+	})
+	emit("message_stop", map[string]any{"type": "message_stop"})
+
+	s.usage.record(UsageRecord{
+		Time:         time.Now(),
+		APIKeyPrefix: extractAPIKey(r),
+		Model:        model,
+		Endpoint:     "/v1/messages",
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		DurationMs:   time.Since(startedAt).Milliseconds(),
+		Status:       200,
+	})
+}
+
 func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 	startedAt := time.Now()
 	if r.Method != http.MethodPost {
@@ -533,6 +821,10 @@ func (s *Server) anthropicMessages(w http.ResponseWriter, r *http.Request) {
 	o, err := body.openAI()
 	if err != nil {
 		writeAnthropicError(w, 400, "invalid_request_error", err.Error())
+		return
+	}
+	if body.Stream {
+		s.streamAnthropicAdapter(w, r, o, firstNonEmpty(body.Model, "m365-copilot"), startedAt)
 		return
 	}
 	out, raw, status, err := s.runOpenAIAdapter(r, o)

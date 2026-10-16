@@ -234,7 +234,11 @@ func activeMessages(messages []oaiMsg) []oaiMsg {
 	last := -1
 	for i, m := range messages {
 		if m.Role == "user" {
-			last = i
+			txt, _ := parseContent(m.Content)
+			cleanTxt, _ := extractHarnessContextFromUser(txt)
+			if cleanTxt != "" {
+				last = i
+			}
 		}
 	}
 	if last <= 0 {

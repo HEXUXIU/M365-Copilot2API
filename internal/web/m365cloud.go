@@ -311,3 +311,76 @@ func InitM365CloudClient(clientID, tenantID, refreshToken string) {
 func GetM365CloudClient() *M365CloudClient {
 	return m365CloudClient
 }
+
+// DiscoverTones queries the authenticated M365 web session (RefreshNavPane
+// store metadata and the authenticated /chat HTML/JS bundles) for upstream
+// tone identifiers so newly rolled-out models are picked up automatically.
+func (c *M365CloudClient) DiscoverTones() []string {
+	if c == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	if result, err := c.doAPI("RefreshNavPane", map[string]any{}); err == nil {
+		collectModelSelectorTones(result, seen)
+		if raw, err := json.Marshal(result); err == nil {
+			for _, m := range upstreamTonePattern.FindAllString(string(raw), -1) {
+				seen[m] = true
+			}
+		}
+	}
+	if token, err := c.getAccessToken(); err == nil && token != "" {
+		req, err := http.NewRequest("GET", "https://m365.cloud.microsoft/chat", nil)
+		if err == nil {
+			req.Header.Set("Authorization", "Bearer "+token)
+			req.Header.Set("User-Agent", chromeUA)
+			req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+			if resp, err := c.httpClient.Do(req); err == nil {
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+				resp.Body.Close()
+				html := string(body)
+				for _, m := range upstreamTonePattern.FindAllString(html, -1) {
+					seen[m] = true
+				}
+				for _, bundleURL := range extractBundleURLs(html) {
+					if bResp, bErr := c.httpClient.Get(bundleURL); bErr == nil {
+						bundle, _ := io.ReadAll(io.LimitReader(bResp.Body, 4<<20))
+						bResp.Body.Close()
+						for _, m := range upstreamTonePattern.FindAllString(string(bundle), -1) {
+							seen[m] = true
+						}
+					}
+				}
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(seen))
+	for t := range seen {
+		out = append(out, t)
+	}
+	return out
+}
+
+func collectModelSelectorTones(v any, seen map[string]bool) {
+	switch node := v.(type) {
+	case map[string]any:
+		if opts, ok := node["availableModelSelectionOptions"].([]any); ok {
+			for _, rawOpt := range opts {
+				if opt, ok := rawOpt.(map[string]any); ok {
+					if id, ok := opt["id"].(string); ok && strings.TrimSpace(id) != "" {
+						seen[strings.TrimSpace(id)] = true
+					}
+				}
+			}
+		}
+		for _, child := range node {
+			collectModelSelectorTones(child, seen)
+		}
+	case []any:
+		for _, item := range node {
+			collectModelSelectorTones(item, seen)
+		}
+	}
+}

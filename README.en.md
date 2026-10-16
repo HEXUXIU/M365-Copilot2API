@@ -341,11 +341,17 @@ The gateway ships with a default model mapping (you can add/remove entries and a
 
 | Model | Default reasoning level | Notes |
 |------|-------------|------|
-| `gpt-5.6-reasoning` | `medium` | Reasoning model |
-| `gpt-5.5` / `gpt-5.4` / `gpt-5.3` / `gpt-5.2` | `medium` | Fast models (`reasoning_effort` can switch levels) |
+| `gpt-6.1-sol` / `gpt-6-sol` | `medium` | GPT-6.1 Sol / GPT-6.0 Sol reasoning models (routed to upstream `Gpt_61_Sol_Reasoning` / `Gpt_6_Sol_Reasoning`) |
+| `gpt-6-reasoning` / `gpt-6-astra` | `medium` | GPT-6 reasoning (routed to `Gpt_6_Reasoning`, requires Paid scenario seat) / GPT-6 Astra |
+| `gpt-5.6-reasoning` / `gpt-5.6` | `medium` | GPT-5.6 reasoning and fast models (routed to `Gpt_5_6_Reasoning` / `Gpt_5_6_Chat`) |
+| `gpt-5.5` / `gpt-5.4` / `gpt-5.3` / `gpt-5.2` | `medium` | Fast models (routed to `Gpt_5_x_Chat`, `reasoning_effort` selects `_Reasoning`) |
+| `claude-sonnet` / `claude-sonnet-5` | `medium` | Claude Sonnet models (routed to upstream `Claude_Sonnet` / `Claude_Sonnet_5`) |
+| `claude-opus` / `claude-fable` | `medium` | Claude Opus and Fable models (routed to upstream `Claude_Opus` / `Claude_Fable`) |
+| `grok-4.5` / `grok-reasoning` | `medium` | Grok models (routed to upstream `Grok_4_5` / `Grok_Reasoning`) |
 | `flux-3` / `flux-4` | - | Image-generation models (go through the real `/v1/images` image pipeline) |
 
-- Model mapping translates public model names into the upstream tone; the console lets you add/remove mappings and adjust the default reasoning level.
+- Model mapping translates public model names into the upstream `tone` request parameter; the console lets you add/remove mappings and adjust the default reasoning level.
+- Note: Model availability depends on the tenant's license subscription and admin policies; certain tones (e.g. Claude_Sonnet_5, Gpt_6_Reasoning) require assigned paid seats and will be rejected by upstream authorization if the account lacks entitlement.
 - Reasoning intensity is adjusted via the OpenAI-compatible `reasoning_effort` parameter (`none/minimal/low/medium/high/xhigh`); fake model names are no longer used to distinguish levels.
 - New model names that may go live under M365 subscriptions (e.g., `gpt-5.2`, `gpt-5.4`, the `codex` family) are subject to the actual catalog, and can be imported via console configuration.
 

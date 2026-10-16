@@ -138,7 +138,7 @@ export function SettingsPage({ push }: { push: (m: string, k?: "success" | "erro
           <div className="form-group" style={{ margin: 0 }}>
             <label className="form-label" htmlFor="fScenario">{t("Scenario")}</label>
             <select className="form-input" id="fScenario" defaultValue={gr("scenario") as string}>
-              {["OfficeWebIncludedCopilot", "Bizchat", "CopilotConsumer", "Chathub"].map((s) => (
+              {["OfficeWebIncludedCopilot", "OfficeWebPaidCopilot", "Bizchat", "CopilotConsumer", "Chathub"].map((s) => (
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>

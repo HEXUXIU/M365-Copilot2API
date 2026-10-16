@@ -31,7 +31,18 @@ var configurableCodexModels = []string{
 	"gpt-5.4",
 	"gpt-5.4-mini",
 	"gpt-5.5",
+	"gpt-5.6",
 	"gpt-5.6-reasoning",
+	"gpt-6-sol",
+	"gpt-6.1-sol",
+	"gpt-6-reasoning",
+	"gpt-6-astra",
+	"claude-sonnet",
+	"claude-sonnet-5",
+	"claude-sonnet-5.5",
+	"claude-opus",
+	"claude-opus-4.8",
+	"claude-opus-5.5",
 	"flux-3",
 	"flux-4",
 	"codex-auto-review",
@@ -213,9 +224,9 @@ func validateSettings(v runtimeSettings) error {
 	if !validLicenses[v.LicenseType] {
 		return fmt.Errorf("licenseType 必须为 Starter、Premium、Free、BCAIS、BCSWW、BCWAF 或 BCWBF")
 	}
-	validScenarios := map[string]bool{"OfficeWebIncludedCopilot": true, "Bizchat": true, "CopilotConsumer": true, "Chathub": true}
+	validScenarios := map[string]bool{"OfficeWebIncludedCopilot": true, "OfficeWebPaidCopilot": true, "Bizchat": true, "CopilotConsumer": true, "Chathub": true}
 	if !validScenarios[v.Scenario] {
-		return fmt.Errorf("scenario 必须为 OfficeWebIncludedCopilot、Bizchat、CopilotConsumer 或 Chathub")
+		return fmt.Errorf("scenario 必须为 OfficeWebIncludedCopilot、OfficeWebPaidCopilot、Bizchat、CopilotConsumer 或 Chathub")
 	}
 	if v.AccountConcurrencyLimit < 1 || v.AccountConcurrencyLimit > 64 {
 		return fmt.Errorf("账号并发上限必须为 1-64")
@@ -245,7 +256,7 @@ func (s *settingsStore) save(v runtimeSettings) error {
 func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		jsonOut(w, map[string]any{"settings": s.settings.get(), "codexModels": configurableCodexModels, "upstreamTones": knownUpstreamTones(), "autoStartSupported": autoStartSupported(), "autoStart": autoStartEnabled(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "outboundProxy", "proxyPool", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
+		jsonOut(w, map[string]any{"settings": s.settings.get(), "codexModels": configurableCodexModels, "upstreamTones": liveUpstreamTones(), "autoStartSupported": autoStartSupported(), "autoStart": autoStartEnabled(), "restartRequiredFields": []string{"listenAddress", "configPath", "tokenCachePath", "sessionCachePath", "outboundProxy", "proxyPool", "clientId", "authority", "redirectUri", "scope", "debugLogPath"}})
 	case http.MethodPut:
 		// 前端可能只修改一个字段（如监听地址），其余字段以零值提交。
 		// 逐字段合并到当前设置再校验，避免"改一个字段弄丢其他配置"。

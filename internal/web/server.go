@@ -325,6 +325,7 @@ func (s *Server) InitM365CloudClient() {
 	}
 	InitM365CloudClient(clientID, acc.TID, acc.RefreshToken)
 	log.Printf("[m365-cloud] client initialized for account %s", acc.Email)
+	go syncUpstreamTones()
 }
 
 // keepPoolWarm re-warms the accounts most likely to serve the next requests,
@@ -1168,10 +1169,19 @@ func (s *Server) callbackPKCE(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
 	oauthError := r.URL.Query().Get("error")
-	// also accept pasted full callback URL
+	// also accept pasted full callback URL (with or without https:// scheme)
 	if code == "" && oauthError == "" {
-		if u := r.URL.Query().Get("url"); u != "" {
-			if parsed, err := http.NewRequest(http.MethodGet, u, nil); err == nil {
+		rawURL := r.URL.Query().Get("url")
+		if rawURL == "" && strings.Contains(r.URL.RawQuery, "code=") {
+			if idx := strings.Index(r.URL.RawQuery, "code="); idx >= 0 {
+				rawURL = "https://login.microsoftonline.com/common/oauth2/nativeclient?" + r.URL.RawQuery[idx:]
+			}
+		}
+		if rawURL != "" {
+			if !strings.HasPrefix(rawURL, "http://") && !strings.HasPrefix(rawURL, "https://") {
+				rawURL = "https://" + rawURL
+			}
+			if parsed, err := http.NewRequest(http.MethodGet, rawURL, nil); err == nil {
 				code = parsed.URL.Query().Get("code")
 				oauthError = parsed.URL.Query().Get("error")
 				if state == "" {
@@ -1589,31 +1599,60 @@ type responseFormat struct {
 
 func modelTone(model string) string {
 	switch strings.ToLower(strings.TrimSpace(model)) {
-	case "gpt-5.2":
+	case "gpt-5.2", "gpt-5.2-quick":
 		return "Gpt_5_2_Chat"
-	case "gpt-5.2-reasoning":
+	case "gpt-5.2-reasoning", "gpt-5.2-think-deeper":
 		return "Gpt_5_2_Reasoning"
-	case "gpt-5.3":
+	case "gpt-5.3", "gpt-5.3-quick":
 		return "Gpt_5_3_Chat"
-	case "gpt-5.4":
+	case "gpt-5.3-reasoning", "gpt-5.3-think-deeper":
+		return "Gpt_5_3_Reasoning"
+	case "gpt-5.4", "gpt-5.4-quick":
 		return "Gpt_5_4_Chat"
-	case "gpt-5.4-reasoning":
+	case "gpt-5.4-reasoning", "gpt-5.4-think-deeper":
 		return "Gpt_5_4_Reasoning"
-	case "gpt-5.5":
+	case "gpt-5.5", "gpt-5.5-quick":
 		return "Gpt_5_5_Chat"
-	case "gpt-5.5-reasoning":
+	case "gpt-5.5-reasoning", "gpt-5.5-think-deeper":
 		return "Gpt_5_5_Reasoning"
-	case "gpt-5.6-reasoning":
+	case "gpt-5.6", "gpt-5.6-quick":
+		return "Gpt_5_6_Chat"
+	case "gpt-5.6-reasoning", "gpt-5.6-think-deeper":
 		return "Gpt_5_6_Reasoning"
+	case "gpt-6", "gpt-6-reasoning", "gpt-6-think-deeper":
+		return "Gpt_6_Reasoning"
+	case "gpt-6-astra", "gpt6-astra":
+		return "Gpt_6_Astra"
+	case "gpt-6-sol", "gpt-6.0-sol", "gpt6sol", "gpt-6-sol-reasoning":
+		return "Gpt_6_Sol_Reasoning"
+	case "gpt-6-sol-chat":
+		return "Gpt_6_Sol_Chat"
+	case "gpt-6.1-sol", "gpt-6.1-sol-reasoning":
+		return "Gpt_61_Sol_Reasoning"
 	case "claude", "claude-sonnet":
 		return "Claude_Sonnet"
-	case "claude-sonnet-reasoning":
+	case "claude-sonnet-5":
+		return "Claude_Sonnet_5"
+	case "claude-sonnet-reasoning", "claude-sonnet-think-deeper":
 		return "Claude_Sonnet_Reasoning"
-	case "gpt-5.4-quick":
-		return "Gpt_5_4_Chat"
-	case "gpt-5.3-think-deeper":
-		return "Gpt_5_3_Chat"
+	case "claude-opus":
+		return "Claude_Opus"
+	case "claude-fable":
+		return "Claude_Fable"
+	case "grok-4.5":
+		return "Grok_4_5"
+	case "grok-auto":
+		return "Grok_Auto"
+	case "grok-reasoning":
+		return "Grok_Reasoning"
+	case "muse-spark":
+		return "Muse_Spark"
+	case "critique":
+		return "Critique"
 	default:
+		if tone, ok := dynamicToneForModel(model); ok {
+			return tone
+		}
 		return "magic"
 	}
 }
@@ -1944,11 +1983,12 @@ func (s *Server) adminModelTest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 	defer cancel()
 	testCfg := s.settings.get()
+	testScenario, testLicense := effectiveScenarioAndLicense(b.Model, tone, testCfg.Scenario, testCfg.LicenseType)
 	res, err := s.chatWithAccount(ctx, acc.ID, chathub.Account{AccessToken: acc.AccessToken, OID: acc.OID, TID: acc.TID}, chathub.Request{
 		Text:         prompt,
 		Tone:         tone,
-		LicenseType:  testCfg.LicenseType,
-		Scenario:     testCfg.Scenario,
+		LicenseType:  testLicense,
+		Scenario:     testScenario,
 		FeatureFlags: s.featureFlags(),
 	})
 	ms := time.Since(start).Milliseconds()
@@ -2121,7 +2161,8 @@ func buildAnswerRequest(answerPrompt, tone string, body oaiReq, ledger agentLedg
 	if len(ledger.Completed) > 0 {
 		answerPrompt += "\nFINAL ANSWER RULE: Report only actions supported by completed tool results. If the goal is not fully verified, state exactly what remains unconfirmed."
 	}
-	req := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, LicenseType: cfg.LicenseType, Scenario: cfg.Scenario, FeatureFlags: flags, Locale: locale.Locale, Market: locale.Market, TimeZone: locale.TimeZone, TimeZoneOffset: locale.TimeZoneOffset, DeviceOS: locale.DeviceOS, DisableMemory: disableMemory}
+	reqScenario, reqLicense := effectiveScenarioAndLicense(body.Model, tone, cfg.Scenario, cfg.LicenseType)
+	req := chathub.Request{Text: answerPrompt, Tone: tone, ConversationID: body.ConversationID, SessionID: body.SessionID, Attachments: body.Attachments, LicenseType: reqLicense, Scenario: reqScenario, FeatureFlags: flags, Locale: locale.Locale, Market: locale.Market, TimeZone: locale.TimeZone, TimeZoneOffset: locale.TimeZoneOffset, DeviceOS: locale.DeviceOS, DisableMemory: disableMemory}
 	if planningMode == "native" {
 		req.Tools = body.Tools
 		req.ToolChoice = body.ToolChoice
@@ -2440,6 +2481,7 @@ func (s *Server) openaiChat(w http.ResponseWriter, r *http.Request) {
 	}
 	planningMode := s.settings.get().ToolPlanningMode
 	toolCfg := s.settings.get()
+	toolCfg.Scenario, toolCfg.LicenseType = effectiveScenarioAndLicense(body.Model, tone, toolCfg.Scenario, toolCfg.LicenseType)
 
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(s.settings.get().ChatTimeoutSeconds)*time.Second)
 	defer cancel()
